@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.38.0](https://github.com/qixing-jk/all-api-hub/compare/v3.37.0...v3.38.0) (2026-05-09)
+
+
+### Features
+
+* **notifications:** add Feishu, WeCom, DingTalk, and NTFY task channels ([#803](https://github.com/qixing-jk/all-api-hub/issues/803)) ([dc2251d](https://github.com/qixing-jk/all-api-hub/commit/dc2251d48e8c31ea235a1ebe27e04b8c8d888900))
+* **notifications:** add Telegram and webhook notification channels ([#802](https://github.com/qixing-jk/all-api-hub/issues/802)) ([0eb8596](https://github.com/qixing-jk/all-api-hub/commit/0eb859672a27820350bf31c82d1beb4353db58b1))
+* Site announcements with polling and notifications ([#799](https://github.com/qixing-jk/all-api-hub/issues/799)) ([c3408ab](https://github.com/qixing-jk/all-api-hub/commit/c3408ab712bcd5423b237c8137b25bee672a1752))
+* **webhook:** add URL templating and save-before-test ([#804](https://github.com/qixing-jk/all-api-hub/issues/804)) ([3df7901](https://github.com/qixing-jk/all-api-hub/commit/3df7901997b14c5db315da90e5eaa360c4271993))
+
 ## [3.37.0](https://github.com/qixing-jk/all-api-hub/compare/v3.36.0...v3.37.0) (2026-05-07)
 
 
