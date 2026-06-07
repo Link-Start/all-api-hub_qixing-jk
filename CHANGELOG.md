@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.45.0](https://github.com/qixing-jk/all-api-hub/compare/v3.44.0...v3.45.0) (2026-06-07)
+
+
+### Features
+
+* **product-announcements:** add product risk notice channel ([#925](https://github.com/qixing-jk/all-api-hub/issues/925)) ([67d8350](https://github.com/qixing-jk/all-api-hub/commit/67d8350d80b60ad5b7e7cfd2740269d0c743cc1c))
+
+
+### Bug Fixes
+
+* **e2e:** stabilize low Chrome compatibility checks ([#922](https://github.com/qixing-jk/all-api-hub/issues/922)) ([98b4533](https://github.com/qixing-jk/all-api-hub/commit/98b45335b34dcad534c976b3027b81e1b8174363))
+
 ## [3.44.0](https://github.com/qixing-jk/all-api-hub/compare/v3.43.0...v3.44.0) (2026-06-05)
 
 
