@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.45.1](https://github.com/qixing-jk/all-api-hub/compare/v3.45.0...v3.45.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **sub2api:** enforce adapter identity overrides ([#932](https://github.com/qixing-jk/all-api-hub/issues/932)) ([1b22c96](https://github.com/qixing-jk/all-api-hub/commit/1b22c966af3c28853a3d3357666e44482863f9f7))
+
 ## [3.45.0](https://github.com/qixing-jk/all-api-hub/compare/v3.44.0...v3.45.0) (2026-06-08)
 
 
