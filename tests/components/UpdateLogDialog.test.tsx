@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { UpdateLogDialog } from "~/components/dialogs/UpdateLogDialog"
+import { UPDATE_LOG_DIALOG_TEST_IDS } from "~/components/dialogs/UpdateLogDialog/testIds"
 import { userPreferences } from "~/services/preferences/userPreferences"
 import * as browserApi from "~/utils/browser/browserApi"
 import * as docsLinks from "~/utils/navigation/docsLinks"
@@ -31,7 +32,7 @@ describe("UpdateLogDialog", () => {
     render(<UpdateLogDialog isOpen onClose={() => {}} version="2.39.0" />)
 
     const toggleButton = await screen.findByTestId(
-      "update-log-dialog-auto-open-toggle",
+      UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle,
     )
 
     expect(toggleButton).toHaveTextContent(
@@ -75,7 +76,7 @@ describe("UpdateLogDialog", () => {
     render(<UpdateLogDialog isOpen onClose={() => {}} version="2.39.0" />)
 
     const toggleButton = await screen.findByTestId(
-      "update-log-dialog-auto-open-toggle",
+      UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle,
     )
 
     fireEvent.click(toggleButton)
@@ -102,7 +103,9 @@ describe("UpdateLogDialog", () => {
     render(<UpdateLogDialog isOpen onClose={() => {}} version="2.39.0" />)
 
     fireEvent.click(
-      await screen.findByTestId("update-log-dialog-open-full-changelog"),
+      await screen.findByTestId(
+        UPDATE_LOG_DIALOG_TEST_IDS.openFullChangelogButton,
+      ),
     )
 
     await waitFor(() => {
@@ -120,22 +123,20 @@ describe("UpdateLogDialog", () => {
 
     render(<UpdateLogDialog isOpen onClose={() => {}} version="2.39.0" />)
 
-    expect(await screen.findByTestId("update-log-dialog-footer")).toHaveClass(
-      "flex-col",
-      "sm:flex-row",
-    )
-
-    expect(screen.getByTestId("update-log-dialog-footer-actions")).toHaveClass(
-      "flex-col",
-      "sm:flex-row",
-    )
+    expect(
+      await screen.findByTestId(UPDATE_LOG_DIALOG_TEST_IDS.footer),
+    ).toHaveClass("flex-col", "sm:flex-row")
 
     expect(
-      screen.getByTestId("update-log-dialog-auto-open-toggle"),
+      screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.footerActions),
+    ).toHaveClass("flex-col", "sm:flex-row")
+
+    expect(
+      screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle),
     ).toHaveClass("h-auto", "min-h-9", "w-full", "whitespace-normal")
 
     expect(
-      screen.getByTestId("update-log-dialog-open-full-changelog"),
+      screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.openFullChangelogButton),
     ).toHaveClass("h-auto", "min-h-9", "w-full", "whitespace-normal")
   })
 
@@ -213,7 +214,7 @@ describe("UpdateLogDialog", () => {
     render(<UpdateLogDialog isOpen onClose={() => {}} version="2.39.0" />)
 
     const toggleButton = await screen.findByTestId(
-      "update-log-dialog-auto-open-toggle",
+      UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle,
     )
 
     fireEvent.click(toggleButton)

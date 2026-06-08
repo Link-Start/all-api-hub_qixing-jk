@@ -20,6 +20,7 @@ const siteOverrideMap = {
   [SITE_TYPES.VELOERA]: [veloeraAPI],
   [SITE_TYPES.ANYROUTER]: [anyrouterAPI],
   [SITE_TYPES.NEW_API]: [commonAPI],
+  [SITE_TYPES.V_API]: [commonAPI],
   [SITE_TYPES.WONG_GONGYI]: [wongAPI],
   [SITE_TYPES.SUB2API]: [sub2apiAPI],
   [SITE_TYPES.OCTOPUS]: [octopusAPI],

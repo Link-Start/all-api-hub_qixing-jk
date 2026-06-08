@@ -17,6 +17,14 @@ import ResultsTable from "~/features/ManagedSiteModelSync/components/ResultsTabl
 import StatisticsCard from "~/features/ManagedSiteModelSync/components/StatisticsCard"
 import { testI18n } from "~~/tests/test-utils/i18n"
 
+const { trackStartedMock } = vi.hoisted(() => ({
+  trackStartedMock: vi.fn(),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionStarted: trackStartedMock,
+}))
+
 vi.mock("~/components/ManagedSiteChannelLinkButton", () => ({
   default: ({
     channelId,
@@ -40,6 +48,7 @@ function render(ui: ReactNode) {
 describe("ManagedSiteModelSync components", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    trackStartedMock.mockResolvedValue(undefined)
   })
 
   it("renders overview, progress, and statistics states", () => {
@@ -267,7 +276,7 @@ describe("ManagedSiteModelSync components", () => {
     fireEvent.click(
       screen.getAllByTitle(
         "managedSiteModelSync:execution.table.syncChannel",
-      )[0],
+      )[1],
     )
 
     expect(
@@ -278,7 +287,8 @@ describe("ManagedSiteModelSync components", () => {
     expect(screen.getByText("Alpha#11")).toBeInTheDocument()
     expect(onSelectAll).toHaveBeenCalledWith(true)
     expect(onSelectItem).toHaveBeenCalledWith(11, false)
-    expect(onRunSingle).toHaveBeenCalledWith(11)
+    expect(onRunSingle).toHaveBeenCalledWith(12)
+    expect(trackStartedMock).not.toHaveBeenCalled()
 
     render(<EmptyResults hasHistory={false} />)
 

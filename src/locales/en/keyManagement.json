@@ -18,9 +18,9 @@
     "importToClaudeCodeRouter": "Import to Claude Code Router",
     "importToCliProxy": "Import to CLIProxyAPI",
     "importToManagedSite": "Import to {{site}}",
-    "openApiProfiles": "Open API profiles",
+    "openApiProfiles": "Open API credential library",
     "retryFailed": "Retry failed",
-    "saveToApiProfiles": "Save to API profiles",
+    "saveToApiProfiles": "Save to API credential library",
     "showKey": "Show Key",
     "useInCherry": "Use in Cherry Studio"
   },
@@ -170,10 +170,14 @@
       "verifyNow": "Verify now"
     },
     "badges": {
-      "added": "Managed site: added",
-      "checking": "Managed site: checking",
-      "notAdded": "Managed site: not added",
-      "unknown": "Managed site: unknown"
+      "added": "Added",
+      "checkFailed": "Check failed",
+      "checking": "Checking",
+      "configMissing": "Not configured",
+      "notAdded": "Not added",
+      "requiresConfirmation": "Needs confirmation",
+      "unknown": "Unknown",
+      "verificationUnavailable": "Cannot fully verify"
     },
     "descriptions": {
       "backendSearchFailed": "Managed-site checks could not be completed.",
@@ -229,8 +233,8 @@
     "keyCopied": "Key {{name}} copied to clipboard",
     "loadFailed": "Failed to load key list",
     "revealFailed": "Failed to reveal key",
-    "savedToApiProfiles": "Saved {{name}} to API profiles",
-    "saveToApiProfilesFailed": "Failed to save to API profiles"
+    "savedToApiProfiles": "Saved {{name}} to API credential library",
+    "saveToApiProfilesFailed": "Failed to save to API credential library"
   },
   "noKeys": "No key data yet",
   "noMatchingKeys": "No matching keys found",

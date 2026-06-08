@@ -13,6 +13,16 @@ import {
   type ModelProviderFilterValue,
   type ProviderType,
 } from "~/services/models/utils/modelProviders"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+} from "~/services/productAnalytics/events"
 
 interface ProviderTabsProps {
   providers: ProviderType[]
@@ -175,6 +185,23 @@ export function ProviderTabs({
             ? MODEL_PROVIDER_FILTER_VALUES.ALL
             : filteredProviders[index - 1]
         setSelectedProvider(newProvider)
+        void trackProductAnalyticsActionCompleted({
+          featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.FilterModelList,
+          surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListPage,
+          entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+          result: PRODUCT_ANALYTICS_RESULTS.Success,
+          insights: {
+            targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ModelFilter,
+            mode: PRODUCT_ANALYTICS_MODE_IDS.ProviderFilter,
+            filterCount:
+              newProvider === MODEL_PROVIDER_FILTER_VALUES.ALL ? 0 : 1,
+            resultCount:
+              newProvider === MODEL_PROVIDER_FILTER_VALUES.ALL
+                ? allProvidersFilteredCount
+                : getProviderFilteredCount(newProvider),
+          },
+        })
       }}
     >
       <ProviderTabList

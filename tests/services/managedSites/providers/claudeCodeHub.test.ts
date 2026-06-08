@@ -5,15 +5,23 @@ import {
   ClaudeCodeHubProviderTypeOptions,
   DEFAULT_CLAUDE_CODE_HUB_CHANNEL_FIELDS,
 } from "~/constants/claudeCodeHub"
+import { SITE_TYPES } from "~/constants/siteType"
+import {
+  MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS,
+  MatchResolutionUnresolvedError,
+} from "~/services/managedSites/channelMatch"
 import {
   autoConfigToClaudeCodeHub,
   buildChannelPayload,
   buildClaudeCodeHubCreatePayloadFromFormData,
   buildClaudeCodeHubUpdatePayloadFromChannelData,
+  checkValidClaudeCodeHubConfig,
   createChannel,
   deleteChannel,
   fetchAvailableModels,
-  findMatchingChannel,
+  fetchChannelSecretKey,
+  getClaudeCodeHubConfig,
+  hydrateComparableChannelKeys,
   prepareChannelFormData,
   providerToManagedSiteChannel,
   searchChannel,
@@ -24,11 +32,12 @@ import { CHANNEL_STATUS } from "~/types/managedSite"
 const mockFetchTokenScopedModels = vi.fn()
 const mockFetchManagedSiteAvailableModels = vi.fn()
 const mockListProviders = vi.fn()
+const mockSearchProviders = vi.fn()
 const mockCreateProvider = vi.fn()
 const mockUpdateProvider = vi.fn()
 const mockDeleteProvider = vi.fn()
+const mockGetUnmaskedProviderKey = vi.fn()
 const mockGetPreferences = vi.fn()
-const mockFindManagedSiteChannelByComparableInputs = vi.fn()
 const mockConvertToDisplayData = vi.fn()
 const mockEnsureAccountApiToken = vi.fn()
 const toastLoading = vi.fn()
@@ -50,9 +59,12 @@ vi.mock(
 
 vi.mock("~/services/apiService/claudeCodeHub", () => ({
   listProviders: (...args: unknown[]) => mockListProviders(...args),
+  searchProviders: (...args: unknown[]) => mockSearchProviders(...args),
   createProvider: (...args: unknown[]) => mockCreateProvider(...args),
   updateProvider: (...args: unknown[]) => mockUpdateProvider(...args),
   deleteProvider: (...args: unknown[]) => mockDeleteProvider(...args),
+  getUnmaskedProviderKey: (...args: unknown[]) =>
+    mockGetUnmaskedProviderKey(...args),
   validateClaudeCodeHubConfig: vi.fn(),
   normalizeClaudeCodeHubBaseUrl: vi.fn(),
 }))
@@ -61,11 +73,6 @@ vi.mock("~/services/preferences/userPreferences", () => ({
   userPreferences: {
     getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
   },
-}))
-
-vi.mock("~/services/managedSites/utils/channelMatching", () => ({
-  findManagedSiteChannelByComparableInputs: (...args: unknown[]) =>
-    mockFindManagedSiteChannelByComparableInputs(...args),
 }))
 
 vi.mock("~/services/accounts/accountStorage", () => ({
@@ -93,15 +100,26 @@ vi.mock("react-hot-toast", () => ({
 }))
 
 describe("Claude Code Hub managed-site provider", () => {
+  const storedClaudeCodeHubConfig = {
+    baseUrl: "https://stored-cch.example.com",
+    adminToken: "stored-admin-token",
+  }
+
+  const passedClaudeCodeHubConfig = {
+    baseUrl: "https://passed-cch.example.com",
+    adminToken: "passed-admin-token",
+  }
+
   beforeEach(() => {
     mockFetchTokenScopedModels.mockReset()
     mockFetchManagedSiteAvailableModels.mockReset()
     mockListProviders.mockReset()
+    mockSearchProviders.mockReset()
     mockCreateProvider.mockReset()
     mockUpdateProvider.mockReset()
     mockDeleteProvider.mockReset()
+    mockGetUnmaskedProviderKey.mockReset()
     mockGetPreferences.mockReset()
-    mockFindManagedSiteChannelByComparableInputs.mockReset()
     mockConvertToDisplayData.mockReset()
     mockEnsureAccountApiToken.mockReset()
     toastLoading.mockReset()
@@ -307,14 +325,79 @@ describe("Claude Code Hub managed-site provider", () => {
     })
   })
 
-  it("searches, creates, updates, and deletes providers with stored admin config", async () => {
+  it("uses the AIHubMix API origin for managed-site channel imports", async () => {
+    mockFetchTokenScopedModels.mockResolvedValueOnce({
+      models: ["gpt-aihubmix-mini"],
+      fetchFailed: false,
+    })
+
+    const token = { id: 1, name: "Token", key: "sk-aihubmix-key" } as any
+
+    await expect(
+      prepareChannelFormData(
+        {
+          id: "account-1",
+          name: "AIHubMix",
+          siteType: SITE_TYPES.AIHUBMIX,
+          baseUrl: "https://console.aihubmix.com",
+        } as any,
+        token,
+      ),
+    ).resolves.toMatchObject({
+      key: "sk-aihubmix-key",
+      base_url: "https://aihubmix.com",
+      models: ["gpt-aihubmix-mini"],
+    })
+
+    expect(mockFetchTokenScopedModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: "https://aihubmix.com",
+      }),
+      token,
+    )
+  })
+
+  it("returns the saved Claude Code Hub runtime config helper shape", async () => {
     mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+
+    await expect(getClaudeCodeHubConfig()).resolves.toEqual(
+      storedClaudeCodeHubConfig,
+    )
+  })
+
+  it("validates saved Claude Code Hub config only when required fields exist", async () => {
+    const claudeCodeHubApi = await import("~/services/apiService/claudeCodeHub")
+    vi.mocked(
+      claudeCodeHubApi.validateClaudeCodeHubConfig,
+    ).mockResolvedValueOnce(true)
+    mockGetPreferences.mockResolvedValueOnce({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+
+    await expect(checkValidClaudeCodeHubConfig()).resolves.toBe(true)
+    expect(claudeCodeHubApi.validateClaudeCodeHubConfig).toHaveBeenCalledWith(
+      storedClaudeCodeHubConfig,
+    )
+
+    vi.mocked(claudeCodeHubApi.validateClaudeCodeHubConfig).mockClear()
+    mockGetPreferences.mockResolvedValueOnce({
       claudeCodeHub: {
         baseUrl: "https://cch.example.com",
-        adminToken: "admin-token",
+        adminToken: "",
       },
     })
-    mockListProviders.mockResolvedValue([
+
+    await expect(checkValidClaudeCodeHubConfig()).resolves.toBe(false)
+    expect(claudeCodeHubApi.validateClaudeCodeHubConfig).not.toHaveBeenCalled()
+  })
+
+  it("searches, creates, updates, and deletes providers with passed admin config", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockSearchProviders.mockResolvedValue([
       {
         id: 21,
         name: "Provider Alpha",
@@ -324,21 +407,14 @@ describe("Claude Code Hub managed-site provider", () => {
         allowedModels: ["gpt-4o"],
         groupTag: "team-a",
       },
-      {
-        id: 22,
-        name: "Provider Beta",
-        providerType: "gemini",
-        url: "https://beta.example.com",
-        key: "sk-other-key",
-        allowedModels: ["gemini-2.5-pro"],
-        groupTag: "team-b",
-      },
     ])
     mockCreateProvider.mockResolvedValue({ ok: true })
     mockUpdateProvider.mockResolvedValue({ ok: true })
     mockDeleteProvider.mockResolvedValue({ ok: true })
 
-    await expect(searchChannel("", "", "", "alpha")).resolves.toMatchObject({
+    await expect(
+      searchChannel(passedClaudeCodeHubConfig, "alpha"),
+    ).resolves.toMatchObject({
       total: 1,
       items: [
         expect.objectContaining({
@@ -348,12 +424,16 @@ describe("Claude Code Hub managed-site provider", () => {
       ],
       type_counts: {
         codex: 1,
-        gemini: 1,
       },
     })
+    expect(mockSearchProviders).toHaveBeenCalledWith(
+      passedClaudeCodeHubConfig,
+      "alpha",
+    )
+    expect(mockListProviders).not.toHaveBeenCalled()
 
     await expect(
-      createChannel("", "", "", {
+      createChannel(passedClaudeCodeHubConfig, {
         channel: {
           name: "Created Provider",
           type: "codex",
@@ -372,10 +452,7 @@ describe("Claude Code Hub managed-site provider", () => {
       message: "success",
     })
     expect(mockCreateProvider).toHaveBeenCalledWith(
-      {
-        baseUrl: "https://cch.example.com",
-        adminToken: "admin-token",
-      },
+      passedClaudeCodeHubConfig,
       expect.objectContaining({
         name: "Created Provider",
         provider_type: "codex",
@@ -384,7 +461,7 @@ describe("Claude Code Hub managed-site provider", () => {
     )
 
     await expect(
-      updateChannel("", "", "", {
+      updateChannel(passedClaudeCodeHubConfig, {
         id: 21,
         key: "sk-updated-key",
         base_url: "https://updated.example.com",
@@ -398,19 +475,137 @@ describe("Claude Code Hub managed-site provider", () => {
       message: "success",
     })
 
-    await expect(deleteChannel("", "", "", 21)).resolves.toEqual({
-      success: true,
-      data: { ok: true },
-      message: "success",
+    await expect(deleteChannel(passedClaudeCodeHubConfig, 21)).resolves.toEqual(
+      {
+        success: true,
+        data: { ok: true },
+        message: "success",
+      },
+    )
+  })
+
+  it("fetches real provider keys through the Claude Code Hub provider API", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockGetUnmaskedProviderKey.mockResolvedValueOnce("sk-real-provider-key")
+
+    await expect(
+      fetchChannelSecretKey(passedClaudeCodeHubConfig, 42),
+    ).resolves.toBe("sk-real-provider-key")
+    expect(mockGetUnmaskedProviderKey).toHaveBeenCalledWith(
+      passedClaudeCodeHubConfig,
+      42,
+    )
+  })
+
+  it("surfaces provider key reveal failures from edit flows", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockGetUnmaskedProviderKey.mockRejectedValueOnce(new Error("reveal failed"))
+
+    await expect(
+      fetchChannelSecretKey(passedClaudeCodeHubConfig, 42),
+    ).rejects.toThrow("reveal failed")
+  })
+
+  it("hydrates provided Claude Code Hub candidates through provider key reveal", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockGetUnmaskedProviderKey.mockResolvedValueOnce("sk-provider-secret")
+
+    const result = await hydrateComparableChannelKeys(
+      passedClaudeCodeHubConfig,
+      [
+        {
+          id: 30,
+          type: "openai-compatible",
+          key: "",
+          name: "Masked Provider",
+          base_url: "https://api.example.com",
+          models: "gpt-4o",
+        } as any,
+      ],
+    )
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 30,
+        key: "sk-provider-secret",
+      }),
+    ])
+  })
+
+  it("hydrates only provided Claude Code Hub duplicate candidates", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockGetUnmaskedProviderKey.mockResolvedValueOnce("sk-real-key")
+
+    const result = await hydrateComparableChannelKeys(
+      passedClaudeCodeHubConfig,
+      [
+        {
+          id: 31,
+          name: "Matching Masked Provider",
+          key: "",
+        } as any,
+      ],
+    )
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 31,
+        name: "Matching Masked Provider",
+        key: "sk-real-key",
+      }),
+    ])
+    expect(mockGetUnmaskedProviderKey).toHaveBeenCalledTimes(1)
+    expect(mockGetUnmaskedProviderKey).toHaveBeenCalledWith(
+      passedClaudeCodeHubConfig,
+      31,
+    )
+  })
+
+  it("maps Claude Code Hub provider key reveal failures to unresolved hydration errors", async () => {
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockGetUnmaskedProviderKey.mockRejectedValueOnce(new Error("reveal failed"))
+
+    await expect(
+      hydrateComparableChannelKeys(passedClaudeCodeHubConfig, [
+        {
+          id: 33,
+          name: "Masked Provider",
+          key: "",
+        } as any,
+      ]),
+    ).rejects.toMatchObject({
+      name: MatchResolutionUnresolvedError.name,
+      reason:
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
     })
   })
 
-  it("surfaces config and API failures for CRUD-style operations", async () => {
+  it("surfaces API failures for CRUD-style operations", async () => {
     mockGetPreferences.mockResolvedValueOnce({})
 
-    await expect(searchChannel("", "", "", "alpha")).resolves.toBeNull()
+    mockGetPreferences.mockResolvedValue({
+      claudeCodeHub: storedClaudeCodeHubConfig,
+    })
+    mockCreateProvider.mockRejectedValueOnce(new Error("create failed"))
+    mockUpdateProvider.mockRejectedValueOnce(new Error("update failed"))
+    mockDeleteProvider.mockRejectedValueOnce(new Error("delete failed"))
+    mockSearchProviders.mockRejectedValueOnce(new Error("search failed"))
+
     await expect(
-      createChannel("", "", "", {
+      searchChannel(passedClaudeCodeHubConfig, "alpha"),
+    ).resolves.toBeNull()
+    await expect(
+      createChannel(passedClaudeCodeHubConfig, {
         channel: {
           name: "Created Provider",
           key: "sk-created-key",
@@ -420,22 +615,10 @@ describe("Claude Code Hub managed-site provider", () => {
     ).resolves.toEqual({
       success: false,
       data: null,
-      message: "messages:claudecodehub.configMissing",
+      message: "create failed",
     })
-
-    mockGetPreferences.mockResolvedValue({
-      claudeCodeHub: {
-        baseUrl: "https://cch.example.com",
-        adminToken: "admin-token",
-      },
-    })
-    mockUpdateProvider.mockRejectedValueOnce(new Error("update failed"))
-    mockDeleteProvider.mockRejectedValueOnce(new Error("delete failed"))
-    mockListProviders.mockRejectedValueOnce(new Error("search failed"))
-
-    await expect(searchChannel("", "", "", "alpha")).resolves.toBeNull()
     await expect(
-      updateChannel("", "", "", {
+      updateChannel(passedClaudeCodeHubConfig, {
         id: 21,
         key: "sk-updated-key",
       } as any),
@@ -444,11 +627,13 @@ describe("Claude Code Hub managed-site provider", () => {
       data: null,
       message: "update failed",
     })
-    await expect(deleteChannel("", "", "", 21)).resolves.toEqual({
-      success: false,
-      data: null,
-      message: "delete failed",
-    })
+    await expect(deleteChannel(passedClaudeCodeHubConfig, 21)).resolves.toEqual(
+      {
+        success: false,
+        data: null,
+        message: "delete failed",
+      },
+    )
   })
 
   it("builds channel payloads, fetches models, and matches only comparable providers", async () => {
@@ -492,71 +677,23 @@ describe("Claude Code Hub managed-site provider", () => {
     ).resolves.toEqual(["gpt-4o"])
 
     mockGetPreferences.mockResolvedValue({
-      claudeCodeHub: {
-        baseUrl: "https://cch.example.com",
-        adminToken: "admin-token",
-      },
+      claudeCodeHub: storedClaudeCodeHubConfig,
     })
-    mockListProviders.mockResolvedValue([
-      {
-        id: 31,
-        name: "Comparable Provider",
-        providerType: "openai-compatible",
-        url: "https://api.example.com",
-        key: "sk-real-key",
-        allowedModels: ["gpt-4o"],
-      },
-      {
-        id: 32,
-        name: "Masked Provider",
-        providerType: "openai-compatible",
-        url: "https://api.example.com",
-        maskedKey: "sk-***",
-        allowedModels: ["gpt-4o"],
-      },
-    ])
-    mockFindManagedSiteChannelByComparableInputs.mockResolvedValueOnce({
-      id: 31,
-      name: "Comparable Provider",
-    })
-
     await expect(
-      findMatchingChannel(
-        "",
-        "",
-        "",
-        "https://api.example.com",
-        ["gpt-4o"],
-        "sk-real-key",
-      ),
-    ).resolves.toEqual({
-      id: 31,
-      name: "Comparable Provider",
-    })
-    expect(mockFindManagedSiteChannelByComparableInputs).toHaveBeenCalledWith({
-      channels: [
-        expect.objectContaining({
+      hydrateComparableChannelKeys(passedClaudeCodeHubConfig, [
+        {
           id: 31,
+          name: "Comparable Provider",
           key: "sk-real-key",
-        }),
-      ],
-      accountBaseUrl: "https://api.example.com",
-      models: ["gpt-4o"],
-      key: "sk-real-key",
-    })
-
-    mockFindManagedSiteChannelByComparableInputs.mockClear()
-    await expect(
-      findMatchingChannel(
-        "",
-        "",
-        "",
-        "https://api.example.com",
-        ["gpt-4o"],
-        "sk-***",
-      ),
-    ).resolves.toBeNull()
-    expect(mockFindManagedSiteChannelByComparableInputs).not.toHaveBeenCalled()
+        } as any,
+      ]),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 31,
+        key: "sk-real-key",
+      }),
+    ])
+    expect(mockGetUnmaskedProviderKey).not.toHaveBeenCalled()
   })
 
   it("auto-imports tokens into Claude Code Hub and reports duplicate or runtime failures", async () => {
@@ -579,8 +716,7 @@ describe("Claude Code Hub managed-site provider", () => {
       models: ["gpt-4o"],
       fetchFailed: false,
     })
-    mockListProviders.mockResolvedValue([])
-    mockFindManagedSiteChannelByComparableInputs.mockResolvedValueOnce(null)
+    mockSearchProviders.mockResolvedValueOnce([])
     mockCreateProvider.mockResolvedValue({ ok: true })
 
     await expect(
@@ -589,6 +725,14 @@ describe("Claude Code Hub managed-site provider", () => {
       success: true,
       message: "messages:claudecodehub.importSuccess",
     })
+    expect(mockSearchProviders).toHaveBeenNthCalledWith(
+      1,
+      {
+        baseUrl: "https://cch.example.com",
+        adminToken: "admin-token",
+      },
+      "https://api.example.com",
+    )
     expect(toastLoading).toHaveBeenCalledWith(
       "messages:accountOperations.importingToClaudeCodeHub",
       { id: "toast-id" },
@@ -598,17 +742,25 @@ describe("Claude Code Hub managed-site provider", () => {
       { id: "toast-id" },
     )
 
-    mockFindManagedSiteChannelByComparableInputs.mockResolvedValueOnce({
-      name: "Existing Provider",
-    })
+    mockSearchProviders.mockResolvedValueOnce([
+      {
+        id: 2,
+        name: "Existing Provider",
+        providerType: "openai-compatible",
+        url: "https://api.example.com",
+        maskedKey: "sk-real-key",
+        allowedModels: ["gpt-4o"],
+      },
+    ])
     await expect(
       autoConfigToClaudeCodeHub({ id: "account-1" } as any, "toast-id"),
     ).resolves.toEqual({
       success: false,
-      message: "messages:claudecodehub.channelExists",
+      message: expect.stringContaining("channelExists"),
     })
+    expect(mockSearchProviders).toHaveBeenCalledTimes(2)
     expect(toastError).toHaveBeenCalledWith(
-      "messages:claudecodehub.channelExists",
+      expect.stringContaining("channelExists"),
       { id: "toast-id" },
     )
 

@@ -1,4 +1,4 @@
-import { ApiErrorCode } from "~/services/apiService/common/errors"
+import type { ApiErrorCode } from "~/services/apiTransport/errors"
 import type { AuthTypeEnum } from "~/types/index"
 import type { TurnstilePreTrigger } from "~/types/turnstile"
 
@@ -17,6 +17,10 @@ export interface TempWindowFetchParams {
   authType?: AuthTypeEnum
   /** Per-account session cookie header to merge with WAF cookies */
   cookieAuthSessionCookie?: string
+  /** Open the temporary context in an incognito/private window. */
+  useIncognito?: boolean
+  /** Browser cookie store to use when reading cookies for injected requests. */
+  cookieStoreId?: string
 }
 
 export type TempWindowTurnstileStatus =
@@ -91,4 +95,10 @@ export interface TempWindowFallbackContext {
   authType: AuthTypeEnum
   /** Per-account session cookie header to merge with WAF cookies */
   cookieAuthSessionCookie?: string
+  /** Whether the temp-window fallback should use an incognito/private context. */
+  useIncognito?: boolean
+  /** Browser cookie store to use when reading cookies for injected requests. */
+  cookieStoreId?: string
+  /** Skip the primary request and execute directly in the temp context. */
+  forceTempWindow?: boolean
 }

@@ -5,6 +5,7 @@ import ModelItem from "~/features/ModelList/components/ModelItem"
 import {
   createAccountSource,
   createProfileSource,
+  toAihubmixCatalogFallbackCapabilities,
   toCatalogOnlyCapabilities,
 } from "~/features/ModelList/modelManagementSources"
 import { API_TYPES } from "~/services/verification/aiApiVerification"
@@ -292,7 +293,7 @@ describe("ModelItem profile actions", () => {
       siteType: "new-api",
       baseUrl: "https://example.com",
       token: "token",
-      userId: 1,
+      userId: "1",
       authType: AuthTypeEnum.AccessToken,
       checkIn: { enableDetection: false },
     })
@@ -347,7 +348,7 @@ describe("ModelItem profile actions", () => {
       siteType: "new-api",
       baseUrl: "https://example.com",
       token: "token",
-      userId: 1,
+      userId: "1",
       authType: AuthTypeEnum.AccessToken,
       checkIn: { enableDetection: false },
     })
@@ -405,7 +406,7 @@ describe("ModelItem profile actions", () => {
       siteType: "new-api",
       baseUrl: "https://example.com",
       token: "token",
-      userId: 1,
+      userId: "1",
       authType: AuthTypeEnum.AccessToken,
       checkIn: { enableDetection: false },
     })
@@ -463,6 +464,76 @@ describe("ModelItem profile actions", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("hides the model-key action for account catalog fallback rows without token compatibility", async () => {
+    const accountSource = createAccountSource({
+      id: "account-1",
+      name: "Example Account",
+      username: "tester",
+      balance: { USD: 0, CNY: 0 },
+      todayConsumption: { USD: 0, CNY: 0 },
+      todayIncome: { USD: 0, CNY: 0 },
+      todayTokens: { upload: 0, download: 0 },
+      health: { status: SiteHealthStatus.Healthy },
+      siteType: "AIHubMix",
+      baseUrl: "https://aihubmix.com",
+      token: "token",
+      userId: "1",
+      authType: AuthTypeEnum.AccessToken,
+      checkIn: { enableDetection: false },
+    })
+
+    render(
+      <ModelItem
+        model={{
+          model_name: "gpt-4o-mini",
+          quota_type: 0,
+          model_ratio: 0,
+          model_price: 0,
+          completion_ratio: 1,
+          enable_groups: [],
+          supported_endpoint_types: [],
+        }}
+        calculatedPrice={{
+          inputUSD: 0,
+          outputUSD: 0,
+          inputCNY: 0,
+          outputCNY: 0,
+        }}
+        exchangeRate={1}
+        showRealPrice={false}
+        showRatioColumn={true}
+        showEndpointTypes={true}
+        groupRatios={{ default: 1 }}
+        effectiveGroup="default"
+        selectedGroups={["default"]}
+        availableGroups={["default"]}
+        source={accountSource}
+        displayCapabilities={toAihubmixCatalogFallbackCapabilities(
+          accountSource.capabilities,
+        )}
+        onVerifyModel={() => {}}
+        onVerifyCliSupport={() => {}}
+        onOpenModelKeyDialog={() => {}}
+      />,
+    )
+
+    expect(
+      screen.queryByRole("button", {
+        name: "modelList:actions.keyForModel",
+      }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", {
+        name: "modelList:actions.verifyApi",
+      }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", {
+        name: "modelList:actions.verifyCliSupport",
+      }),
+    ).not.toBeInTheDocument()
+  })
+
   it("shows a lowest-price badge when the row is marked as the cheapest option", async () => {
     const accountSource = createAccountSource({
       id: "account-lowest",
@@ -476,7 +547,7 @@ describe("ModelItem profile actions", () => {
       siteType: "new-api",
       baseUrl: "https://example.com",
       token: "token",
-      userId: 1,
+      userId: "1",
       authType: AuthTypeEnum.AccessToken,
       checkIn: { enableDetection: false },
     })

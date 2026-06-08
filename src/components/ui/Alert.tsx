@@ -5,27 +5,30 @@ import React from "react"
 import { Heading5 } from "~/components/ui/Typography"
 import { cn } from "~/lib/utils"
 
-const alertVariants = cva(
-  "relative w-full rounded-lg border p-4 [&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4",
-  {
-    variants: {
-      variant: {
-        default:
-          "bg-white dark:bg-dark-bg-secondary text-gray-900 dark:text-dark-text-primary border-gray-200 dark:border-dark-bg-tertiary",
-        destructive:
-          "bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-red-200 dark:border-red-700",
-        success:
-          "bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200 border-green-200 dark:border-green-700",
-        warning:
-          "bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 border-yellow-200 dark:border-yellow-700",
-        info: "bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-700",
-      },
+const alertVariants = cva("relative w-full rounded-lg border p-4", {
+  variants: {
+    variant: {
+      default:
+        "bg-white dark:bg-dark-bg-secondary text-gray-900 dark:text-dark-text-primary border-gray-200 dark:border-dark-bg-tertiary",
+      destructive:
+        "bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 border-red-200 dark:border-red-700",
+      success:
+        "bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200 border-green-200 dark:border-green-700",
+      warning:
+        "bg-yellow-50 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 border-yellow-200 dark:border-yellow-700",
+      info: "bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 border-blue-200 dark:border-blue-700",
     },
-    defaultVariants: {
-      variant: "default",
+    compact: {
+      false:
+        "[&>svg~*]:pl-7 [&>svg+div]:translate-y-[-3px] [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4",
+      true: "flex items-start gap-2 p-3 sm:items-center",
     },
   },
-)
+  defaultVariants: {
+    variant: "default",
+    compact: false,
+  },
+})
 
 export interface AlertProps
   extends React.HTMLAttributes<HTMLDivElement>,
@@ -40,6 +43,7 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
     {
       className,
       variant,
+      compact,
       title,
       description,
       showIcon = true,
@@ -51,29 +55,33 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
     const getIcon = () => {
       if (!showIcon) return null
 
+      const iconClassName = cn("h-4 w-4", compact && "mt-0.5 shrink-0 sm:mt-0")
+
       switch (variant) {
         case "destructive":
-          return <AlertCircle className="h-4 w-4" />
+          return <AlertCircle className={iconClassName} />
         case "success":
-          return <CheckCircle className="h-4 w-4" />
+          return <CheckCircle className={iconClassName} />
         case "warning":
-          return <AlertTriangle className="h-4 w-4" />
+          return <AlertTriangle className={iconClassName} />
         case "info":
-          return <Info className="h-4 w-4" />
+          return <Info className={iconClassName} />
         default:
-          return <Info className="h-4 w-4" />
+          return <Info className={iconClassName} />
       }
     }
+
+    const icon = getIcon()
 
     return (
       <div
         ref={ref}
         role="alert"
-        className={cn(alertVariants({ variant }), className)}
+        className={cn(alertVariants({ variant, compact }), className)}
         {...props}
       >
-        {getIcon()}
-        <div className="ml-0 space-y-1.5">
+        {icon}
+        <div className={cn("ml-0 space-y-1.5", compact && "min-w-0 flex-1")}>
           {title && (
             <Heading5 className="leading-none tracking-tight">{title}</Heading5>
           )}

@@ -28,8 +28,8 @@ actions:
 features:
   - title: "📦 Unified Asset Dashboard"
     details: "Consolidate multiple sites and accounts into a single panel for a clear overview of balances, usage, and health status, with smart site identification."
-  - title: "🏷️ Independent API Credentials"
-    details: "Save Base URL + Key without a site account. Support tag filtering and reuse for model viewing and API validation."
+  - title: "🏷️ API Credential Library"
+    details: "Save Base URL + API Key without a site account for quick copying, API verification, model lookup, and balance/usage checks."
   - title: "💰 Model Price Comparison"
     details: "Compare actual costs across different sites, automatically identify the best group, and find the most cost-effective path."
   - title: "✅ In-depth API Validation"
@@ -50,65 +50,113 @@ footer: "AGPL-3.0 Licensed | Copyright 2025-present All API Hub"
 
 ## Introduction
 
-In the current AI ecosystem, there are an increasing number of aggregation relay sites and self-built panels based on the New API series. Managing balances, usage, model prices, and API key availability for various sites simultaneously is often scattered and time-consuming.
+In the AI era, many of us keep multiple relay-site accounts to save money or try different models. Managing them quickly becomes painful: balances are scattered, pricing is messy, and daily manual check-ins are easy to miss.
 
-All API Hub, as a browser extension, can automatically identify accounts on these sites and provide one-click access to view balances, usage, model prices, manage models and keys, and perform automatic check-ins. It also offers independent API credential management and provides backend linkage and channel-related tools for self-built New API, DoneHub, Veloera, Octopus, AxonHub, and Claude Code Hub.
+**All API Hub is built to solve those problems.** It is your AI asset center, making management simpler, clearer, and more automated.
 
 ## 🎯 Use Cases
 
-Find the documentation you need based on your role:
+### 👤 I am a regular AI user (recommended for beginners)
 
-### I am an AI Tool User
-- **Quick Start**: [Download & Install](./get-started.md) -> [Add My First Account](./get-started.md#add-site)
-- **Asset Management**: [View Balance History](./balance-history.md) -> [Analyze Usage](./usage-analytics.md)
-- **Account Maintenance**: [Organize & Clean Up Accounts](./account-management.md)
-- **Cost Saving**: [Cross-site Price Comparison](./model-list.md) -> [Auto Check-in](./auto-checkin.md)
-- **One-click Export**: [Sync to CherryStudio / CC Switch](./get-started.md#quick-export-sites)
+- **How do I start?**: [Download and install the extension](./get-started.md) -> [Add my first account](./get-started.md#add-site)
+- **I want to save money**: [Earn credits with auto check-in](./auto-checkin.md) -> [Compare model prices across sites](./model-list.md)
+- **I want less manual work**: [See asset changes at a glance](./balance-history.md) -> [Sync accounts to other AI tools](./get-started.md#quick-export-sites)
 
-### I have multiple Standalone API Keys
-- **Credential Management**: [Save URL+Key as Credentials](./api-credential-profiles.md)
-- **Connectivity Testing**: [Batch Verify API & CLI Compatibility](./web-ai-api-check.md)
-- **Bookmark Collection**: [Manage Docs & Redemption Pages](./bookmark-management.md)
+### 🛠️ I am an advanced user (Key collector)
 
-### I am a Self-hosted Admin (New API, etc.)
-- **Efficiency Tools**: [Manage Channels within the Extension](./self-hosted-site-management.md) -> [Batch Sync Models](./managed-site-model-sync.md)
-- **Configuration Optimization**: [Setup Model Redirection](./model-redirect.md)
-- **Security**: [Handle 2FA / OTP Verification](./new-api-security-verification.md)
+- **Key management**: [Save standalone URL+Key pairs to the API Credential Library](./api-credential-profiles.md)
+- **Availability testing**: [Batch verify API and CLI compatibility](./web-ai-api-check.md)
+- **Cross-device sync**: [Configure encrypted WebDAV backup](./webdav-sync.md)
 
----
+### 👑 I am a site admin (operator area)
 
-## Supported Site Architectures
+- **Efficiency tools**: [Manage channels inside the extension](./self-hosted-site-management.md) -> [Batch sync models](./managed-site-model-sync.md)
+- **Configuration optimization**: [Set up model redirection](./model-redirect.md)
+- **Security safeguards**: [Handle 2FA / OTP verification](./new-api-security-verification.md)
 
-- [one-api](https://github.com/songquanpeng/one-api)
-- [new-api](https://github.com/QuantumNous/new-api)
-- [Veloera](https://github.com/Veloera/Veloera)
-- [one-hub](https://github.com/MartialBE/one-hub)
-- [done-hub](https://github.com/deanxv/done-hub)
-- [AxonHub](https://github.com/looplj/axonhub)
-- [Sub2API](https://github.com/Wei-Shaw/sub2api)
-- [AnyRouter](https://anyrouter.top)
-- WONG Public Welfare Site
-- Neo-API (Closed-source)
-- Super-API (Closed-source)
-- RIX_API (Closed-source, basic functionality supported)
-- VoAPI (Closed-source, older versions supported)
+## 🧩 Supported Site Architectures
 
-If you are using the extension on macOS via Safari, please refer to the [Safari Installation Guide](./safari-install.md) first. Safari requires installation via Xcode, which differs from the store installation or unpacked loading methods for Chrome/Edge/Firefox.
+No matter which architecture you use, there is a good chance we support it:
 
-If you use browsers such as QQ Browser, 360 Secure Browser, 360 Speed Browser, Cheetah Browser, Brave, Vivaldi, Opera, etc., please refer to the [QQ / 360 and Other Browsers Installation Guide](./other-browser-install.md).
+- **Account-site compatible architectures**: One API, New API, Veloera, One-Hub, Done-Hub, Sub2API, and more.
+- **Specialized account platforms and compatible implementations**: AIHubMix, AnyRouter, Neo-API, Super-API, v-api, and more.
+- **Self-hosted admin backends**: New API, Veloera, Done-Hub, [Octopus](https://github.com/bestruirui/octopus), AxonHub, Claude Code Hub, and more, for channel management, migration, and partial model sync.
+
+> If you use Safari on macOS, read the [Safari Installation Guide](./safari-install.md) first.
+> If you use QQ Browser, 360 Browser, Brave, or similar browsers, read the [Manual Installation Guide](./other-browser-install.md).
 
 <a id="community"></a>
-## 💬 Community Communication
+## 💬 Community
 
-If you want to communicate faster about usage issues, troubleshoot configurations, or share compatible sites, we recommend using the following community channels:
+Have questions or want to share useful sites? Join the community:
 
-- [GitHub Discussions](https://github.com/qixing-jk/all-api-hub/discussions): Suitable for organizing issues, accumulating experience, and long-term discussions.
-- [Discord Community](https://discord.gg/RmFXZ577ZQ): For multi-language users, with diverse features, suitable for discussions and troubleshooting.
-- [Telegram Group](https://t.me/qixing_chat): Suitable for fast communication among multi-language users.
-- WeChat Group: Scan the QR code below to join the Chinese communication group.
+- [GitHub Discussions](https://github.com/qixing-jk/all-api-hub/discussions)
+- [Discord Community](https://discord.gg/RmFXZ577ZQ)
+- [Telegram Group](https://t.me/qixing_chat)
+- **WeChat Group**: Scan the QR code below to join the Chinese group.
 
 <img
   src="../../../resources/wechat_group.png"
   alt="All API Hub WeChat Group QR Code"
   style="width: min(280px, 100%);"
 />
+
+<a id="sponsors"></a>
+## ❤️ Sponsors
+
+<div class="readme-sponsor">
+  <div class="readme-sponsor-logo">
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">
+      <img src="../../../resources/partners/packycode.png" alt="PackyCode">
+    </a>
+  </div>
+  <p class="readme-sponsor-copy">
+    Thanks to PackyCode for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex,
+    Gemini, and more. PackyCode provides special discounts for our software users: register using
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">this link</a> and enter the "all-api-hub" promo code during first recharge to get 10% off.
+  </p>
+</div>
+
+<style>
+.readme-sponsor {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.readme-sponsor-logo {
+  flex: 0 0 180px;
+  text-align: center;
+}
+
+.readme-sponsor-logo img {
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+
+.readme-sponsor-copy {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .readme-sponsor {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .readme-sponsor-logo {
+    flex-basis: auto;
+    width: 100%;
+    text-align: left;
+  }
+
+  .readme-sponsor-logo img {
+    width: 128px;
+  }
+}
+</style>

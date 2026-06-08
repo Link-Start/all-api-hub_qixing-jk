@@ -3,15 +3,38 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import AccountManagement from "~/entrypoints/options/pages/AccountManagement"
 import BookmarkManagement from "~/entrypoints/options/pages/BookmarkManagement"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FAILURE_REASONS,
+  PRODUCT_ANALYTICS_FAILURE_STAGES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsActionId,
+  type ProductAnalyticsFeatureId,
+} from "~/services/productAnalytics/events"
+import { openSettingsTab } from "~/utils/navigation"
 import { fireEvent, render, screen, waitFor } from "~~/tests/test-utils/render"
 
 const openAddAccountMock = vi.fn()
 const handleRefreshMock = vi.fn()
 const handleRefreshDisabledAccountsMock = vi.fn()
+const handleOpenExternalCheckInsMock = vi.fn()
 const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
 }))
 const toastPromiseMock = vi.hoisted(() => vi.fn())
+const {
+  startProductAnalyticsActionMock,
+  trackProductAnalyticsActionStartedMock,
+  completeProductAnalyticsActionMock,
+} = vi.hoisted(() => ({
+  startProductAnalyticsActionMock: vi.fn(),
+  trackProductAnalyticsActionStartedMock: vi.fn(),
+  completeProductAnalyticsActionMock: vi.fn(),
+}))
 const accountDataContextState = vi.hoisted(() => ({
   current: {
     displayData: [] as any[],
@@ -55,9 +78,25 @@ vi.mock("~/features/AccountManagement/hooks/AccountDataContext", () => ({
 
 vi.mock("~/features/AccountManagement/hooks/AccountActionsContext", () => ({
   useAccountActionsContext: () => ({
-    handleOpenExternalCheckIns: vi.fn(),
+    handleOpenExternalCheckIns: handleOpenExternalCheckInsMock,
   }),
 }))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  startProductAnalyticsAction: (...args: any[]) =>
+    startProductAnalyticsActionMock(...args),
+  trackProductAnalyticsActionStarted: (...args: any[]) =>
+    trackProductAnalyticsActionStartedMock(...args),
+}))
+
+vi.mock("~/utils/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/navigation")>()
+
+  return {
+    ...actual,
+    openSettingsTab: vi.fn(),
+  }
+})
 
 vi.mock("~/features/AccountManagement/components/AccountList", () => ({
   default: () => <div>AccountList</div>,
@@ -68,15 +107,35 @@ vi.mock("~/features/SiteBookmarks/components/BookmarksList", () => ({
 }))
 
 vi.mock("~/features/SiteBookmarks/components/BookmarkDialog", () => ({
-  default: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div>BookmarkDialogOpen</div> : null,
+  default: ({
+    isOpen,
+    prefill,
+  }: {
+    isOpen: boolean
+    prefill?: { name?: string; url?: string } | null
+  }) =>
+    isOpen ? (
+      <div>
+        <div>BookmarkDialogOpen</div>
+        <div data-testid="bookmark-dialog-name">{prefill?.name}</div>
+        <div data-testid="bookmark-dialog-url">{prefill?.url}</div>
+      </div>
+    ) : null,
 }))
 
 beforeEach(() => {
   openAddAccountMock.mockReset()
   handleRefreshMock.mockReset()
   handleRefreshDisabledAccountsMock.mockReset()
+  handleOpenExternalCheckInsMock.mockReset()
   mockLogger.error.mockReset()
+  startProductAnalyticsActionMock.mockReset()
+  trackProductAnalyticsActionStartedMock.mockReset()
+  completeProductAnalyticsActionMock.mockReset()
+  completeProductAnalyticsActionMock.mockResolvedValue(undefined)
+  startProductAnalyticsActionMock.mockReturnValue({
+    complete: completeProductAnalyticsActionMock,
+  })
   accountDataContextState.current = {
     displayData: [],
     isRefreshing: false,
@@ -116,9 +175,60 @@ beforeEach(() => {
       }
     },
   )
+  handleOpenExternalCheckInsMock.mockResolvedValue(undefined)
 })
 
+const expectAccountHeaderAction = ({
+  featureId = PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+  actionId,
+}: {
+  featureId?: ProductAnalyticsFeatureId
+  actionId: ProductAnalyticsActionId
+}) => {
+  expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+    featureId,
+    actionId,
+    surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementHeader,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  })
+}
+
+const expectAccountHeaderActionSpanStarted = ({
+  featureId = PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+  actionId,
+}: {
+  featureId?: ProductAnalyticsFeatureId
+  actionId: ProductAnalyticsActionId
+}) => {
+  const context = {
+    featureId,
+    actionId,
+    surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementHeader,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  }
+
+  expect(startProductAnalyticsActionMock).toHaveBeenCalledWith(context)
+  expect(trackProductAnalyticsActionStartedMock).not.toHaveBeenCalledWith(
+    context,
+  )
+}
+
 describe("options AccountManagement page", () => {
+  it("opens account management settings from the title shortcut", async () => {
+    render(<AccountManagement />)
+
+    await screen.findByText("AccountList")
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "common:labels.settings" }),
+    )
+
+    expect(openSettingsTab).toHaveBeenCalledWith("accountManagement", {
+      anchor: "account-management",
+      preserveHistory: true,
+    })
+  })
+
   it("renders accounts view and opens add account dialog", async () => {
     render(<AccountManagement />)
 
@@ -128,6 +238,9 @@ describe("options AccountManagement page", () => {
       await screen.findByRole("button", { name: "account:addAccount" }),
     )
     expect(openAddAccountMock).toHaveBeenCalledTimes(1)
+    expectAccountHeaderAction({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenCreateAccountDialog,
+    })
 
     expect(
       screen.queryByRole("button", { name: "bookmark:switch.bookmarks" }),
@@ -143,6 +256,82 @@ describe("options AccountManagement page", () => {
 
     expect(handleRefreshMock).toHaveBeenCalledTimes(1)
     expect(handleRefreshMock).toHaveBeenCalledWith(true)
+    expectAccountHeaderActionSpanStarted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAllAccounts,
+    })
+    await waitFor(() => {
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights: {
+            itemCount: 0,
+            successCount: 0,
+            failureCount: 0,
+          },
+          diagnostics: {
+            context: {
+              sourceKind: "manual",
+              mode: "all",
+            },
+            outcome: {
+              itemCount: 0,
+              successCount: 0,
+              failureCount: 0,
+              skippedCount: 0,
+            },
+          },
+        },
+      )
+    })
+  })
+
+  it("completes global refresh analytics as failure when some accounts fail", async () => {
+    handleRefreshMock.mockResolvedValueOnce({
+      success: 2,
+      failed: 1,
+      latestSyncTime: 0,
+      refreshedCount: 2,
+    })
+
+    render(<AccountManagement />)
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "common:actions.refresh" }),
+    )
+
+    expectAccountHeaderActionSpanStarted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAllAccounts,
+    })
+    await waitFor(() => {
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            itemCount: 3,
+            successCount: 2,
+            failureCount: 1,
+          },
+          diagnostics: {
+            context: {
+              sourceKind: "manual",
+              mode: "all",
+            },
+            failure: {
+              category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+              reason: PRODUCT_ANALYTICS_FAILURE_REASONS.Unknown,
+              stage: PRODUCT_ANALYTICS_FAILURE_STAGES.Request,
+            },
+            outcome: {
+              itemCount: 3,
+              successCount: 2,
+              failureCount: 1,
+              skippedCount: 1,
+            },
+          },
+        },
+      )
+    })
   })
 
   it("does not render the disabled-account refresh action when no disabled accounts exist", () => {
@@ -171,6 +360,89 @@ describe("options AccountManagement page", () => {
 
     expect(handleRefreshDisabledAccountsMock).toHaveBeenCalledTimes(1)
     expect(handleRefreshDisabledAccountsMock).toHaveBeenCalledWith(true)
+    expectAccountHeaderActionSpanStarted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshDisabledAccounts,
+    })
+    await waitFor(() => {
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights: {
+            itemCount: 0,
+            successCount: 0,
+            failureCount: 0,
+          },
+          diagnostics: {
+            context: {
+              sourceKind: "manual",
+              mode: "all",
+            },
+            outcome: {
+              itemCount: 0,
+              successCount: 0,
+              failureCount: 0,
+              skippedCount: 0,
+            },
+          },
+        },
+      )
+    })
+  })
+
+  it("tracks opening all external check-in accounts from the header", async () => {
+    accountDataContextState.current = {
+      ...accountDataContextState.current,
+      displayData: [
+        {
+          id: "external-checkin-1",
+          checkIn: { customCheckIn: { url: "https://example.test/checkin" } },
+        },
+      ],
+    }
+
+    render(<AccountManagement />)
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "account:actions.openAllExternalCheckIn",
+      }),
+    )
+
+    expect(handleOpenExternalCheckInsMock).toHaveBeenCalledTimes(1)
+    expect(handleOpenExternalCheckInsMock).toHaveBeenCalledWith(
+      accountDataContextState.current.displayData,
+      {
+        openAll: false,
+        openInNewWindow: false,
+        analyticsContext: {
+          featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAllExternalCheckIns,
+          surfaceId:
+            PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementHeader,
+          entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+        },
+      },
+    )
+    expect(trackProductAnalyticsActionStartedMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAllExternalCheckIns,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementHeader,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+  })
+
+  it("tracks opening duplicate account scan from the header", async () => {
+    render(<AccountManagement />)
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "account:actions.scanDuplicates",
+      }),
+    )
+
+    expectAccountHeaderAction({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ScanDuplicateAccounts,
+    })
   })
 
   it("disables both refresh buttons while a refresh is already running", async () => {
@@ -229,6 +501,34 @@ describe("options AccountManagement page", () => {
         reEnabledCount: 1,
       }),
     ).toBe("account:refresh.refreshDisabledCompleteWithFailures")
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          itemCount: 3,
+          successCount: 2,
+          failureCount: 1,
+        },
+        diagnostics: {
+          context: {
+            sourceKind: "manual",
+            mode: "all",
+          },
+          failure: {
+            category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+            reason: PRODUCT_ANALYTICS_FAILURE_REASONS.Unknown,
+            stage: PRODUCT_ANALYTICS_FAILURE_STAGES.Request,
+          },
+          outcome: {
+            itemCount: 3,
+            successCount: 2,
+            failureCount: 1,
+            skippedCount: 0,
+          },
+        },
+      },
+    )
   })
 
   it("logs an error when disabled-account refresh rejects", async () => {
@@ -252,6 +552,23 @@ describe("options AccountManagement page", () => {
         "Error during disabled account refresh",
         refreshError,
       )
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          diagnostics: {
+            context: {
+              sourceKind: "manual",
+              mode: "all",
+            },
+            failure: {
+              category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+              reason: PRODUCT_ANALYTICS_FAILURE_REASONS.Unknown,
+              stage: PRODUCT_ANALYTICS_FAILURE_STAGES.Request,
+            },
+          },
+        },
+      )
     })
   })
 })
@@ -266,5 +583,25 @@ describe("options BookmarkManagement page", () => {
       await screen.findByRole("button", { name: "bookmark:actions.add" }),
     )
     expect(await screen.findByText("BookmarkDialogOpen")).toBeInTheDocument()
+  })
+
+  it("opens a prefilled add-bookmark dialog from sponsor route params", async () => {
+    render(
+      <BookmarkManagement
+        routeParams={{
+          action: "add",
+          name: "Manual Provider",
+          url: "https://manual.example.com",
+        }}
+      />,
+    )
+
+    expect(await screen.findByText("BookmarkDialogOpen")).toBeInTheDocument()
+    expect(screen.getByTestId("bookmark-dialog-name")).toHaveTextContent(
+      "Manual Provider",
+    )
+    expect(screen.getByTestId("bookmark-dialog-url")).toHaveTextContent(
+      "https://manual.example.com",
+    )
   })
 })

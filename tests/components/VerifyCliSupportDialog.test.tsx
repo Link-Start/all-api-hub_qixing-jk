@@ -3,6 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { VerifyCliSupportDialog } from "~/components/dialogs/VerifyCliSupportDialog"
 import { SITE_TYPES } from "~/constants/siteType"
 import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FAILURE_STAGES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import {
   fireEvent,
   render,
   screen,
@@ -13,6 +22,12 @@ import {
 const mockFetchAccountTokens = vi.fn()
 const mockFetchApiCredentialModelIds = vi.fn()
 const mockResolveDisplayAccountTokenForSecret = vi.fn()
+const mockStartProductAnalyticsAction = vi.fn()
+const mockCompleteProductAnalyticsAction = vi.fn()
+
+function getCliToolCardTestId(toolId: string) {
+  return `verify-cli-${toolId}`
+}
 
 vi.mock("~/services/apiService", () => ({
   getApiService: () => ({
@@ -25,6 +40,17 @@ vi.mock("~/services/apiService", () => ({
 vi.mock("~/services/accounts/utils/apiServiceRequest", () => ({
   resolveDisplayAccountTokenForSecret: (...args: any[]) =>
     mockResolveDisplayAccountTokenForSecret(...args),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  resolveProductAnalyticsErrorCategoryFromError: (error: unknown) =>
+    error &&
+    typeof error === "object" &&
+    (error as { statusCode?: unknown }).statusCode === 401
+      ? PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth
+      : PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+  startProductAnalyticsAction: (...args: any[]) =>
+    mockStartProductAnalyticsAction(...args),
 }))
 
 vi.mock("~/services/apiCredentialProfiles/modelCatalog", async () => {
@@ -56,6 +82,11 @@ describe("VerifyCliSupportDialog", () => {
       async (_account, token) => token,
     )
     mockRunCliSupportTool.mockReset()
+    mockStartProductAnalyticsAction.mockReset()
+    mockCompleteProductAnalyticsAction.mockReset()
+    mockStartProductAnalyticsAction.mockReturnValue({
+      complete: mockCompleteProductAnalyticsAction,
+    })
   })
 
   it("runs CLI support directly from a stored profile without loading account tokens", async () => {
@@ -89,7 +120,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-claude")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -185,7 +216,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -233,7 +264,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -288,7 +319,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -296,7 +327,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-claude")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -381,7 +412,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -389,7 +420,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-gemini")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("gemini"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -446,7 +477,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -454,7 +485,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-codex")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("codex"))
     expect(
       await within(toolCard).findByText(
         "cliSupportVerification:verifyDialog.requiresModelId",
@@ -511,7 +542,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -523,7 +554,7 @@ describe("VerifyCliSupportDialog", () => {
       await screen.findByText("cliSupportVerification:verifyDialog.modelHint"),
     ).toBeInTheDocument()
 
-    const toolCard = await screen.findByTestId("verify-cli-codex")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("codex"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -575,7 +606,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -583,7 +614,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    await screen.findByTestId("verify-cli-claude")
+    await screen.findByTestId(getCliToolCardTestId("claude"))
     expect(
       screen.queryByText("cliSupportVerification:verifyDialog.modelHint"),
     ).not.toBeInTheDocument()
@@ -649,7 +680,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -657,7 +688,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-claude")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -754,7 +785,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -767,7 +798,7 @@ describe("VerifyCliSupportDialog", () => {
     })
     expect(runAllButton).toBeDisabled()
 
-    const toolCard = await screen.findByTestId("verify-cli-claude")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
     expect(
       within(toolCard).getByRole("button", {
         name: "cliSupportVerification:verifyDialog.actions.runOne",
@@ -794,7 +825,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -847,7 +878,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -855,7 +886,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-claude")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -878,6 +909,77 @@ describe("VerifyCliSupportDialog", () => {
     })
     fireEvent.click(outputToggle)
     expect(await within(toolCard).findByText(/401/)).toBeInTheDocument()
+  })
+
+  it("does not use message-derived HTTP status for CLI failure analytics", async () => {
+    mockFetchAccountTokens.mockResolvedValueOnce([
+      {
+        id: 1,
+        user_id: 1,
+        key: "secret",
+        status: 1,
+        name: "token-1",
+        models: "",
+        model_limits: "",
+        created_time: 0,
+        accessed_time: 0,
+        expired_time: 0,
+        remain_quota: 0,
+        unlimited_quota: true,
+        used_quota: 0,
+      },
+    ])
+    mockRunCliSupportTool.mockRejectedValueOnce(new Error("Unauthorized 401"))
+
+    render(
+      <VerifyCliSupportDialog
+        isOpen={true}
+        onClose={() => {}}
+        account={{
+          id: "a1",
+          name: "Account",
+          username: "u",
+          balance: { USD: 0, CNY: 0 },
+          todayConsumption: { USD: 0, CNY: 0 },
+          todayIncome: { USD: 0, CNY: 0 },
+          todayTokens: { upload: 0, download: 0 },
+          health: { status: "healthy" as any },
+          siteType: SITE_TYPES.NEW_API,
+          baseUrl: "https://example.com",
+          token: "t",
+          userId: "1",
+          authType: "access_token" as any,
+          checkIn: { enableDetection: false } as any,
+        }}
+        initialModelId="gpt-test"
+      />,
+    )
+
+    const runButton = await screen.findByRole("button", {
+      name: "cliSupportVerification:verifyDialog.actions.run",
+    })
+    await waitFor(() => expect(runButton).toBeEnabled())
+    fireEvent.click(runButton)
+
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("claude"))
+    expect(
+      await within(toolCard).findByText(
+        "cliSupportVerification:verifyDialog.summaries.unauthorized",
+      ),
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+            successCount: 0,
+            failureCount: 1,
+          },
+        },
+      )
+    })
   })
 
   it("surfaces generic unexpected failures when no HTTP status can be inferred", async () => {
@@ -916,7 +1018,7 @@ describe("VerifyCliSupportDialog", () => {
           siteType: SITE_TYPES.NEW_API,
           baseUrl: "https://example.com",
           token: "t",
-          userId: 1,
+          userId: "1",
           authType: "access_token" as any,
           checkIn: { enableDetection: false } as any,
         }}
@@ -924,7 +1026,7 @@ describe("VerifyCliSupportDialog", () => {
       />,
     )
 
-    const toolCard = await screen.findByTestId("verify-cli-codex")
+    const toolCard = await screen.findByTestId(getCliToolCardTestId("codex"))
     const runButton = within(toolCard).getByRole("button", {
       name: "cliSupportVerification:verifyDialog.actions.runOne",
     })
@@ -980,5 +1082,201 @@ describe("VerifyCliSupportDialog", () => {
         mockRunCliSupportTool.mock.calls.map((call) => call[0].toolId),
       ).toEqual(["claude", "codex", "gemini"])
     })
+  })
+
+  it("completes run-all analytics as success when all CLI tools pass", async () => {
+    mockRunCliSupportTool.mockImplementation(async ({ toolId }) => ({
+      id: toolId,
+      probeId: "tool-calling",
+      status: "pass",
+      latencyMs: 5,
+      summary: "Supported",
+      summaryKey: "verifyDialog.summaries.supported",
+    }))
+
+    render(
+      <VerifyCliSupportDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p1",
+          name: "Profile",
+          apiType: "openai-compatible" as any,
+          baseUrl: "https://example.com",
+          apiKey: "profile-secret",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+        initialModelId="gpt-test"
+      />,
+    )
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "cliSupportVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights: {
+            successCount: 3,
+            failureCount: 0,
+          },
+        },
+      )
+    })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.VerifyModelCliSupport,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+  })
+
+  it("completes run-all analytics as failure when a CLI tool fails", async () => {
+    mockRunCliSupportTool
+      .mockResolvedValueOnce({
+        id: "claude",
+        probeId: "tool-calling",
+        status: "pass",
+        latencyMs: 5,
+        summary: "Supported",
+      })
+      .mockResolvedValueOnce({
+        id: "codex",
+        probeId: "tool-calling",
+        status: "fail",
+        latencyMs: 5,
+        summary: "Unsupported",
+      })
+      .mockResolvedValueOnce({
+        id: "gemini",
+        probeId: "tool-calling",
+        status: "pass",
+        latencyMs: 5,
+        summary: "Supported",
+      })
+
+    render(
+      <VerifyCliSupportDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p1",
+          name: "Profile",
+          apiType: "openai-compatible" as any,
+          baseUrl: "https://example.com",
+          apiKey: "profile-secret",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+        initialModelId="gpt-test"
+      />,
+    )
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "cliSupportVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+            successCount: 2,
+            failureCount: 1,
+          },
+        },
+      )
+    })
+  })
+
+  it("completes run-all analytics as skipped when no CLI tools execute", async () => {
+    mockFetchAccountTokens.mockResolvedValueOnce([
+      {
+        id: 1,
+        user_id: 1,
+        key: "",
+        status: 1,
+        name: "token-1",
+        models: "",
+        model_limits: "",
+        created_time: 0,
+        accessed_time: 0,
+        expired_time: 0,
+        remain_quota: 0,
+        unlimited_quota: true,
+        used_quota: 0,
+      },
+    ])
+    mockResolveDisplayAccountTokenForSecret.mockResolvedValue({
+      id: 1,
+      user_id: 1,
+      key: "",
+      status: 1,
+      name: "token-1",
+      models: "",
+      model_limits: "",
+      created_time: 0,
+      accessed_time: 0,
+      expired_time: 0,
+      remain_quota: 0,
+      unlimited_quota: true,
+      used_quota: 0,
+    })
+
+    render(
+      <VerifyCliSupportDialog
+        isOpen={true}
+        onClose={() => {}}
+        account={{
+          id: "a1",
+          name: "Account",
+          username: "u",
+          balance: { USD: 0, CNY: 0 },
+          todayConsumption: { USD: 0, CNY: 0 },
+          todayIncome: { USD: 0, CNY: 0 },
+          todayTokens: { upload: 0, download: 0 },
+          health: { status: "healthy" as any },
+          siteType: SITE_TYPES.NEW_API,
+          baseUrl: "https://example.com",
+          token: "t",
+          userId: "1",
+          authType: "access_token" as any,
+          checkIn: { enableDetection: false } as any,
+        }}
+        initialModelId="gpt-test"
+      />,
+    )
+
+    const runAllButton = await screen.findByRole("button", {
+      name: "cliSupportVerification:verifyDialog.actions.run",
+    })
+    await waitFor(() => expect(runAllButton).toBeEnabled())
+    fireEvent.click(runAllButton)
+
+    await waitFor(() => {
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Skipped,
+        {
+          insights: {
+            successCount: 0,
+            failureCount: 0,
+          },
+        },
+      )
+    })
+    expect(mockRunCliSupportTool).not.toHaveBeenCalled()
   })
 })

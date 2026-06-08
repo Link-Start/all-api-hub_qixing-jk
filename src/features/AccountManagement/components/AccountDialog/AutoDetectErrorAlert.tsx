@@ -8,18 +8,22 @@ import {
   reloadCurrentTab,
   type AutoDetectErrorProps,
 } from "~/services/accounts/utils/autoDetectUtils"
+import { createTab } from "~/utils/browser/browserApi"
+import { openSiteSupportRequestPage } from "~/utils/navigation"
 
 /**
  * Alert displayed when automatic credential detection fails so users can recover.
  * @param props Component props describing the error context and handlers.
  * @param props.error Error metadata powering the alert content.
  * @param props.siteUrl Optional site URL used for fallback login redirection.
+ * @param props.siteType Optional current site type hint used for login route resolution.
  * @param props.onHelpClick Optional handler invoked when help action is triggered.
  * @param props.onActionClick Optional handler invoked when custom action button is pressed.
  */
 export default function AutoDetectErrorAlert({
   error,
   siteUrl,
+  siteType,
   onHelpClick,
   onActionClick,
 }: AutoDetectErrorProps) {
@@ -30,7 +34,7 @@ export default function AutoDetectErrorAlert({
       onActionClick()
     } else if (error.type === AutoDetectErrorType.UNAUTHORIZED && siteUrl) {
       // 默认行为：打开登录页面
-      await openLoginTab(siteUrl)
+      await openLoginTab(siteUrl, siteType)
     } else if (error.type === AutoDetectErrorType.CURRENT_TAB_RELOAD_REQUIRED) {
       await reloadCurrentTab()
     }
@@ -41,9 +45,20 @@ export default function AutoDetectErrorAlert({
       onHelpClick()
     } else if (error.helpDocUrl) {
       // 默认行为：打开帮助文档
-      browser.tabs.create({ url: error.helpDocUrl, active: true })
+      void createTab(error.helpDocUrl, true)
     }
   }
+
+  const handleReportUnsupportedSite = () => {
+    void openSiteSupportRequestPage({
+      siteUrl,
+      errorType: error.type,
+      errorMessage: error.message,
+    })
+  }
+
+  const hasRecoveryAction = Boolean(error.actionText || error.helpDocUrl)
+  const canReportUnsupportedSite = Boolean(siteUrl)
 
   return (
     <Alert variant="warning" className="mb-4">
@@ -51,8 +66,8 @@ export default function AutoDetectErrorAlert({
         <p className="mb-2 text-xs">{error.message}</p>
 
         {/* 操作按钮区域 */}
-        {(error.actionText || error.helpDocUrl) && (
-          <div className="flex space-x-2">
+        {(hasRecoveryAction || canReportUnsupportedSite) && (
+          <div className="flex flex-wrap gap-2">
             {/* 主要操作按钮 */}
             {error.actionText && (
               <Button
@@ -75,6 +90,17 @@ export default function AutoDetectErrorAlert({
                 leftIcon={<QuestionMarkCircleIcon className="h-3 w-3" />}
               >
                 {t("actions.helpDocument")}
+              </Button>
+            )}
+
+            {canReportUnsupportedSite && (
+              <Button
+                type="button"
+                onClick={handleReportUnsupportedSite}
+                variant="secondary"
+                size="sm"
+              >
+                {t("actions.reportUnsupportedSite")}
               </Button>
             )}
           </div>

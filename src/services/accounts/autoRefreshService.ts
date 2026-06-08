@@ -1,5 +1,13 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import {
+  AutoRefreshMessageTypes,
+  onAutoRefreshMessage,
+  type AutoRefreshMutationResponse,
+  type AutoRefreshRefreshNowResponse,
+  type AutoRefreshStatusResponse,
+  type AutoRefreshUpdateSettingsRequest,
+} from "~/services/accounts/autoRefreshMessaging"
 import { usageHistoryScheduler } from "~/services/history/usageHistory/scheduler"
+import { createRuntimeMessageFailure } from "~/services/runtimeMessaging/result"
 import { AccountAutoRefresh } from "~/types/accountAutoRefresh"
 import {
   isMessageReceiverUnavailableError,
@@ -52,34 +60,38 @@ class AutoRefreshService {
    * Respects accountAutoRefresh.enabled/interval from user preferences.
    */
   async setupAutoRefresh() {
-    try {
-      // 清除现有定时器
-      if (this.refreshTimer) {
-        clearInterval(this.refreshTimer)
-        this.refreshTimer = null
-        logger.debug("已清除现有定时器")
+    // 获取用户偏好设置（可能关闭自动刷新）
+    const preferences = await userPreferences.getPreferences()
+
+    const nextConfig = preferences.accountAutoRefresh
+    if (nextConfig?.enabled) {
+      const intervalSeconds = Number(nextConfig.interval)
+      if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
+        throw new Error("Invalid auto-refresh interval")
       }
-
-      // 获取用户偏好设置（可能关闭自动刷新）
-      const preferences = await userPreferences.getPreferences()
-
-      if (!preferences.accountAutoRefresh?.enabled) {
-        logger.info("自动刷新已关闭")
-        return
-      }
-
-      // 启动定时刷新；使用 setInterval 保存引用以便后续清理
-      const intervalMs = preferences.accountAutoRefresh.interval * 1000
-      this.refreshTimer = setInterval(async () => {
-        await this.performBackgroundRefresh()
-      }, intervalMs)
-
-      logger.info("自动刷新已启动", {
-        intervalSeconds: preferences.accountAutoRefresh.interval,
-      })
-    } catch (error) {
-      logger.error("设置自动刷新失败", error)
     }
+
+    // 清除现有定时器
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer)
+      this.refreshTimer = null
+      logger.debug("已清除现有定时器")
+    }
+
+    if (!preferences.accountAutoRefresh?.enabled) {
+      logger.info("自动刷新已关闭")
+      return
+    }
+
+    // 启动定时刷新；使用 setInterval 保存引用以便后续清理
+    const intervalMs = preferences.accountAutoRefresh.interval * 1000
+    this.refreshTimer = setInterval(async () => {
+      await this.performBackgroundRefresh()
+    }, intervalMs)
+
+    logger.info("自动刷新已启动", {
+      intervalSeconds: preferences.accountAutoRefresh.interval,
+    })
   }
 
   /**
@@ -152,14 +164,10 @@ class AutoRefreshService {
   async updateSettings(updates: {
     accountAutoRefresh: Partial<AccountAutoRefresh>
   }) {
-    try {
-      await userPreferences.savePreferences(updates)
-      // 重新设置定时器
-      await this.setupAutoRefresh()
-      logger.info("设置已更新", updates)
-    } catch (error) {
-      logger.error("更新设置失败", error)
-    }
+    await userPreferences.savePreferences(updates)
+    // 重新设置定时器
+    await this.setupAutoRefresh()
+    logger.info("设置已更新", updates)
   }
 
   /**
@@ -216,50 +224,96 @@ class AutoRefreshService {
 // 创建单例实例
 export const autoRefreshService = new AutoRefreshService()
 
+let autoRefreshMessagingCleanup: (() => void)[] | null = null
+
 /**
- * Message handler for auto-refresh related actions.
- * Keeps background-only logic centralized; responds with success/error payloads.
- * @param request Incoming message with action and payload.
- * @param sendResponse Callback to reply to sender.
+ * Register typed background listeners for auto-refresh scheduler messages.
  */
-export const handleAutoRefreshMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
+export function setupAutoRefreshMessagingListeners() {
+  if (autoRefreshMessagingCleanup) {
+    return
+  }
+
+  autoRefreshMessagingCleanup = [
+    onAutoRefreshMessage(AutoRefreshMessageTypes.Setup, () =>
+      resolveAutoRefreshSetupMessage(),
+    ),
+    onAutoRefreshMessage(AutoRefreshMessageTypes.RefreshNow, () =>
+      resolveAutoRefreshRefreshNowMessage(),
+    ),
+    onAutoRefreshMessage(AutoRefreshMessageTypes.Stop, () =>
+      resolveAutoRefreshStopMessage(),
+    ),
+    onAutoRefreshMessage(AutoRefreshMessageTypes.UpdateSettings, ({ data }) =>
+      resolveAutoRefreshUpdateSettingsMessage(data),
+    ),
+    onAutoRefreshMessage(AutoRefreshMessageTypes.GetStatus, () =>
+      resolveAutoRefreshGetStatusMessage(),
+    ),
+  ]
+}
+
+/**
+ * Resolve a typed request to reapply the current auto-refresh schedule.
+ */
+export async function resolveAutoRefreshSetupMessage(): Promise<AutoRefreshMutationResponse> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.AutoRefreshSetup:
-        await autoRefreshService.setupAutoRefresh()
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.AutoRefreshRefreshNow: {
-        const result = await autoRefreshService.refreshNow()
-        sendResponse({ success: true, data: result })
-        break
-      }
-
-      case RuntimeActionIds.AutoRefreshStop:
-        autoRefreshService.stopAutoRefresh()
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.AutoRefreshUpdateSettings:
-        await autoRefreshService.updateSettings(request.settings)
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.AutoRefreshGetStatus: {
-        const status = autoRefreshService.getStatus()
-        sendResponse({ success: true, data: status })
-        break
-      }
-
-      default:
-        sendResponse({ success: false, error: "未知的操作" })
-    }
+    await autoRefreshService.setupAutoRefresh()
+    return { success: true, data: undefined }
   } catch (error) {
     logger.error("处理消息失败", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to refresh all accounts immediately.
+ */
+export async function resolveAutoRefreshRefreshNowMessage(): Promise<AutoRefreshRefreshNowResponse> {
+  try {
+    return { success: true, data: await autoRefreshService.refreshNow() }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to stop the active auto-refresh timer.
+ */
+export async function resolveAutoRefreshStopMessage(): Promise<AutoRefreshMutationResponse> {
+  try {
+    autoRefreshService.stopAutoRefresh()
+    return { success: true, data: undefined }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to persist and apply auto-refresh settings.
+ */
+export async function resolveAutoRefreshUpdateSettingsMessage(
+  request: AutoRefreshUpdateSettingsRequest,
+): Promise<AutoRefreshMutationResponse> {
+  try {
+    await autoRefreshService.updateSettings(request.settings)
+    return { success: true, data: undefined }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request for the current auto-refresh runtime status.
+ */
+export async function resolveAutoRefreshGetStatusMessage(): Promise<AutoRefreshStatusResponse> {
+  try {
+    return { success: true, data: autoRefreshService.getStatus() }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
   }
 }

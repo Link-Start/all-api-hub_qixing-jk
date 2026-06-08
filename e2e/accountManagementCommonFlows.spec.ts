@@ -1,12 +1,16 @@
 import type { Page } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import {
+  ACCOUNT_MANAGEMENT_TEST_IDS,
+  getAccountManagementListItemTestId,
+} from "~/features/AccountManagement/testIds"
 import {
   createDefaultAccountStorageConfig,
   normalizeAccountStorageConfigForWrite,
 } from "~/services/accounts/accountDefaults"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
+import { AutoCheckinMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type { AccountStorageConfig, SiteAccount } from "~/types"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
 import {
@@ -29,7 +33,7 @@ const ACCOUNT_QUICK_CHECKIN_E2E_STATE_KEY =
 
 type AccountQuickCheckinRuntimeState = {
   calls: Array<{
-    action: string
+    type: string
     accountIds: string[]
   }>
 }
@@ -84,8 +88,8 @@ async function seedStoredAccountConfig(
 
 function getAccountRow(page: Page, accountName: string) {
   return page
-    .getByRole("button", { name: accountName })
-    .locator("xpath=ancestor::div[contains(@class, 'group')][1]")
+    .getByTestId(new RegExp(`^${getAccountManagementListItemTestId("")}`))
+    .filter({ hasText: accountName })
 }
 
 async function getAccountButtonY(page: Page, accountName: string) {
@@ -104,7 +108,9 @@ async function getAccountButtonY(page: Page, accountName: string) {
 async function openAccountActionsMenu(page: Page, accountName: string) {
   const row = getAccountRow(page, accountName)
   await row.hover()
-  await row.getByRole("button", { name: "More" }).click()
+  await row
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowMoreActionsButton)
+    .click()
 }
 
 async function readAccountQuickCheckinRuntimeState(
@@ -140,7 +146,7 @@ test("disables and re-enables a stored account from account management", async (
       site_name: "Toggle Account",
       site_url: "https://toggle.example.com",
       account_info: {
-        id: 11,
+        id: "11",
         username: "toggle-user",
         access_token: "toggle-token",
       },
@@ -158,10 +164,14 @@ test("disables and re-enables a stored account from account management", async (
   ).toBeVisible()
 
   await openAccountActionsMenu(page, "Toggle Account")
-  await page.getByText("Disable account", { exact: true }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowDisableToggleMenuItem)
+    .click()
 
   await expect(
-    page.locator('[data-testid="account-list-view"] [data-disabled="true"]'),
+    page.locator(
+      `[data-testid="${ACCOUNT_MANAGEMENT_TEST_IDS.accountListView}"] [data-disabled="true"]`,
+    ),
   ).toContainText("Toggle Account")
 
   await expect
@@ -174,10 +184,14 @@ test("disables and re-enables a stored account from account management", async (
 
   await openAccountActionsMenu(page, "Toggle Account")
   await expect(page.getByText("Enable account", { exact: true })).toBeVisible()
-  await page.getByText("Enable account", { exact: true }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowDisableToggleMenuItem)
+    .click()
 
   await expect(
-    page.locator('[data-testid="account-list-view"] [data-disabled="true"]'),
+    page.locator(
+      `[data-testid="${ACCOUNT_MANAGEMENT_TEST_IDS.accountListView}"] [data-disabled="true"]`,
+    ),
   ).toHaveCount(0)
 
   await expect
@@ -201,7 +215,7 @@ test("deletes a stored account from account management and removes it from stora
       site_name: "Delete Account",
       site_url: "https://delete.example.com",
       account_info: {
-        id: 12,
+        id: "12",
         username: "delete-user",
         access_token: "delete-token",
       },
@@ -219,13 +233,15 @@ test("deletes a stored account from account management and removes it from stora
   ).toBeVisible()
 
   await openAccountActionsMenu(page, "Delete Account")
-  await page.getByText("Delete", { exact: true }).click()
+  await page.getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowDeleteMenuItem).click()
 
   const dialog = page.getByRole("dialog")
   await expect(
     dialog.getByRole("heading", { name: "Delete Account" }),
   ).toBeVisible()
-  await dialog.getByRole("button", { name: "Confirm Delete" }).click()
+  await dialog
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.deleteConfirmButton)
+    .click()
 
   await expect(
     page.getByRole("button", { name: "Delete Account" }),
@@ -274,45 +290,51 @@ test("runs quick check-in for the selected eligible account from account managem
           configurable: true,
           writable: true,
           value: async (message: unknown) => {
-            const action =
+            const type =
               typeof message === "object" &&
               message !== null &&
-              "action" in message
-                ? String((message as { action?: unknown }).action ?? "unknown")
+              "type" in message
+                ? String((message as { type?: unknown }).type ?? "unknown")
                 : "unknown"
 
-            if (action !== runNowAction && action !== getStatusAction) {
+            if (type !== runNowAction && type !== getStatusAction) {
               return await originalSendMessage(message)
             }
 
             const accountIds =
               typeof message === "object" &&
               message !== null &&
-              "accountIds" in message &&
-              Array.isArray((message as { accountIds?: unknown }).accountIds)
-                ? (message as { accountIds: string[] }).accountIds
+              "data" in message &&
+              typeof (message as { data?: unknown }).data === "object" &&
+              (message as { data?: unknown }).data !== null &&
+              "accountIds" in (message as { data: any }).data &&
+              Array.isArray((message as { data: any }).data.accountIds)
+                ? (message as { data: { accountIds: string[] } }).data
+                    .accountIds
                 : []
 
             const nextState = {
-              calls: [...readState().calls, { action, accountIds }],
+              calls: [...readState().calls, { type, accountIds }],
             }
 
             writeState(nextState)
 
-            if (action === runNowAction) {
-              return { success: true }
+            if (type === runNowAction) {
+              return { res: { success: true } }
             }
 
             return {
-              success: true,
-              data: {
-                perAccount: {
-                  "quick-checkin-account": {
-                    accountId: "quick-checkin-account",
-                    accountName: "Quick Check-in Account",
-                    status: "success",
-                    message: "check-in completed",
-                    timestamp: Date.parse("2026-03-29T12:00:00.000Z"),
+              res: {
+                success: true,
+                data: {
+                  perAccount: {
+                    "quick-checkin-account": {
+                      accountId: "quick-checkin-account",
+                      accountName: "Quick Check-in Account",
+                      status: "success",
+                      message: "check-in completed",
+                      timestamp: Date.parse("2026-03-29T12:00:00.000Z"),
+                    },
                   },
                 },
               },
@@ -332,8 +354,8 @@ test("runs quick check-in for the selected eligible account from account managem
       }
     },
     {
-      getStatusAction: RuntimeActionIds.AutoCheckinGetStatus,
-      runNowAction: RuntimeActionIds.AutoCheckinRunNow,
+      getStatusAction: AutoCheckinMessageTypes.GetStatus,
+      runNowAction: AutoCheckinMessageTypes.RunNow,
       stateKey: ACCOUNT_QUICK_CHECKIN_E2E_STATE_KEY,
     },
   )
@@ -345,7 +367,7 @@ test("runs quick check-in for the selected eligible account from account managem
       site_name: "Quick Check-in Account",
       site_url: "https://checkin.example.com",
       account_info: {
-        id: 41,
+        id: "41",
         username: "checkin-user",
         access_token: "checkin-token",
       },
@@ -363,18 +385,20 @@ test("runs quick check-in for the selected eligible account from account managem
   await expectPermissionOnboardingHidden(page)
 
   await openAccountActionsMenu(page, "Quick Check-in Account")
-  await page.getByText("Quick check-in", { exact: true }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowQuickCheckinMenuItem)
+    .click()
 
   await expect
     .poll(() => readAccountQuickCheckinRuntimeState(page))
     .toEqual({
       calls: [
         {
-          action: RuntimeActionIds.AutoCheckinRunNow,
+          type: AutoCheckinMessageTypes.RunNow,
           accountIds: ["quick-checkin-account"],
         },
         {
-          action: RuntimeActionIds.AutoCheckinGetStatus,
+          type: AutoCheckinMessageTypes.GetStatus,
           accountIds: [],
         },
       ],
@@ -398,7 +422,7 @@ test("pins and unpins an account from account management while persisting pinned
         site_name: "Alpha Account",
         site_url: "https://alpha.example.com",
         account_info: {
-          id: 31,
+          id: "31",
           username: "alpha-user",
           access_token: "alpha-token",
         },
@@ -408,7 +432,7 @@ test("pins and unpins an account from account management while persisting pinned
         site_name: "Pinned Candidate",
         site_url: "https://pinned.example.com",
         account_info: {
-          id: 32,
+          id: "32",
           username: "pinned-user",
           access_token: "pinned-token",
         },
@@ -435,7 +459,9 @@ test("pins and unpins an account from account management while persisting pinned
   )
 
   await openAccountActionsMenu(page, "Pinned Candidate")
-  await page.getByText("Pin account", { exact: true }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowPinToggleMenuItem)
+    .click()
 
   await expect
     .poll(async () => {
@@ -455,7 +481,9 @@ test("pins and unpins an account from account management while persisting pinned
   )
 
   await openAccountActionsMenu(page, "Pinned Candidate")
-  await page.getByText("Unpin account", { exact: true }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowPinToggleMenuItem)
+    .click()
 
   await expect
     .poll(async () => {
@@ -481,7 +509,7 @@ test("shows the empty duplicate-cleanup state when no duplicate accounts are fou
       site_name: "Unique One",
       site_url: "https://unique-one.example.com",
       account_info: {
-        id: 71,
+        id: "71",
         username: "unique-one-user",
         access_token: "unique-one-token",
       },
@@ -491,7 +519,7 @@ test("shows the empty duplicate-cleanup state when no duplicate accounts are fou
       site_name: "Unique Two",
       site_url: "https://unique-two.example.com",
       account_info: {
-        id: 72,
+        id: "72",
         username: "unique-two-user",
         access_token: "unique-two-token",
       },
@@ -504,7 +532,7 @@ test("shows the empty duplicate-cleanup state when no duplicate accounts are fou
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await page.getByRole("button", { name: "Scan duplicates" }).click()
+  await page.getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.dedupeScanButton).click()
 
   const dialog = page.getByRole("dialog")
   await expect(
@@ -534,7 +562,7 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
         updated_at: 200,
         created_at: 200,
         account_info: {
-          id: 55,
+          id: "55",
           username: "keep-user",
           access_token: "keep-token",
         },
@@ -546,7 +574,7 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
         updated_at: 100,
         created_at: 100,
         account_info: {
-          id: 55,
+          id: "55",
           username: "delete-user",
           access_token: "delete-token",
         },
@@ -556,7 +584,7 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
         site_name: "Unique Example",
         site_url: "https://unique.example.com",
         account_info: {
-          id: 99,
+          id: "99",
           username: "unique-user",
           access_token: "unique-token",
         },
@@ -572,7 +600,7 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await page.getByRole("button", { name: "Scan duplicates" }).click()
+  await page.getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.dedupeScanButton).click()
 
   const dialog = page.getByRole("dialog")
   await expect(
@@ -591,7 +619,9 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
   await expect(radios).toHaveCount(2)
   await radios.nth(1).click()
 
-  await dialog.getByRole("button", { name: "Preview deletion" }).click()
+  await dialog
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.dedupePreviewDeleteButton)
+    .click()
 
   const confirmDialog = page.getByRole("dialog", {
     name: "Delete duplicate accounts",
@@ -605,7 +635,9 @@ test("cleans duplicate accounts after preview confirmation and prunes stale refe
   await expect(
     confirmDialog.getByText("Delete: Duplicate Example · keep-user"),
   ).toBeVisible()
-  await confirmDialog.getByRole("button", { name: "Delete" }).click()
+  await confirmDialog
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.dedupeConfirmDeleteButton)
+    .click()
 
   await expect(
     page.getByRole("button", { name: "Scan duplicates" }),

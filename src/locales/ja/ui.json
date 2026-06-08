@@ -317,6 +317,7 @@
     "community": "コミュニティグループ",
     "discussion": "ディスカッションを開始",
     "featureRequest": "機能要望を送る",
+    "siteSupportRequest": "サイト対応を依頼",
     "trigger": "フィードバック",
     "triggerTooltip": "フィードバックショートカットを開く"
   },
@@ -353,12 +354,20 @@
   "navigation": {
     "about": "この拡張機能について",
     "account": "アカウント管理",
-    "apiCredentialProfiles": "API 認証情報プロファイル",
+    "apiCredentialProfiles": "API 認証情報庫",
     "autoCheckin": "自動チェックイン",
     "autoCheckinRunNow": "クイックチェックイン",
     "balanceHistory": "残高履歴",
     "basic": "基本設定",
     "bookmark": "ブックマーク管理",
+    "categories": {
+      "api": "API",
+      "automation": "自動化",
+      "general": "一般",
+      "insights": "インサイト",
+      "siteManagement": "サイト管理",
+      "system": "システム"
+    },
     "collapseSidebar": "サイドバーを折りたたむ",
     "expandSidebar": "サイドバーを展開",
     "externalCheckinAll": "すべての外部チェックインを開く",
@@ -369,6 +378,7 @@
     "managedSiteModelSync": "モデル同期",
     "meshGradientLab": "Mesh Gradient Lab（開発用）",
     "models": "モデル一覧",
+    "overview": "概要",
     "settings": "設定",
     "settingsOptions": "設定オプション",
     "sidebarCollapsedHint": "サイドバーは折りたたまれており、アイコンのみ表示されています",
@@ -385,6 +395,7 @@
       "control": "設定項目",
       "page": "ページ",
       "recent": "最近使った項目",
+      "section": "セクション",
       "tab": "設定タブ"
     },
     "idleDescription": "設定名、キーワード、または技術エイリアスを入力して検索を開始してください。",

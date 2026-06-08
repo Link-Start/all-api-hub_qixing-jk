@@ -27,7 +27,8 @@ In **"Settings -> Basic Settings -> Account Management"**, you can enable the fo
 
 - ⚡ **Auto-fill Current Page URL**: When enabled, clicking "Add Account" will automatically fill in the URL of the current browser tab, saving you from manual copying.
 - 🔑 **Auto-provision Default Token after Adding**: When enabled, after successfully adding an account, the extension will automatically attempt to create a default API key (Token) for you in the site backend for immediate export and use.
-- ⚠️ **Warn on Adding Duplicate Accounts**: When attempting to add an already existing site (same URL), the extension will pop up a confirmation prompt to prevent accidental duplicate additions.
+  - **AIHubMix**: AIHubMix API keys are only displayed in full once upon creation. After adding a new AIHubMix account (excluding the "Configure to Hosted Site" process), the extension will first check if the account already has a token. If it does, it will skip the creation prompt. If not, it will pop up a confirmation dialog asking if you want to create the default key immediately and display the one-time full key; if you cancel, you will need to manually create and save the full key in "Key Management" later.
+- ⚠️ **Warn on Adding Duplicate Accounts**: When attempting to add an already existing site (same URL), the extension will pop up a confirmation prompt to prevent accidental duplicate additions. You can choose to continue this addition, cancel the operation, or directly disable future duplicate reminders and continue with this addition.
 
 ---
 
@@ -49,7 +50,7 @@ As the number of accounts increases, you can keep the list tidy in the following
 ### 4.1 Tags
 - Add tags to accounts (e.g., `Work`, `Personal`, `Relay`, `Official`).
 - Quickly filter via tags at the top of the panel.
-- The tag system is shared with bookmarks and API credential profiles, supporting global renaming.
+- The tag system is shared with bookmarks and the API Credential Library, supporting global renaming.
 
 ### 4.2 Pinning
 - Hover over an account card and click the **"Pin"** icon.
@@ -59,6 +60,10 @@ As the number of accounts increases, you can keep the list tidy in the following
 - In **"Settings -> Sorting Priority"**, you can customize global sorting logic. For details, see [Sorting Priority Settings](./sorting-priority.md).
 - Supports multi-level sorting by dimensions such as balance, creation time, health status, and check-in status.
 - You can also manually adjust the order by dragging in the account list (requires switching to manual sorting mode).
+
+### 4.4 Balance and Today's Earnings Statistics
+- When adding or editing an account, you can enable **"Exclude from Total Balance"** to prevent this account from participating in the total balance summary in pop-ups, account lists, and shared overview snapshots; this will not affect account refresh, check-in, or list display.
+- If an account's earnings should not be included in the daily summary, you can enable **"Exclude from Today's Earnings"**. This switch only affects the daily earnings total in pop-ups, account lists, and shared overview snapshots; it will not hide the account, nor will it stop refreshing or check-in.
 
 ---
 

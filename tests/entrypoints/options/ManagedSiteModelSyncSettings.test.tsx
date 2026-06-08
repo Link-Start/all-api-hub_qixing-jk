@@ -3,10 +3,17 @@ import toast from "react-hot-toast"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import ManagedSiteModelSyncSettings from "~/features/BasicSettings/components/tabs/ManagedSite/managedSiteModelSyncSettings"
 import { modelMetadataService } from "~/services/models/modelMetadata"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
+import { sendModelSyncMessage } from "~/services/models/modelSync/messaging"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { ModelSyncMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import { pushWithinOptionsPage } from "~/utils/navigation"
 import { fireEvent, render, screen, waitFor } from "~~/tests/test-utils/render"
 
@@ -14,10 +21,22 @@ const {
   mockedUseUserPreferencesContext,
   mockUpdateNewApiModelSync,
   mockResetNewApiModelSyncConfig,
+  mockStartProductAnalyticsAction,
+  mockCompleteProductAnalyticsAction,
 } = vi.hoisted(() => ({
   mockedUseUserPreferencesContext: vi.fn(),
   mockUpdateNewApiModelSync: vi.fn(),
   mockResetNewApiModelSyncConfig: vi.fn(),
+  mockStartProductAnalyticsAction: vi.fn(),
+  mockCompleteProductAnalyticsAction: vi.fn(),
+}))
+
+const TEST_IDS = vi.hoisted(() => ({
+  filterViewMode: "filter-view-mode",
+  filterCount: "filter-count",
+  probeRulesSupported: "probe-rules-supported",
+  allowedModelOptions: "allowed-model-options",
+  allowedModelSelected: "allowed-model-selected",
 }))
 
 vi.mock("~/contexts/UserPreferencesContext", async (importOriginal) => {
@@ -32,13 +51,15 @@ vi.mock("~/contexts/UserPreferencesContext", async (importOriginal) => {
   }
 })
 
-vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
+vi.mock("~/services/models/modelSync/messaging", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("~/utils/browser/browserApi")>()
+    await importOriginal<
+      typeof import("~/services/models/modelSync/messaging")
+    >()
 
   return {
     ...actual,
-    sendRuntimeMessage: vi.fn(),
+    sendModelSyncMessage: vi.fn(),
   }
 })
 
@@ -47,6 +68,10 @@ vi.mock("~/services/models/modelMetadata", () => ({
     initialize: vi.fn(),
     getAllMetadata: vi.fn(),
   },
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  startProductAnalyticsAction: mockStartProductAnalyticsAction,
 }))
 
 vi.mock("~/utils/navigation", async (importOriginal) => {
@@ -105,9 +130,9 @@ vi.mock("~/components/ChannelFiltersEditor", () => ({
     onClickViewVisual,
   }: any) => (
     <div>
-      <div data-testid="filter-view-mode">{viewMode}</div>
-      <div data-testid="filter-count">{filters.length}</div>
-      <div data-testid="probe-rules-supported">
+      <div data-testid={TEST_IDS.filterViewMode}>{viewMode}</div>
+      <div data-testid={TEST_IDS.filterCount}>{filters.length}</div>
+      <div data-testid={TEST_IDS.probeRulesSupported}>
         {String(Boolean(probeRulesSupported))}
       </div>
       <button onClick={onAddFilter}>add-filter</button>
@@ -216,10 +241,12 @@ vi.mock("~/components/ui", () => ({
     disabled?: boolean
   }) => (
     <div>
-      <div data-testid="allowed-model-options">
+      <div data-testid={TEST_IDS.allowedModelOptions}>
         {options.map((option) => option.label).join(",")}
       </div>
-      <div data-testid="allowed-model-selected">{selected.join(",")}</div>
+      <div data-testid={TEST_IDS.allowedModelSelected}>
+        {selected.join(",")}
+      </div>
       <button
         disabled={disabled}
         onClick={() => onChange?.(["gpt-4o", "claude-3-7-sonnet"])}
@@ -285,9 +312,8 @@ vi.mock("~/components/ui", () => ({
   ),
 }))
 
-const mockedSendRuntimeMessage = sendRuntimeMessage as unknown as ReturnType<
-  typeof vi.fn
->
+const mockedSendModelSyncMessage =
+  sendModelSyncMessage as unknown as ReturnType<typeof vi.fn>
 const mockedModelMetadataService = modelMetadataService as unknown as {
   initialize: ReturnType<typeof vi.fn>
   getAllMetadata: ReturnType<typeof vi.fn>
@@ -331,28 +357,31 @@ describe("ManagedSiteModelSyncSettings", () => {
     mockResetNewApiModelSyncConfig.mockResolvedValue(true)
     mockedUseUserPreferencesContext.mockReturnValue(createContextValue())
 
-    mockedSendRuntimeMessage.mockResolvedValue({
+    mockedSendModelSyncMessage.mockResolvedValue({
       success: true,
       data: ["z-model", "a-model"],
     })
 
     mockedModelMetadataService.initialize.mockResolvedValue(undefined)
     mockedModelMetadataService.getAllMetadata.mockReturnValue([])
+    mockStartProductAnalyticsAction.mockReturnValue({
+      complete: mockCompleteProductAnalyticsAction,
+    })
   })
 
   it("loads runtime model options and persists toggles, intervals, and allowed models", async () => {
     render(<ManagedSiteModelSyncSettings />)
 
     await waitFor(() => {
-      expect(mockedSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncGetChannelUpstreamModelOptions,
-      })
+      expect(mockedSendModelSyncMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.GetChannelUpstreamModelOptions,
+      )
     })
 
-    expect(screen.getByTestId("allowed-model-options")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.allowedModelOptions)).toHaveTextContent(
       "a-model,z-model",
     )
-    expect(screen.getByTestId("allowed-model-selected")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.allowedModelSelected)).toHaveTextContent(
       "existing-model",
     )
 
@@ -392,13 +421,23 @@ describe("ManagedSiteModelSyncSettings", () => {
     expect(mockUpdateNewApiModelSync).toHaveBeenCalledWith({
       enabled: false,
     })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.UpdateManagedSiteModelSyncSettings,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(toast.success).toHaveBeenCalledWith(
       "managedSiteModelSync:messages.success.settingsSaved",
     )
   })
 
-  it("falls back to model metadata when runtime options are unavailable", async () => {
-    mockedSendRuntimeMessage.mockResolvedValue({
+  it("honors an empty successful runtime model option list", async () => {
+    mockedSendModelSyncMessage.mockResolvedValue({
       success: true,
       data: [],
     })
@@ -410,11 +449,14 @@ describe("ManagedSiteModelSyncSettings", () => {
     render(<ManagedSiteModelSyncSettings />)
 
     await waitFor(() => {
-      expect(mockedModelMetadataService.initialize).toHaveBeenCalledTimes(1)
+      expect(
+        screen.getByText("managedSiteModelSync:settings.allowedModelsHint"),
+      ).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId("allowed-model-options")).toHaveTextContent(
-      "alpha-model,zeta-model",
+    expect(mockedModelMetadataService.initialize).not.toHaveBeenCalled()
+    expect(screen.getByTestId(TEST_IDS.allowedModelOptions)).toHaveTextContent(
+      "",
     )
   })
 
@@ -449,7 +491,7 @@ describe("ManagedSiteModelSyncSettings", () => {
     render(<ManagedSiteModelSyncSettings />)
 
     await waitFor(() => {
-      expect(mockedSendRuntimeMessage).toHaveBeenCalled()
+      expect(mockedSendModelSyncMessage).toHaveBeenCalled()
     })
 
     expect(
@@ -460,13 +502,13 @@ describe("ManagedSiteModelSyncSettings", () => {
     expect(screen.getByDisplayValue("1")).toBeInTheDocument()
     expect(screen.getByDisplayValue("35")).toBeInTheDocument()
     expect(screen.getByDisplayValue("9")).toBeInTheDocument()
-    expect(screen.getByTestId("allowed-model-selected")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.allowedModelSelected)).toHaveTextContent(
       "legacy-model",
     )
   })
 
   it("falls back to model metadata when the runtime response is unsuccessful", async () => {
-    mockedSendRuntimeMessage.mockResolvedValue({
+    mockedSendModelSyncMessage.mockResolvedValue({
       success: false,
       error: "runtime unavailable",
     })
@@ -481,7 +523,7 @@ describe("ManagedSiteModelSyncSettings", () => {
       expect(mockedModelMetadataService.initialize).toHaveBeenCalledTimes(1)
     })
 
-    expect(screen.getByTestId("allowed-model-options")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.allowedModelOptions)).toHaveTextContent(
       "alpha-model,zeta-model",
     )
     expect(
@@ -492,7 +534,7 @@ describe("ManagedSiteModelSyncSettings", () => {
   })
 
   it("shows a load error when both runtime and metadata fallback fail", async () => {
-    mockedSendRuntimeMessage.mockRejectedValue(new Error("runtime down"))
+    mockedSendModelSyncMessage.mockRejectedValue(new Error("runtime down"))
 
     render(<ManagedSiteModelSyncSettings />)
 
@@ -504,14 +546,16 @@ describe("ManagedSiteModelSyncSettings", () => {
       ).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId("allowed-model-options")).toHaveTextContent("")
+    expect(screen.getByTestId(TEST_IDS.allowedModelOptions)).toHaveTextContent(
+      "",
+    )
   })
 
   it("ignores invalid numeric values outside the supported ranges", async () => {
     render(<ManagedSiteModelSyncSettings />)
 
     await waitFor(() => {
-      expect(mockedSendRuntimeMessage).toHaveBeenCalled()
+      expect(mockedSendModelSyncMessage).toHaveBeenCalled()
     })
 
     vi.clearAllMocks()
@@ -538,7 +582,7 @@ describe("ManagedSiteModelSyncSettings", () => {
     render(<ManagedSiteModelSyncSettings />)
 
     await waitFor(() => {
-      expect(mockedSendRuntimeMessage).toHaveBeenCalled()
+      expect(mockedSendModelSyncMessage).toHaveBeenCalled()
     })
 
     vi.clearAllMocks()
@@ -878,7 +922,9 @@ describe("ManagedSiteModelSyncSettings", () => {
       )
     })
 
-    expect(screen.getByTestId("filter-view-mode")).toHaveTextContent("json")
+    expect(screen.getByTestId(TEST_IDS.filterViewMode)).toHaveTextContent(
+      "json",
+    )
   })
 
   it("closes the global filters dialog when cancel is clicked outside a save", async () => {
@@ -943,7 +989,7 @@ describe("ManagedSiteModelSyncSettings", () => {
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
     expect(screen.getByLabelText("json-text")).toHaveValue("")
-    expect(screen.getByTestId("filter-count")).toHaveTextContent("1")
+    expect(screen.getByTestId(TEST_IDS.filterCount)).toHaveTextContent("1")
   })
 
   it("falls back to empty JSON text when switching the dialog draft to JSON fails to stringify", async () => {
@@ -988,7 +1034,9 @@ describe("ManagedSiteModelSyncSettings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "view-json" }))
 
-    expect(screen.getByTestId("filter-view-mode")).toHaveTextContent("json")
+    expect(screen.getByTestId(TEST_IDS.filterViewMode)).toHaveTextContent(
+      "json",
+    )
     expect(screen.getByLabelText("json-text")).toHaveValue("")
   })
 
@@ -1030,11 +1078,11 @@ describe("ManagedSiteModelSyncSettings", () => {
     )
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
-    expect(screen.getByTestId("filter-count")).toHaveTextContent("1")
+    expect(screen.getByTestId(TEST_IDS.filterCount)).toHaveTextContent("1")
 
     fireEvent.click(screen.getByRole("button", { name: "remove-filter" }))
 
-    expect(screen.getByTestId("filter-count")).toHaveTextContent("0")
+    expect(screen.getByTestId(TEST_IDS.filterCount)).toHaveTextContent("0")
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -1103,7 +1151,7 @@ describe("ManagedSiteModelSyncSettings", () => {
     )
 
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
-    expect(screen.getByTestId("filter-count")).toHaveTextContent("2")
+    expect(screen.getByTestId(TEST_IDS.filterCount)).toHaveTextContent("2")
 
     fireEvent.click(screen.getByRole("button", { name: "move-first-down" }))
     fireEvent.click(
@@ -1223,8 +1271,10 @@ describe("ManagedSiteModelSyncSettings", () => {
     })
     fireEvent.click(screen.getByRole("button", { name: "view-visual" }))
 
-    expect(screen.getByTestId("filter-view-mode")).toHaveTextContent("visual")
-    expect(screen.getByTestId("filter-count")).toHaveTextContent("0")
+    expect(screen.getByTestId(TEST_IDS.filterViewMode)).toHaveTextContent(
+      "visual",
+    )
+    expect(screen.getByTestId(TEST_IDS.filterCount)).toHaveTextContent("0")
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -1442,6 +1492,23 @@ describe("ManagedSiteModelSyncSettings", () => {
       expect(mockResetNewApiModelSyncConfig).toHaveBeenCalledTimes(1)
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteChannelModelSync,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.UpdateManagedSiteModelSyncSettings,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(mockedPushWithinOptionsPage).toHaveBeenCalledWith(
       `#${MENU_ITEM_IDS.MANAGED_SITE_MODEL_SYNC}`,
     )

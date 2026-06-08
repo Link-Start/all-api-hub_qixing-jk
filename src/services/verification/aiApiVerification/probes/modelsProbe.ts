@@ -1,6 +1,6 @@
-import { fetchAnthropicModelIds } from "~/services/apiService/anthropic"
-import { fetchGoogleModelIds } from "~/services/apiService/google"
-import { fetchOpenAICompatibleModelIds } from "~/services/apiService/openaiCompatible"
+import { fetchAnthropicModelIds } from "~/services/aiApi/anthropic"
+import { fetchGoogleModelIds } from "~/services/aiApi/google"
+import { fetchOpenAICompatibleModelIds } from "~/services/aiApi/openaiCompatible"
 
 import { nowMs, okLatency } from "../probeTiming"
 import type {
@@ -8,7 +8,11 @@ import type {
   ApiVerificationProbeResult,
 } from "../types"
 import { API_TYPES } from "../types"
-import { isAbortError, toSanitizedErrorSummary } from "../utils"
+import {
+  buildSafeProbeFailureDiagnostics,
+  isAbortError,
+  toSanitizedErrorSummary,
+} from "../utils"
 
 type RunModelsProbeParams = {
   baseUrl: string
@@ -161,12 +165,17 @@ export async function runModelsProbe(
       throw error
     }
 
+    const summary = toSanitizedErrorSummary(error, [params.apiKey])
+    const diagnostics = buildSafeProbeFailureDiagnostics(error, summary)
+
     return {
       result: {
         id: "models",
         status: "fail",
         latencyMs: okLatency(startedAt),
-        summary: toSanitizedErrorSummary(error, [params.apiKey]),
+        summary,
+        summaryKey: diagnostics.summaryKey,
+        summaryParams: diagnostics.summaryParams,
         input: {
           endpoint:
             params.apiType === API_TYPES.GOOGLE
@@ -175,6 +184,7 @@ export async function runModelsProbe(
           baseUrl: normalizeModelsBaseUrl(params.apiType, params.baseUrl),
           apiType: params.apiType,
         },
+        output: diagnostics.output,
       },
     }
   }

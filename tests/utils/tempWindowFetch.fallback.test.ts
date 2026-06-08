@@ -341,6 +341,7 @@ describe("tempWindowFetch runtime helpers and fallback gating", () => {
         accountId: "acct-1",
         authType: AuthTypeEnum.Cookie,
         cookieAuthSessionCookie: "session=abc",
+        useIncognito: true,
       }),
       async () => {
         throw new ApiError(
@@ -366,6 +367,7 @@ describe("tempWindowFetch runtime helpers and fallback gating", () => {
         accountId: "acct-1",
         authType: AuthTypeEnum.Cookie,
         cookieAuthSessionCookie: "session=abc",
+        useIncognito: true,
       }),
     )
   })
@@ -419,6 +421,105 @@ describe("tempWindowFetch runtime helpers and fallback gating", () => {
     )
 
     expect(result).toBe("<html>challenge cleared</html>")
+  })
+
+  it("falls back on 401 cookie-auth failures so stored account cookies can be replayed", async () => {
+    mocks.sendRuntimeMessageMock.mockResolvedValue({
+      success: true,
+      status: 200,
+      data: {
+        success: true,
+        data: { account: "stored-cookie" },
+        message: "ok",
+      },
+    })
+
+    const result = await executeWithTempWindowFallback(
+      buildContext({
+        onlyData: true,
+        accountId: "acct-1",
+        authType: AuthTypeEnum.Cookie,
+        cookieAuthSessionCookie: "session=stored-account",
+      }),
+      async () => {
+        throw new ApiError(
+          "current browser session is unauthorized",
+          401,
+          "/api/models",
+          API_ERROR_CODES.HTTP_401,
+        )
+      },
+    )
+
+    expect(result).toEqual({ account: "stored-cookie" })
+    expect(mocks.sendRuntimeMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: RuntimeActionIds.TempWindowFetch,
+        accountId: "acct-1",
+        authType: AuthTypeEnum.Cookie,
+        cookieAuthSessionCookie: "session=stored-account",
+      }),
+    )
+  })
+
+  it("falls back on 401 cookie-auth failures even when a request has a custom fallback allowlist", async () => {
+    mocks.sendRuntimeMessageMock.mockResolvedValue({
+      success: true,
+      status: 200,
+      data: {
+        success: true,
+        data: { account: "stored-cookie" },
+        message: "ok",
+      },
+    })
+
+    const result = await executeWithTempWindowFallback(
+      buildContext({
+        onlyData: true,
+        accountId: "acct-1",
+        authType: AuthTypeEnum.Cookie,
+        cookieAuthSessionCookie: "session=stored-account",
+        tempWindowFallback: {
+          statusCodes: [429],
+          codes: [API_ERROR_CODES.HTTP_429],
+        },
+      }),
+      async () => {
+        throw new ApiError(
+          "current browser session is unauthorized",
+          401,
+          "/api/models",
+          API_ERROR_CODES.HTTP_401,
+        )
+      },
+    )
+
+    expect(result).toEqual({ account: "stored-cookie" })
+    expect(mocks.sendRuntimeMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: RuntimeActionIds.TempWindowFetch,
+        accountId: "acct-1",
+        authType: AuthTypeEnum.Cookie,
+        cookieAuthSessionCookie: "session=stored-account",
+      }),
+    )
+  })
+
+  it("does not fall back on 401 token-auth failures", async () => {
+    const error = new ApiError(
+      "access token is unauthorized",
+      401,
+      "/api/models",
+      API_ERROR_CODES.HTTP_401,
+    )
+
+    await expect(
+      executeWithTempWindowFallback(buildContext(), async () => {
+        throw error
+      }),
+    ).rejects.toBe(error)
+
+    expect(mocks.sendRuntimeMessageMock).not.toHaveBeenCalled()
   })
 
   it("surfaces temp-window transport failures as ApiError with a fallback message", async () => {

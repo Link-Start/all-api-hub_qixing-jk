@@ -11,12 +11,12 @@ For the best experience (including automatic updates), we **strongly recommend i
 | Chrome Store | [Chrome Store](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome version](https://img.shields.io/chrome-web-store/v/lapnciffpekdengooeolaienkeoilfeo?label=Chrome&logo=googlechrome&style=flat)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome Web Store Users](https://img.shields.io/chrome-web-store/users/lapnciffpekdengooeolaienkeoilfeo?label=Chrome%20Users)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
 | Edge Store | [Edge Store](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge version](https://img.shields.io/badge/dynamic/json?label=Edge&prefix=v&query=%24.version&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fpcokpjaffghgipcgjhapgdpeddlhblaa&logo=microsoftedge&style=flat)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge Add-ons Users](https://img.shields.io/badge/dynamic/json?label=Edge%20Users&query=$.activeInstallCount&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/pcokpjaffghgipcgjhapgdpeddlhblaa)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | Firefox Store | [Firefox Store](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Firefox version](https://img.shields.io/amo/v/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox&logo=firefoxbrowser&style=flat)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Mozilla Add-on Users](https://img.shields.io/amo/users/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox%20Users)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
-| GitHub Releases | [View All Releases](https://github.com/qixing-jk/all-api-hub/releases) | [![GitHub version](https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat)](https://github.com/qixing-jk/all-api-hub/releases/latest) | [![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/qixing-jk/all-api-hub/total?label=Total%20Downloads)](https://github.com/qixing-jk/all-api-hub/releases) |
 
 <details>
 <summary>📦 Manual Installation, Safari, or Mobile? (Click to expand)</summary>
 
-- **GitHub Release**: If you cannot access the store, you can download the Stable or Nightly version from [GitHub Releases](https://github.com/qixing-jk/all-api-hub/releases).
+- **GitHub Stable**: Use [GitHub Releases](https://github.com/qixing-jk/all-api-hub/releases) when you cannot install the store build or need to temporarily install a published fix manually. Manual installations do not auto-update like the store build. You can Star / Watch the repository to receive new version notifications.
+- **Nightly pre-release**: For early access and testing. It may be less stable than the store build. Nightly is also a manual installation channel and does not auto-update.
 - **Safari (Mac)**: Requires installation via Xcode. See the [Safari Installation Guide](./safari-install.md).
 - **QQ / 360 etc.**: Supports manual loading in Chromium-based browsers. See the [Manual Installation Guide](./other-browser-install.md).
 - **Mobile**: Supports Edge mobile, Firefox Android, Kiwi, etc. See [Mobile FAQ](./faq.md#mobile-browser-support).
@@ -40,6 +40,10 @@ Open and log in to your AI proxy station website in your browser first.
 4. Click **`Auto-Recognize`**.
 5. After confirming the information is correct, click **`Confirm Addition`**.
 
+::: tip Don't have an account yet?
+If you are looking for stable, efficient, and highly compatible AI relay services, try our partner [PackyCode](https://www.packyapi.com/register?aff=all-api-hub) (enter the `all-api-hub` promo code during recharge to get 10% off).
+:::
+
 > **Shield Bypass Tip**: If the site has Cloudflare verification (5-second shield), the plugin will automatically pop up a window to assist with bypassing it. Once verified, it will continue the recognition process automatically.
 
 <a id="manual-addition"></a>
@@ -54,14 +58,13 @@ If auto-recognition fails, or if you want precise control, you can manually ente
 
 ## 3. Supported Site Types
 
-All API Hub supports almost all mainstream AI proxy station architectures on the market, including:
-- **One API / New API** series (most common)
-- **Sub2API**
-- **AIHubMix**
-- **AnyRouter / VoAPI / Super-API** and other specialized architectures
+No matter which architecture you use, there is a good chance we support it:
+- **Account-site compatible architectures**: One API, New API, Veloera, One-Hub, Done-Hub, Sub2API, and more.
+- **Specialized account platforms and compatible implementations**: AIHubMix, AnyRouter, Neo-API, Super-API, v-api, and more.
+- **Self-hosted admin backends**: New API, Veloera, Done-Hub, [Octopus](https://github.com/bestruirui/octopus), AxonHub, Claude Code Hub, and more, for channel management, migration, and partial model sync.
 
 ::: tip Compatibility Tip
-Sites built on the above open-source systems are usually perfectly supported. For a complete compatibility list, please check [Supported Sites and System Types](./supported-sites.md).
+Relay sites built on account-site compatible architectures can usually be added as accounts. AxonHub, Octopus, Claude Code Hub, and similar systems are mainly used as self-hosted admin backends. For a complete compatibility list, please check [Supported Sites and System Types](./supported-sites.md).
 :::
 
 <a id="quick-export-sites"></a>
@@ -86,7 +89,7 @@ After adding an account, you can "push" these configurations to other AI tools w
 
 ### 🔑 Key Management & Quick Integration
 - **[Token Management](./key-management.md)**: Centrally manage site tokens, with support for one-click completion.
-- **[API Credential Profiles](./api-credential-profiles.md)**: Save URL+Key without needing an account, supporting batch validation.
+- **[API Credential Library](./api-credential-profiles.md)**: Save `Base URL + API Key` without needing an account, then copy, verify, and view models from it.
 - **[Web API Sniffing](./web-ai-api-check.md)**: Quickly identify and test API configurations within a webpage.
 
 ### ⚡ Automation & Information Tracking

@@ -15,7 +15,9 @@
     "tokenNotFound": "无法创建或找到 API 令牌"
   },
   "aihubmix": {
-    "createRequiresOneTimeKeyDialog": "AIHubMix 创建的密钥只能查看一次，请在密钥管理中手动创建并立即保存完整密钥。"
+    "createRequiresOneTimeKeyDialog": "AIHubMix 创建的密钥只能查看一次，请在密钥管理中手动创建并立即保存完整密钥。",
+    "oneTimeKeyPromptCancelled": "账号已保存。你之后可以在密钥管理中手动创建 AIHubMix API 密钥。",
+    "oneTimeKeyUnavailableAfterCreate": "账号已保存，但未能获取完整 AIHubMix API 密钥。AIHubMix 密钥只在创建时显示一次，请在密钥管理中重新创建并立即保存完整密钥。"
   },
   "autodetect": {
     "currentTabNeedsReload": "当前页面可能是在安装或更新扩展前打开的，插件暂时无法读取该标签页的信息。请刷新当前页面后再重试自动识别。",
@@ -36,7 +38,8 @@
     "importFailed": "导入失败，发生未知错误",
     "importSuccess": "成功导入新渠道 {{channelName}}",
     "modelsMissing": "请至少填写一个模型",
-    "noChannelsToSync": "没有可同步的渠道"
+    "noChannelsToSync": "没有可同步的渠道",
+    "unsupportedModelSync": "当前版本不支持 AxonHub 管理站点模型同步"
   },
   "background": {
     "cannotCreateWindow": "无法创建窗口",
@@ -154,8 +157,12 @@
   "operations": {
     "detection": {
       "failed": "自动检测失败，请手动输入信息或确保已在目标站点登录",
+      "getAccessTokenFailedDetailed": "已识别到账号，但未能获取访问令牌。请确认账号有创建或查看 API 令牌的权限，或改用手动输入。",
       "getInfoFailed": "未能获取到用户名或访问令牌",
-      "getUserIdFailed": "无法获取用户 ID"
+      "getSiteStatusFailedDetailed": "已识别到账号，但读取站点状态失败。请稍后重试；如果仍失败，可先手动保存账号。",
+      "getUserIdFailed": "无法获取用户 ID",
+      "getUserIdFailedDetailed": "已连接到站点，但未能读取用户 ID。请确认已在目标站点登录后重试。",
+      "getUsernameFailedDetailed": "已识别到账号，但站点未返回用户名。请确认已登录，或改用手动输入。"
     }
   },
   "storage": {
@@ -235,7 +242,10 @@
     "downloadFailed": "下载失败，状态码: {{status}}",
     "encryptFailedNoPassword": "已开启加密，但未设置密码",
     "fileNotFound": "远程备份文件不存在",
+    "invalidBackupJson": "云端备份文件不完整，无法用于同步。为避免合并损坏的数据，本次同步已停止。如果当前设备的数据是完整的，请使用“上传到 WebDAV”重新创建云端备份；如果当前设备数据不完整，请先在另一台数据完整的设备上上传，或导入一份完整备份文件。",
+    "safeCommitFailed": "云盘未能完成安全保存，原有云端备份已保留。请稍后重试，或改用支持移动/重命名文件的 WebDAV 服务。",
     "syncDataSelectionRequired": "请至少选择一个要同步的数据类型",
-    "uploadFailed": "上传失败，状态码: {{status}}"
+    "uploadFailed": "上传失败，状态码: {{status}}",
+    "uploadVerificationFailed": "备份上传后校验未通过，云盘可能未完整保存文件。原有云端备份已保留。"
   }
 }

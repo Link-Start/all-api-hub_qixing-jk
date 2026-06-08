@@ -108,7 +108,7 @@ function createAccountStub(): DisplaySiteData {
     siteType: "new-api",
     baseUrl: "https://example.com/v1",
     token: "token",
-    userId: 1,
+    userId: "1",
     authType: AuthTypeEnum.AccessToken,
     checkIn: { enableDetection: false },
   }
@@ -364,7 +364,9 @@ describe("TokenHeader save to API profiles", () => {
     )
 
     expect(
-      screen.getByText("keyManagement:managedSiteStatus.badges.unknown"),
+      screen.getByText(
+        "keyManagement:managedSiteStatus.badges.requiresConfirmation",
+      ),
     ).toBeInTheDocument()
     expectNoVisibleManagedSiteDescription()
     expect(
@@ -441,7 +443,9 @@ describe("TokenHeader save to API profiles", () => {
     )
 
     expect(
-      screen.queryByText("keyManagement:managedSiteStatus.badges.unknown"),
+      screen.queryByText(
+        "keyManagement:managedSiteStatus.badges.requiresConfirmation",
+      ),
     ).toBeNull()
     expect(
       screen.queryByText("keyManagement:managedSiteStatus.signals.url.matched"),
@@ -451,6 +455,51 @@ describe("TokenHeader save to API profiles", () => {
         name: `${testI18n.t("managedSiteModelSync:execution.table.manageChannel")}: keyManagement:managedSiteStatus.actions.reviewChannels`,
       }),
     ).toBeNull()
+  })
+
+  it.each([
+    [
+      MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.BACKEND_SEARCH_FAILED,
+      "keyManagement:managedSiteStatus.badges.checkFailed",
+    ],
+    [
+      MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.CONFIG_MISSING,
+      "keyManagement:managedSiteStatus.badges.configMissing",
+    ],
+  ])("renders the %s managed-site unknown status badge", (reason, label) => {
+    const account = createAccountStub()
+
+    render(
+      <TokenHeader
+        token={
+          {
+            id: 9,
+            user_id: 1,
+            key: "sk-unknown",
+            status: 1,
+            name: "Unknown Status Token",
+            created_time: 0,
+            accessed_time: 0,
+            expired_time: 0,
+            remain_quota: 0,
+            unlimited_quota: false,
+            used_quota: 0,
+            accountId: account.id,
+            accountName: account.name,
+          } as any
+        }
+        copyKey={vi.fn()}
+        handleEditToken={vi.fn()}
+        handleDeleteToken={vi.fn()}
+        account={account}
+        managedSiteStatus={{
+          status: MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN,
+          reason,
+        }}
+      />,
+    )
+
+    expect(screen.getByText(label)).toBeInTheDocument()
   })
 
   it("renders the exact-match explanation when the token is already added", async () => {
@@ -590,6 +639,11 @@ describe("TokenHeader save to API profiles", () => {
       />,
     )
 
+    expect(
+      screen.getByText(
+        "keyManagement:managedSiteStatus.badges.verificationUnavailable",
+      ),
+    ).toBeInTheDocument()
     expectNoVisibleManagedSiteDescription()
     expect(
       screen.getByText(
@@ -1109,6 +1163,7 @@ describe("TokenHeader save to API profiles", () => {
         onSuccess?: (result: { success: boolean; message: string }) => void,
       ) => {
         onSuccess?.({ success: true, message: "imported" })
+        return { opened: true }
       },
     )
 

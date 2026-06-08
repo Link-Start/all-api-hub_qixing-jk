@@ -7,7 +7,7 @@ This project uses [Husky](https://typicode.github.io/husky/) to manage Git hooks
 ### pre-commit
 Runs before each commit to ensure code quality:
 - **Unified staged validation**: Runs `pnpm run validate:staged`
-  - Internally runs `pnpm lint-staged --concurrent false` to format staged source and script files, apply ESLint fixes, and run `vitest related --run` for staged JS/TS files
+  - Internally runs `pnpm lint-staged --concurrent false` to format staged source and script files, apply ESLint fixes, and run staged Vitest test files without related-test lookup
   - Then runs `pnpm run i18n:check:staged` as a repo-level guard
   - The i18n guard only triggers when staged files touch `src/**`, `package.json`, `pnpm-lock.yaml`, or `i18next.config.ts`
   - Internally the i18n guard runs `pnpm run i18n:extract:ci` to ensure locale files stay in sync with code

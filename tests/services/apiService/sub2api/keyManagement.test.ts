@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { AccountUpdateUserTimestampMode } from "~/services/accounts/accountDefaults"
 import { ApiError } from "~/services/apiService/common/errors"
 import type {
   ApiServiceRequest,
@@ -56,7 +57,7 @@ const createRequest = (
   accountId: "acc-1",
   auth: {
     authType: AuthTypeEnum.AccessToken,
-    userId: 1,
+    userId: "1",
     accessToken: "old-jwt",
   },
   ...overrides,
@@ -95,7 +96,7 @@ describe("apiService sub2api key management parsing", () => {
 
     expect(token.id).toBe(7)
     expect(token.user_id).toBe(5)
-    expect(token.key).toBe("sk-test-key")
+    expect(token.key).toBe("test-key")
     expect(token.status).toBe(0)
     expect(token.remain_quota).toBe(Math.round(1.25 * 500000))
     expect(token.used_quota).toBe(Math.round(1.25 * 500000))
@@ -310,7 +311,7 @@ describe("apiService sub2api key management service", () => {
   it("uses hydrated auth userId when listing keys without upstream user_id", async () => {
     getAccountByIdMock.mockResolvedValue({
       id: "acc-1",
-      account_info: { id: 42, access_token: "stored-jwt" },
+      account_info: { id: "42", access_token: "stored-jwt" },
     })
 
     fetchApiMock.mockResolvedValueOnce({
@@ -354,7 +355,7 @@ describe("apiService sub2api key management service", () => {
   it("uses hydrated auth userId when fetching key detail without upstream user_id", async () => {
     getAccountByIdMock.mockResolvedValue({
       id: "acc-1",
-      account_info: { id: 42, access_token: "stored-jwt" },
+      account_info: { id: "42", access_token: "stored-jwt" },
     })
 
     fetchApiMock.mockResolvedValueOnce({
@@ -394,7 +395,7 @@ describe("apiService sub2api key management service", () => {
 
     let currentAccount = {
       id: "acc-1",
-      account_info: { id: 1, access_token: "stored-jwt" },
+      account_info: { id: "1", access_token: "stored-jwt" },
       sub2apiAuth: {
         refreshToken: "stored-refresh",
         tokenExpiresAt: now + 30_000,
@@ -444,7 +445,7 @@ describe("apiService sub2api key management service", () => {
         return {
           code: 0,
           message: "ok",
-          data: [{ id: 1, name: "default", description: "Default plan" }],
+          data: [{ id: "1", name: "default", description: "Default plan" }],
         }
       }
 
@@ -478,7 +479,7 @@ describe("apiService sub2api key management service", () => {
 
     getAccountByIdMock.mockResolvedValue({
       id: "acc-1",
-      account_info: { id: 1, access_token: "stored-jwt" },
+      account_info: { id: "1", access_token: "stored-jwt" },
       sub2apiAuth: { refreshToken: "stored-refresh" },
     })
 
@@ -531,7 +532,7 @@ describe("apiService sub2api key management service", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(tokens).toHaveLength(1)
-    expect(tokens[0].key).toBe("sk-retried-key")
+    expect(tokens[0].key).toBe("retried-key")
     expect(updateAccountMock).toHaveBeenCalledWith(
       "acc-1",
       expect.objectContaining({
@@ -541,6 +542,7 @@ describe("apiService sub2api key management service", () => {
           tokenExpiresAt: now + 3600 * 1000,
         },
       }),
+      { userTimestampMode: AccountUpdateUserTimestampMode.Preserve },
     )
   })
 
@@ -559,7 +561,7 @@ describe("apiService sub2api key management service", () => {
         data: {
           items: [
             {
-              id: 2,
+              id: "2",
               user_id: 1,
               key: "resynced-key",
               name: "resynced",
@@ -591,13 +593,14 @@ describe("apiService sub2api key management service", () => {
       expect.objectContaining({
         account_info: { access_token: "resynced-jwt" },
       }),
+      { userTimestampMode: AccountUpdateUserTimestampMode.Preserve },
     )
   })
 
   it("surfaces login-required when auth recovery is unavailable", async () => {
     getAccountByIdMock.mockResolvedValue({
       id: "acc-1",
-      account_info: { id: 1, access_token: "stored-jwt" },
+      account_info: { id: "1", access_token: "stored-jwt" },
     })
     resyncSub2ApiAuthTokenMock.mockResolvedValue(null)
 

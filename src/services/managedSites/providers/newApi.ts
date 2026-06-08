@@ -4,19 +4,17 @@ import { DEFAULT_CHANNEL_FIELDS } from "~/constants/managedSite"
 import { SITE_TYPES } from "~/constants/siteType"
 import { ensureAccountApiToken } from "~/services/accounts/accountOperations"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { normalizeAccountForManagedChannel } from "~/services/accounts/utils/siteUrlNormalization"
 import { getApiService } from "~/services/apiService"
 import {
   MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS,
   MatchResolutionUnresolvedError,
 } from "~/services/managedSites/channelMatch"
+import { resolveManagedSiteImportDuplicate } from "~/services/managedSites/importDuplicateResolution"
 import {
   fetchNewApiChannelKey,
   NewApiChannelKeyRequirementError,
 } from "~/services/managedSites/providers/newApiSession"
-import {
-  findManagedSiteChannelByComparableInputs,
-  findManagedSiteChannelsByBaseUrlAndModels,
-} from "~/services/managedSites/utils/channelMatching"
 import { fetchManagedSiteAvailableModels } from "~/services/managedSites/utils/fetchManagedSiteAvailableModels"
 import { fetchTokenScopedModels } from "~/services/managedSites/utils/fetchTokenScopedModels"
 import { ApiToken, AuthTypeEnum, DisplaySiteData, SiteAccount } from "~/types"
@@ -52,80 +50,63 @@ import { resolveDefaultChannelGroups } from "./defaultChannelGroups"
  */
 const logger = createLogger("NewApiService")
 
+const newApiImportDuplicateService = {
+  siteType: SITE_TYPES.NEW_API,
+  searchChannel,
+  hydrateComparableChannelKeys,
+  fetchChannelSecretKey,
+}
+
+const toNewApiRequestConfig = (config: NewApiConfig) => ({
+  baseUrl: config.baseUrl,
+  auth: {
+    authType: AuthTypeEnum.AccessToken,
+    accessToken: config.adminToken,
+    userId: config.userId,
+  },
+})
+
 /**
  * 搜索指定关键词的渠道
- * @param baseUrl New API 的基础 URL
- * @param accessToken 管理员令牌
- * @param userId 用户 ID
+ * @param config New API runtime config
  * @param keyword 搜索关键词
  */
 export async function searchChannel(
-  baseUrl: string,
-  accessToken: string,
-  userId: number | string,
+  config: NewApiConfig,
   keyword: string,
 ): Promise<ManagedSiteChannelListData | null> {
   return await getApiService(SITE_TYPES.NEW_API).searchChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken,
-        userId,
-      },
-    },
+    toNewApiRequestConfig(config),
     keyword,
   )
 }
 
 /**
  * 创建新渠道
- * @param baseUrl New API 的基础 URL
- * @param adminToken 管理员令牌
- * @param userId 用户 ID
+ * @param config New API runtime config
  * @param channelData 渠道数据
  */
 export async function createChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: NewApiConfig,
   channelData: CreateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.NEW_API).createChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toNewApiRequestConfig(config),
     channelData,
   )
 }
 
 /**
  * 更新新渠道
- * @param baseUrl New API 的基础 URL
- * @param adminToken 管理员令牌
- * @param userId 用户 ID
+ * @param config New API runtime config
  * @param channelData 渠道数据
  */
 export async function updateChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: NewApiConfig,
   channelData: UpdateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.NEW_API).updateChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toNewApiRequestConfig(config),
     channelData,
   )
 }
@@ -133,21 +114,9 @@ export async function updateChannel(
 /**
  * 删除渠道
  */
-export async function deleteChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  channelId: number,
-) {
+export async function deleteChannel(config: NewApiConfig, channelId: number) {
   return await getApiService(SITE_TYPES.NEW_API).deleteChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toNewApiRequestConfig(config),
     channelId,
   )
 }
@@ -156,17 +125,63 @@ export async function deleteChannel(
  * Reads a single managed-site channel key using the New API verification flow.
  */
 export async function fetchChannelSecretKey(
-  baseUrl: string,
-  _adminToken: string,
-  userId: number | string,
+  config: NewApiConfig,
   channelId: number,
 ): Promise<string> {
-  const sessionConfig = await getNewApiManagedSessionConfig(baseUrl, userId)
+  const sessionConfig = await getNewApiManagedSessionConfig(config)
 
   return await fetchNewApiChannelKey({
     ...sessionConfig,
     channelId,
   })
+}
+
+/**
+ * Hydrates hidden New API channel keys so the shared resolver can compare them.
+ */
+export async function hydrateComparableChannelKeys(
+  config: NewApiConfig,
+  candidates: ManagedSiteChannel[],
+): Promise<ManagedSiteChannel[]> {
+  const sessionConfig = await getNewApiManagedSessionConfig(config)
+  const hydratedCandidates: ManagedSiteChannel[] = []
+
+  for (const candidate of candidates) {
+    if (candidate.key?.trim()) {
+      hydratedCandidates.push(candidate)
+      continue
+    }
+
+    try {
+      const resolvedKey = await fetchNewApiChannelKey({
+        ...sessionConfig,
+        channelId: candidate.id,
+      })
+
+      hydratedCandidates.push({
+        ...candidate,
+        key: resolvedKey,
+      })
+    } catch (error) {
+      if (error instanceof NewApiChannelKeyRequirementError) {
+        throw new MatchResolutionUnresolvedError(
+          MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.VERIFICATION_REQUIRED,
+        )
+      }
+
+      logger.warn("Failed to hydrate hidden New API channel key", {
+        baseUrl: config.baseUrl,
+        channelId: candidate.id,
+        error: getErrorMessage(error),
+      })
+
+      throw new MatchResolutionUnresolvedError(
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
+      )
+    }
+  }
+
+  return hydratedCandidates
 }
 
 /**
@@ -268,8 +283,7 @@ const sharesNewApiOrigin = (leftBaseUrl: string, rightBaseUrl: string) => {
 }
 
 const getNewApiManagedSessionConfig = async (
-  baseUrl: string,
-  userId: number | string,
+  config: Pick<NewApiConfig, "baseUrl" | "userId">,
 ): Promise<
   Pick<
     NewApiConfig,
@@ -278,11 +292,12 @@ const getNewApiManagedSessionConfig = async (
 > => {
   const loginAssistConfig = await getNewApiLoginAssistConfig()
   const canReuseLoginAssist =
-    loginAssistConfig && sharesNewApiOrigin(loginAssistConfig.baseUrl, baseUrl)
+    loginAssistConfig &&
+    sharesNewApiOrigin(loginAssistConfig.baseUrl, config.baseUrl)
 
   return {
-    baseUrl,
-    userId: userId?.toString() ?? "",
+    baseUrl: config.baseUrl,
+    userId: config.userId?.toString() ?? "",
     username: canReuseLoginAssist ? loginAssistConfig.username ?? "" : "",
     password: canReuseLoginAssist ? loginAssistConfig.password ?? "" : "",
     totpSecret: canReuseLoginAssist ? loginAssistConfig.totpSecret ?? "" : "",
@@ -321,10 +336,12 @@ export async function prepareChannelFormData(
   account: DisplaySiteData,
   token: ApiToken | AccountToken,
 ): Promise<ChannelFormData> {
+  const upstreamAccount = normalizeAccountForManagedChannel(account)
+
   // Channel import prefill must reflect only the selected key's live upstream
   // model list; on failure we keep the dialog editable and require manual input.
   const { models: availableModels, fetchFailed } = await fetchTokenScopedModels(
-    account,
+    upstreamAccount,
     token,
   )
 
@@ -340,7 +357,7 @@ export async function prepareChannelFormData(
     name: buildChannelName(account, token),
     type: DEFAULT_CHANNEL_FIELDS.type,
     key: token.key,
-    base_url: account.baseUrl,
+    base_url: upstreamAccount.baseUrl,
     models: normalizeList(availableModels),
     ...(fetchFailed ? { modelPrefillFetchFailed: true } : {}),
     groups: normalizeList(resolvedGroups),
@@ -382,93 +399,6 @@ export function buildChannelPayload(
 }
 
 /**
- * 查找是否存在匹配的渠道。
- *
- * 默认匹配条件为 base_url + models；当传入 key 时，会进一步按 key 精确匹配，
- * 避免把不同 key 的渠道误判为重复。
- */
-export async function findMatchingChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  accountBaseUrl: string,
-  models: string[],
-  key?: string,
-): Promise<ManagedSiteChannel | null> {
-  const searchResults = await searchChannel(
-    baseUrl,
-    adminToken,
-    userId,
-    accountBaseUrl,
-  )
-
-  if (!searchResults) {
-    return null
-  }
-
-  const exactMatch = findManagedSiteChannelByComparableInputs({
-    channels: searchResults.items,
-    accountBaseUrl,
-    models,
-    key,
-  })
-
-  if (exactMatch || !key?.trim()) {
-    return exactMatch
-  }
-
-  const narrowedCandidates = findManagedSiteChannelsByBaseUrlAndModels({
-    channels: searchResults.items,
-    accountBaseUrl,
-    models,
-  }).filter((channel) => !channel.key?.trim())
-
-  if (narrowedCandidates.length === 0) {
-    return null
-  }
-
-  const sessionConfig = await getNewApiManagedSessionConfig(baseUrl, userId)
-  const resolvedCandidates: ManagedSiteChannel[] = []
-
-  for (const candidate of narrowedCandidates) {
-    try {
-      const resolvedKey = await fetchNewApiChannelKey({
-        ...sessionConfig,
-        channelId: candidate.id,
-      })
-
-      resolvedCandidates.push({
-        ...candidate,
-        key: resolvedKey,
-      })
-    } catch (error) {
-      if (error instanceof NewApiChannelKeyRequirementError) {
-        throw new MatchResolutionUnresolvedError(
-          MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.VERIFICATION_REQUIRED,
-        )
-      }
-
-      logger.warn("Failed to fetch hidden New API channel key", {
-        baseUrl,
-        channelId: candidate.id,
-        error: getErrorMessage(error),
-      })
-
-      throw new MatchResolutionUnresolvedError(
-        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.VERIFICATION_REQUIRED,
-      )
-    }
-  }
-
-  return findManagedSiteChannelByComparableInputs({
-    channels: resolvedCandidates,
-    accountBaseUrl,
-    models,
-    key,
-  })
-}
-
-/**
  * 将账户导入到 New API 作为渠道。
  * @param account 站点数据。
  * @param token API 令牌，用于访问上游模型与构建渠道。
@@ -496,14 +426,17 @@ export async function importToNewApi(
 
     const formData = await prepareChannelFormData(account, token)
 
-    const existingChannel = await findMatchingChannel(
-      newApiBaseUrl!,
-      newApiAdminToken!,
-      newApiUserId!,
-      account.baseUrl,
-      formData.models,
-      formData.key,
-    )
+    const managedConfig = {
+      baseUrl: newApiBaseUrl!,
+      adminToken: newApiAdminToken!,
+      userId: newApiUserId!,
+    }
+
+    const existingChannel = await resolveManagedSiteImportDuplicate({
+      service: newApiImportDuplicateService,
+      managedConfig,
+      formData,
+    })
 
     if (existingChannel) {
       return {
@@ -516,12 +449,7 @@ export async function importToNewApi(
 
     const payload = buildChannelPayload(formData)
 
-    const createdChannelResponse = await createChannel(
-      newApiBaseUrl!,
-      newApiAdminToken!,
-      newApiUserId!,
-      payload,
-    )
+    const createdChannelResponse = await createChannel(managedConfig, payload)
 
     if (createdChannelResponse.success) {
       return {
@@ -537,7 +465,11 @@ export async function importToNewApi(
       message: createdChannelResponse.message,
     }
   } catch (error) {
-    if (error instanceof MatchResolutionUnresolvedError) {
+    if (
+      error instanceof MatchResolutionUnresolvedError &&
+      error.reason ===
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.VERIFICATION_REQUIRED
+    ) {
       return {
         success: false,
         message: t("messages:newapi.channelMatchUnresolved"),

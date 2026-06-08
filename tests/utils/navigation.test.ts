@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { getAccountSiteApiRouter } from "~/constants/siteType"
 import { isExtensionPopup } from "~/utils/browser"
 import {
   createTab as createTabApi,
@@ -10,7 +9,6 @@ import {
   hasWindowsAPI,
   openSidePanel as openSidePanelApi,
 } from "~/utils/browser/browserApi"
-import { joinUrl } from "~/utils/core/url"
 import {
   navigateWithinOptionsPage,
   openAboutPage,
@@ -37,11 +35,13 @@ import {
   openModelsPage,
   openMultiplePages,
   openOrFocusOptionsPage,
+  openPermissionsOnboardingPage,
   openRedeemPage,
   openSettingsPage,
   openSettingsTab,
   openSidePanelPage,
   openSidePanelWithFallback,
+  openSiteSupportRequestPage,
   openUsagePage,
   pushWithinOptionsPage,
   replaceWithinOptionsPage,
@@ -75,22 +75,36 @@ vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
   }
 })
 
-vi.mock("~/constants/siteType", () => ({
-  getAccountSiteApiRouter: vi.fn(() => ({
-    usagePath: "/usage",
-    checkInPath: "/checkin",
-    redeemPath: "/redeem",
-  })),
-}))
-
-vi.mock("~/utils/core/url", () => ({
-  joinUrl: vi.fn((base: string, path: string) => `${base}${path}`),
+vi.mock("~/services/accounts/utils/siteRouteResolver", () => ({
+  SITE_ROUTE_KINDS: {
+    Usage: "usage",
+    CheckIn: "checkIn",
+    Redeem: "redeem",
+  },
+  resolveAccountSiteRouteUrl: vi.fn(
+    (account: { baseUrl: string }, route: "usage" | "checkIn" | "redeem") => {
+      const routePaths = {
+        usage: "/usage",
+        checkIn: "/checkin",
+        redeem: "/redeem",
+      } as const
+      return Promise.resolve(`${account.baseUrl}${routePaths[route]}`)
+    },
+  ),
 }))
 
 vi.mock("~/utils/navigation/feedbackLinks", () => ({
+  getSiteSupportRequestUrl: vi.fn((context?: { siteUrl?: string }) =>
+    context?.siteUrl
+      ? `https://feedback.example/site-support?site=${encodeURIComponent(
+          context.siteUrl,
+        )}`
+      : "https://feedback.example/site-support",
+  ),
   getFeedbackDestinationUrls: vi.fn((language?: string) => ({
     bugReport: "https://feedback.example/bug",
     featureRequest: "https://feedback.example/feature",
+    siteSupportRequest: "https://feedback.example/site-support",
     discussions: "https://feedback.example/discussions",
     community: language
       ? `https://feedback.example/community?lang=${language}`
@@ -105,8 +119,13 @@ const mockedFocusTab = vi.mocked(focusTabApi)
 const mockedGetExtensionURL = vi.mocked(getExtensionURL)
 const mockedHasWindowsAPI = vi.mocked(hasWindowsAPI)
 const mockedOpenSidePanel = vi.mocked(openSidePanelApi)
-const mockedGetAccountSiteApiRouter = vi.mocked(getAccountSiteApiRouter)
-const mockedJoinUrl = vi.mocked(joinUrl)
+
+const getMockedRouteResolver = async () => {
+  const { resolveAccountSiteRouteUrl } = await import(
+    "~/services/accounts/utils/siteRouteResolver"
+  )
+  return vi.mocked(resolveAccountSiteRouteUrl)
+}
 
 describe("navigation utilities", () => {
   beforeEach(() => {
@@ -156,6 +175,10 @@ describe("navigation utilities", () => {
   })
 
   it("openUsagePage should open usage URL built from site router", async () => {
+    const mockedResolveAccountSiteRouteUrl = await getMockedRouteResolver()
+    mockedResolveAccountSiteRouteUrl.mockResolvedValueOnce(
+      "https://example.com/usage-resolved",
+    )
     const account = {
       baseUrl: "https://example.com",
       siteType: "one-api",
@@ -163,10 +186,14 @@ describe("navigation utilities", () => {
 
     await openUsagePage(account)
 
-    expect(mockedGetAccountSiteApiRouter).toHaveBeenCalledWith("one-api")
-    expect(mockedJoinUrl).toHaveBeenCalledWith("https://example.com", "/usage")
-    const url = mockedJoinUrl.mock.results[0].value
-    expect(mockedCreateTab).toHaveBeenCalledWith(url, true)
+    expect(mockedResolveAccountSiteRouteUrl).toHaveBeenCalledWith(
+      account,
+      "usage",
+    )
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      "https://example.com/usage-resolved",
+      true,
+    )
   })
 
   it("openModelsPage should open models page for the default view, accounts, and stored profiles", async () => {
@@ -396,6 +423,10 @@ describe("navigation utilities", () => {
   })
 
   it("openCheckInPages should open grouped check-in tabs by default", async () => {
+    const mockedResolveAccountSiteRouteUrl = await getMockedRouteResolver()
+    mockedResolveAccountSiteRouteUrl
+      .mockResolvedValueOnce("https://example.com/checkin-resolved")
+      .mockResolvedValueOnce("https://example.org/checkin-resolved")
     mockedCreateTab
       .mockResolvedValueOnce({ id: 11 } as any)
       .mockResolvedValueOnce({ id: 12 } as any)
@@ -412,11 +443,11 @@ describe("navigation utilities", () => {
     ])
 
     expect(mockedCreateTab).toHaveBeenCalledWith(
-      "https://example.com/checkin",
+      "https://example.com/checkin-resolved",
       true,
     )
     expect(mockedCreateTab).toHaveBeenCalledWith(
-      "https://example.org/checkin",
+      "https://example.org/checkin-resolved",
       true,
     )
     expect(result).toEqual({ openedCount: 2, failedCount: 0 })
@@ -668,6 +699,7 @@ describe("navigation utilities", () => {
     await openBookmarkManagerWithSearch("beta")
     await openSettingsPage()
     await openSettingsTab("permissions")
+    await openPermissionsOnboardingPage({ reason: "debug" })
     await openApiCredentialProfilesPage()
     await openManagedSiteChannelsPage({
       channelId: 42,
@@ -704,6 +736,17 @@ describe("navigation utilities", () => {
       `${OPTIONS_PAGE_URL}?tab=permissions#basic`,
       true,
     )
+    await openSettingsTab("general", {
+      anchor: "site-announcement-notifications-enabled",
+    })
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      `${OPTIONS_PAGE_URL}?tab=general&anchor=site-announcement-notifications-enabled#basic`,
+      true,
+    )
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      `${OPTIONS_PAGE_URL}?onboarding=permissions&reason=debug#overview`,
+      true,
+    )
     expect(mockedCreateTab).toHaveBeenCalledWith(
       `${OPTIONS_PAGE_URL}#apiCredentialProfiles`,
       true,
@@ -722,6 +765,32 @@ describe("navigation utilities", () => {
     )
     expect(mockedCreateTab).toHaveBeenCalledWith(
       `${OPTIONS_PAGE_URL}?channelId=100&tab=manual#managedSiteModelSync`,
+      true,
+    )
+  })
+
+  it("opens bookmark and API credential creation flows with prefill query params", async () => {
+    await openFullBookmarkManagerPage({
+      create: {
+        name: "Manual Provider",
+        url: "https://manual.example.com",
+      },
+    })
+    await openApiCredentialProfilesPage({
+      create: {
+        name: "Manual Provider",
+        baseUrl: "https://manual.example.com",
+        apiKeyCreateUrl: "https://manual.example.com/keys?aff=all-api-hub",
+        apiKeyCreateHint: "Use promo code APIHUB after registration.",
+      },
+    })
+
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      `${OPTIONS_PAGE_URL}?action=add&name=Manual+Provider&url=https%3A%2F%2Fmanual.example.com#bookmark`,
+      true,
+    )
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      `${OPTIONS_PAGE_URL}?action=add&name=Manual+Provider&baseUrl=https%3A%2F%2Fmanual.example.com&apiKeyCreateUrl=https%3A%2F%2Fmanual.example.com%2Fkeys%3Faff%3Dall-api-hub&apiKeyCreateHint=Use+promo+code+APIHUB+after+registration.#apiCredentialProfiles`,
       true,
     )
   })
@@ -839,6 +908,22 @@ describe("navigation utilities", () => {
     pushStateSpy.mockRestore()
   })
 
+  it("opens permissions onboarding in-place when already on the options page", async () => {
+    window.history.replaceState(null, "", `${OPTIONS_PAGE_URL}#account`)
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState")
+
+    await openPermissionsOnboardingPage({ reason: "debug" })
+
+    expect(replaceStateSpy).toHaveBeenCalledWith(
+      null,
+      "",
+      `${OPTIONS_PAGE_URL}?onboarding=permissions&reason=debug#overview`,
+    )
+    expect(mockedCreateTab).not.toHaveBeenCalled()
+
+    replaceStateSpy.mockRestore()
+  })
+
   it("opens the remaining wrapper destinations in fresh tabs", async () => {
     const account = {
       baseUrl: "https://example.com",
@@ -854,6 +939,9 @@ describe("navigation utilities", () => {
     await openAboutPage()
     await openBugReportPage()
     await openFeatureRequestPage()
+    await openSiteSupportRequestPage({
+      siteUrl: "https://relay.example.com/console",
+    })
     await openDiscussionsPage()
     await openCommunityPage("ja")
     await openAccountBaseUrl(account)
@@ -871,6 +959,10 @@ describe("navigation utilities", () => {
     )
     expect(mockedCreateTab).toHaveBeenCalledWith(
       "https://feedback.example/feature",
+      true,
+    )
+    expect(mockedCreateTab).toHaveBeenCalledWith(
+      "https://feedback.example/site-support?site=https%3A%2F%2Frelay.example.com%2Fconsole",
       true,
     )
     expect(mockedCreateTab).toHaveBeenCalledWith(

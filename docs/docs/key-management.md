@@ -7,7 +7,7 @@
 - 你在多个中转站创建了大量 Token，想在一个地方搜索或批量导出，而不必逐个登录后台。
 - 某些站点的 Token 只有在创建时可见，之后无法再次查看；插件可以帮你记录并尝试“修复”这些不可见的 Key。
 - 你需要验证某个账号下的特定 Token 是否仍然有效，或是否兼容 CLI 工具。
-- 你想把账号下的 Token 快速保存到 [API 凭证](./api-credential-profiles.md) 中，以便后续进行更细致的分类管理。
+- 你想把账号下的 Token 快速保存到 [API 凭据库](./api-credential-profiles.md) 中，以便后续进行更细致的分类管理。
 
 ## 功能概览
 
@@ -50,7 +50,7 @@
 
 ## 管理联动
 
-如果你觉得某个 Token 非常常用，或者想给它加上更详细的备注和标签，可以点击 **`保存到 API 凭证`**。这会将该 `URL + Key` 组合复制到 [API 凭证](./api-credential-profiles.md) 模块中。
+如果你觉得某个 Token 非常常用，或者想给它加上更详细的备注和标签，可以点击 **`保存到 API 凭据库`**。这会将该 `URL + Key` 组合复制到 [API 凭据库](./api-credential-profiles.md) 中。
 
 ## 常见问题
 
@@ -63,6 +63,6 @@
 
 ## 相关文档
 
-- [API 凭证](./api-credential-profiles.md)
+- [API 凭据库](./api-credential-profiles.md)
 - [支持的站点列表](./supported-sites.md)
 - [数据导入导出](./data-management.md)

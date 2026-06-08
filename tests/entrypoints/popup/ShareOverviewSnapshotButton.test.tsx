@@ -2,7 +2,16 @@ import userEvent from "@testing-library/user-event"
 import React from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
 import ShareOverviewSnapshotButton from "~/entrypoints/popup/components/ShareOverviewSnapshotButton"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { buildDisplaySiteData } from "~~/tests/test-utils/factories"
 import { render, screen } from "~~/tests/test-utils/render"
 
@@ -13,6 +22,8 @@ const {
   loggerErrorMock,
   mockUseAccountDataContext,
   mockUseUserPreferencesContext,
+  startProductAnalyticsActionMock,
+  trackerCompleteMock,
   toastErrorMock,
 } = vi.hoisted(() => ({
   buildOverviewShareSnapshotPayloadMock: vi.fn(),
@@ -21,6 +32,8 @@ const {
   loggerErrorMock: vi.fn(),
   mockUseAccountDataContext: vi.fn(),
   mockUseUserPreferencesContext: vi.fn(),
+  startProductAnalyticsActionMock: vi.fn(),
+  trackerCompleteMock: vi.fn(),
   toastErrorMock: vi.fn(),
 }))
 
@@ -64,6 +77,16 @@ vi.mock("~/features/AccountManagement/hooks/AccountDataContext", () => ({
   useAccountDataContext: () => mockUseAccountDataContext(),
 }))
 
+vi.mock("~/services/productAnalytics/actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/actions")>()
+  return {
+    ...actual,
+    startProductAnalyticsAction: (...args: unknown[]) =>
+      startProductAnalyticsActionMock(...args),
+  }
+})
+
 vi.mock("~/features/ShareSnapshots/utils/exportShareSnapshotWithToast", () => ({
   exportShareSnapshotWithToast: (...args: unknown[]) =>
     exportShareSnapshotWithToastMock(...args),
@@ -80,9 +103,22 @@ vi.mock("~/utils/core/error", () => ({
 
 vi.mock("~/utils/core/logger", () => ({
   createLogger: () => ({
+    debug: vi.fn(),
     error: (...args: unknown[]) => loggerErrorMock(...args),
   }),
 }))
+
+function renderWithAnalyticsScope() {
+  return render(
+    <ProductAnalyticsScope
+      entrypoint={PRODUCT_ANALYTICS_ENTRYPOINTS.Popup}
+      featureId={PRODUCT_ANALYTICS_FEATURE_IDS.ShareSnapshots}
+      surfaceId={PRODUCT_ANALYTICS_SURFACE_IDS.PopupHeader}
+    >
+      <ShareOverviewSnapshotButton />
+    </ProductAnalyticsScope>,
+  )
+}
 
 describe("ShareOverviewSnapshotButton", () => {
   beforeEach(() => {
@@ -94,6 +130,10 @@ describe("ShareOverviewSnapshotButton", () => {
       ...input,
     }))
     exportShareSnapshotWithToastMock.mockResolvedValue({ method: "clipboard" })
+    startProductAnalyticsActionMock.mockReturnValue({
+      complete: trackerCompleteMock,
+    })
+    trackerCompleteMock.mockResolvedValue(undefined)
     getErrorMessageMock.mockImplementation((error: Error) => error.message)
     mockUseUserPreferencesContext.mockReturnValue({
       currencyType: "USD",
@@ -126,7 +166,7 @@ describe("ShareOverviewSnapshotButton", () => {
       displayData: [disabledOnly],
     })
 
-    render(<ShareOverviewSnapshotButton />)
+    renderWithAnalyticsScope()
 
     expect(
       screen.getByRole("button", {
@@ -135,9 +175,11 @@ describe("ShareOverviewSnapshotButton", () => {
     ).toBeDisabled()
     expect(buildOverviewShareSnapshotPayloadMock).not.toHaveBeenCalled()
     expect(exportShareSnapshotWithToastMock).not.toHaveBeenCalled()
+    expect(startProductAnalyticsActionMock).not.toHaveBeenCalled()
+    expect(trackerCompleteMock).not.toHaveBeenCalled()
   })
 
-  it("builds an enabled-only overview payload and excludes opt-out balances from the total", async () => {
+  it("builds an enabled-only overview payload and excludes opt-out balances and income from totals", async () => {
     const user = userEvent.setup()
     const enabledIncluded = buildDisplaySiteData({
       id: "enabled-included",
@@ -151,6 +193,7 @@ describe("ShareOverviewSnapshotButton", () => {
       id: "enabled-excluded",
       disabled: false,
       excludeFromTotalBalance: true,
+      excludeFromTodayIncome: true,
       last_sync_time: 250,
       balance: { USD: 20, CNY: 140 },
       todayIncome: { USD: 4, CNY: 28 },
@@ -170,7 +213,7 @@ describe("ShareOverviewSnapshotButton", () => {
       displayData: [enabledIncluded, enabledExcluded, disabledAccount],
     })
 
-    render(<ShareOverviewSnapshotButton />)
+    renderWithAnalyticsScope()
 
     await user.click(
       screen.getByRole("button", {
@@ -183,7 +226,7 @@ describe("ShareOverviewSnapshotButton", () => {
       enabledAccountCount: 2,
       totalBalance: 10,
       includeTodayCashflow: true,
-      todayIncome: 6,
+      todayIncome: 2,
       todayOutcome: 4,
       asOf: 250,
     })
@@ -194,6 +237,21 @@ describe("ShareOverviewSnapshotButton", () => {
         totalBalance: 10,
       }),
     })
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShareSnapshots,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ShareOverviewSnapshot,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.PopupHeader,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Popup,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          itemCount: 2,
+          usageDataPresent: true,
+        },
+      },
+    )
   })
 
   it("omits today cashflow and missing sync timestamps when that preference is disabled", async () => {
@@ -224,7 +282,7 @@ describe("ShareOverviewSnapshotButton", () => {
       displayData: [firstAccount, secondAccount],
     })
 
-    render(<ShareOverviewSnapshotButton />)
+    renderWithAnalyticsScope()
 
     await user.click(
       screen.getByRole("button", {
@@ -250,7 +308,7 @@ describe("ShareOverviewSnapshotButton", () => {
     exportShareSnapshotWithToastMock.mockRejectedValue(error)
     getErrorMessageMock.mockReturnValue("")
 
-    render(<ShareOverviewSnapshotButton />)
+    renderWithAnalyticsScope()
 
     await user.click(
       screen.getByRole("button", {
@@ -264,6 +322,16 @@ describe("ShareOverviewSnapshotButton", () => {
     )
     expect(toastErrorMock).toHaveBeenCalledWith(
       "messages:toast.error.operationFailed:messages:errors.unknown",
+    )
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          itemCount: 1,
+          usageDataPresent: true,
+        },
+      },
     )
   })
 })

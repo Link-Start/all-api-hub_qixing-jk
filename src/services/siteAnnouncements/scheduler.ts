@@ -1,8 +1,10 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { SITE_TYPES } from "~/constants/siteType"
 import { accountStorage } from "~/services/accounts/accountStorage"
 import type { ApiServiceRequest } from "~/services/apiService/common/type"
 import { userPreferences } from "~/services/preferences/userPreferences"
+import { SiteAnnouncementsMessageTypes } from "~/services/runtimeMessaging/messageTypes"
+import { createRuntimeMessageFailure } from "~/services/runtimeMessaging/result"
+import type { RuntimeMessageResponse } from "~/services/runtimeMessaging/result"
 import type { SiteAccount } from "~/types"
 import type {
   SiteAnnouncement,
@@ -22,6 +24,7 @@ import {
 import {
   clearAlarm,
   createAlarm,
+  getAlarm,
   hasAlarmsAPI,
   onAlarm,
 } from "~/utils/browser/browserApi"
@@ -29,6 +32,13 @@ import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 
 import { SITE_ANNOUNCEMENTS_ALARM_NAME } from "./constants"
+import {
+  onSiteAnnouncementsMessage,
+  type SiteAnnouncementsCheckNowRequest,
+  type SiteAnnouncementsMarkAllReadRequest,
+  type SiteAnnouncementsMarkReadRequest,
+  type SiteAnnouncementsUpdatePreferencesRequest,
+} from "./messaging"
 import { notifySiteAnnouncements } from "./notificationService"
 import { getSiteAnnouncementProvider } from "./providers"
 import { siteAnnouncementStorage } from "./storage"
@@ -147,6 +157,110 @@ function createSiteState(params: {
 }
 
 /**
+ * Returns the timestamp when a site's cooldown expires, if it has been checked.
+ */
+function getAnnouncementCooldownExpiresAt(params: {
+  siteState: Pick<SiteAnnouncementSiteState, "lastCheckedAt">
+  intervalMinutes: number
+}): number | null {
+  const lastCheckedAt = params.siteState.lastCheckedAt
+  if (typeof lastCheckedAt !== "number") {
+    return null
+  }
+
+  return (
+    lastCheckedAt + clampIntervalMinutes(params.intervalMinutes) * 60 * 1000
+  )
+}
+
+/**
+ * Returns whether a site announcement check is still inside its cooldown window.
+ */
+function isWithinAnnouncementCooldown(params: {
+  siteState: Pick<SiteAnnouncementSiteState, "lastCheckedAt">
+  now: number
+  intervalMinutes: number
+}): boolean {
+  const expiresAt = getAnnouncementCooldownExpiresAt(params)
+  return expiresAt != null && params.now < expiresAt
+}
+
+/**
+ * Recreates the site announcement alarm with a specific first-run delay.
+ */
+async function rescheduleAnnouncementAlarm(params: {
+  intervalMinutes: number
+  delayInMinutes: number
+}): Promise<void> {
+  await clearAlarm(SITE_ANNOUNCEMENTS_ALARM_NAME)
+  await createAlarm(SITE_ANNOUNCEMENTS_ALARM_NAME, {
+    periodInMinutes: params.intervalMinutes,
+    delayInMinutes: params.delayInMinutes,
+  })
+}
+
+/**
+ * Chooses the next alarm delay from persisted site cooldowns.
+ */
+function getAnnouncementAlarmDelayMinutes(params: {
+  intervalMinutes: number
+  siteStates: SiteAnnouncementSiteState[]
+  accounts: SiteAccount[]
+}): number {
+  const now = Date.now()
+  let nextDelayMinutes = Number.POSITIVE_INFINITY
+  const accounts = dedupeCommonAccounts(params.accounts)
+  const enabledSiteKeys = new Set(
+    accounts.map((account) => {
+      const provider = getSiteAnnouncementProvider(account.site_type)
+      return provider.createSiteKey({
+        accountId: account.id,
+        siteType: account.site_type,
+        baseUrl: account.site_url,
+      })
+    }),
+  )
+  const siteKeysWithStatus = new Set(
+    params.siteStates
+      .filter((siteState) => enabledSiteKeys.has(siteState.siteKey))
+      .map((siteState) => siteState.siteKey),
+  )
+
+  for (const account of accounts) {
+    const provider = getSiteAnnouncementProvider(account.site_type)
+    const siteKey = provider.createSiteKey({
+      accountId: account.id,
+      siteType: account.site_type,
+      baseUrl: account.site_url,
+    })
+    if (!siteKeysWithStatus.has(siteKey)) {
+      return 1
+    }
+  }
+
+  for (const siteState of params.siteStates) {
+    if (!enabledSiteKeys.has(siteState.siteKey)) {
+      continue
+    }
+
+    const expiresAt = getAnnouncementCooldownExpiresAt({
+      siteState,
+      intervalMinutes: params.intervalMinutes,
+    })
+    if (expiresAt == null) {
+      continue
+    }
+
+    nextDelayMinutes = Math.min(
+      nextDelayMinutes,
+      Math.max(1, Math.ceil((expiresAt - now) / 60_000)),
+    )
+  }
+
+  return Number.isFinite(nextDelayMinutes) ? nextDelayMinutes : 1
+}
+
+/**
  * Removes duplicate common-provider accounts that share one announcement source.
  */
 function dedupeCommonAccounts(accounts: SiteAccount[]): SiteAccount[] {
@@ -174,17 +288,6 @@ function dedupeCommonAccounts(accounts: SiteAccount[]): SiteAccount[] {
   }
 
   return result
-}
-
-/**
- * Reads the master polling switch. Manual checks bypass this so users can
- * refresh the announcement page on demand even when automatic polling is off.
- */
-async function isAutomaticPollingEnabled(): Promise<boolean> {
-  const prefs = await userPreferences.getPreferences()
-  return normalizeSiteAnnouncementPreferences(
-    prefs.siteAnnouncementNotifications,
-  ).enabled
 }
 
 class SiteAnnouncementScheduler {
@@ -216,14 +319,34 @@ class SiteAnnouncementScheduler {
       return
     }
 
+    const intervalMinutes = clampIntervalMinutes(config.intervalMinutes)
+
     if (!config.enabled) {
       await clearAlarm(SITE_ANNOUNCEMENTS_ALARM_NAME)
       return
     }
 
-    await createAlarm(SITE_ANNOUNCEMENTS_ALARM_NAME, {
-      periodInMinutes: clampIntervalMinutes(config.intervalMinutes),
-      delayInMinutes: 1,
+    const siteStates = await siteAnnouncementStorage.getStatus()
+    const accounts = await accountStorage.getEnabledAccounts()
+    const delayInMinutes = getAnnouncementAlarmDelayMinutes({
+      intervalMinutes,
+      siteStates,
+      accounts,
+    })
+    const existingAlarm = await getAlarm(SITE_ANNOUNCEMENTS_ALARM_NAME)
+    if (
+      existingAlarm &&
+      existingAlarm.periodInMinutes != null &&
+      Math.abs(existingAlarm.periodInMinutes - intervalMinutes) < 0.001 &&
+      existingAlarm.scheduledTime != null &&
+      existingAlarm.scheduledTime <= Date.now() + delayInMinutes * 60_000
+    ) {
+      return
+    }
+
+    await rescheduleAnnouncementAlarm({
+      intervalMinutes,
+      delayInMinutes,
     })
   }
 
@@ -232,6 +355,10 @@ class SiteAnnouncementScheduler {
     await this.applySchedule(
       normalizeSiteAnnouncementPreferences(prefs.siteAnnouncementNotifications),
     )
+  }
+
+  async reconcileScheduleFromPreferences(): Promise<void> {
+    await this.applyScheduleFromPreferences()
   }
 
   async updateSettings(
@@ -279,9 +406,27 @@ class SiteAnnouncementScheduler {
     }
 
     try {
-      if (params.trigger === "alarm" && !(await isAutomaticPollingEnabled())) {
+      const automaticPollingPreferences =
+        params.trigger === "alarm"
+          ? normalizeSiteAnnouncementPreferences(
+              (await userPreferences.getPreferences())
+                .siteAnnouncementNotifications,
+            )
+          : undefined
+
+      if (params.trigger === "alarm" && !automaticPollingPreferences?.enabled) {
         return result
       }
+
+      const siteStatesByKey =
+        params.trigger === "alarm"
+          ? new Map(
+              (await siteAnnouncementStorage.getStatus()).map((site) => [
+                site.siteKey,
+                site,
+              ]),
+            )
+          : undefined
 
       const accounts = params.accountIds?.length
         ? await Promise.all(
@@ -292,6 +437,7 @@ class SiteAnnouncementScheduler {
               .filter((account) => account.disabled !== true),
           )
         : await accountStorage.getEnabledAccounts()
+      let nextCooldownExpiresAt: number | undefined
 
       for (const account of dedupeCommonAccounts(accounts)) {
         const provider = getSiteAnnouncementProvider(account.site_type)
@@ -302,6 +448,37 @@ class SiteAnnouncementScheduler {
           baseUrl: account.site_url,
         })
         const now = Date.now()
+        const existingSiteState = siteStatesByKey?.get(siteKey)
+
+        if (
+          params.trigger === "alarm" &&
+          automaticPollingPreferences &&
+          existingSiteState &&
+          isWithinAnnouncementCooldown({
+            siteState: existingSiteState,
+            now,
+            intervalMinutes: automaticPollingPreferences.intervalMinutes,
+          })
+        ) {
+          const cooldownExpiresAt = getAnnouncementCooldownExpiresAt({
+            siteState: existingSiteState,
+            intervalMinutes: automaticPollingPreferences.intervalMinutes,
+          })
+          if (cooldownExpiresAt != null) {
+            nextCooldownExpiresAt = Math.min(
+              nextCooldownExpiresAt ?? cooldownExpiresAt,
+              cooldownExpiresAt,
+            )
+          }
+
+          logger.debug("Skipping site announcement check within cooldown", {
+            siteKey,
+            intervalMinutes: automaticPollingPreferences.intervalMinutes,
+            lastCheckedAt: existingSiteState.lastCheckedAt ?? null,
+          })
+          continue
+        }
+
         result.checked += 1
 
         try {
@@ -372,6 +549,24 @@ class SiteAnnouncementScheduler {
         }
       }
 
+      if (
+        params.trigger === "alarm" &&
+        automaticPollingPreferences?.enabled &&
+        nextCooldownExpiresAt != null
+      ) {
+        const intervalMinutes = clampIntervalMinutes(
+          automaticPollingPreferences.intervalMinutes,
+        )
+        const delayInMinutes = Math.max(
+          1,
+          Math.ceil((nextCooldownExpiresAt - Date.now()) / 60_000),
+        )
+        await rescheduleAnnouncementAlarm({
+          intervalMinutes,
+          delayInMinutes,
+        })
+      }
+
       return result
     } catch (error) {
       logger.error("Site announcement check failed", error)
@@ -383,6 +578,42 @@ class SiteAnnouncementScheduler {
 }
 
 export const siteAnnouncementScheduler = new SiteAnnouncementScheduler()
+
+let siteAnnouncementsMessagingCleanup: (() => void)[] | null = null
+
+/**
+ * Register typed background listeners for site-announcement messages.
+ */
+export function setupSiteAnnouncementsMessagingListeners() {
+  if (siteAnnouncementsMessagingCleanup) {
+    return
+  }
+
+  siteAnnouncementsMessagingCleanup = [
+    onSiteAnnouncementsMessage(SiteAnnouncementsMessageTypes.GetStatus, () =>
+      resolveSiteAnnouncementsGetStatusMessage(),
+    ),
+    onSiteAnnouncementsMessage(SiteAnnouncementsMessageTypes.ListRecords, () =>
+      resolveSiteAnnouncementsListRecordsMessage(),
+    ),
+    onSiteAnnouncementsMessage(
+      SiteAnnouncementsMessageTypes.CheckNow,
+      ({ data }) => resolveSiteAnnouncementsCheckNowMessage(data),
+    ),
+    onSiteAnnouncementsMessage(
+      SiteAnnouncementsMessageTypes.MarkRead,
+      ({ data }) => resolveSiteAnnouncementsMarkReadMessage(data),
+    ),
+    onSiteAnnouncementsMessage(
+      SiteAnnouncementsMessageTypes.MarkAllRead,
+      ({ data }) => resolveSiteAnnouncementsMarkAllReadMessage(data),
+    ),
+    onSiteAnnouncementsMessage(
+      SiteAnnouncementsMessageTypes.UpdatePreferences,
+      ({ data }) => resolveSiteAnnouncementsUpdatePreferencesMessage(data),
+    ),
+  ]
+}
 
 /**
  * Mirrors local Sub2API read actions back to the upstream announcement API.
@@ -418,64 +649,114 @@ async function syncSub2ApiAnnouncementRead(recordId: string): Promise<void> {
   ])
 }
 
-export const handleSiteAnnouncementMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
+/**
+ * Resolve a typed request for site-announcement status.
+ */
+export async function resolveSiteAnnouncementsGetStatusMessage(): Promise<
+  RuntimeMessageResponse<SiteAnnouncementSiteState[]>
+> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.SiteAnnouncementsGetStatus: {
-        sendResponse({
-          success: true,
-          data: await siteAnnouncementStorage.getStatus(),
-        })
-        break
-      }
-      case RuntimeActionIds.SiteAnnouncementsListRecords: {
-        sendResponse({
-          success: true,
-          data: await siteAnnouncementStorage.listRecords(),
-        })
-        break
-      }
-      case RuntimeActionIds.SiteAnnouncementsCheckNow: {
-        const accountIds = Array.isArray(request.accountIds)
-          ? (request.accountIds as string[])
-          : undefined
-        sendResponse({
-          success: true,
-          data: await siteAnnouncementScheduler.runManualCheck(accountIds),
-        })
-        break
-      }
-      case RuntimeActionIds.SiteAnnouncementsMarkRead: {
-        await syncSub2ApiAnnouncementRead(request.recordId)
-        sendResponse({
-          success: await siteAnnouncementStorage.markRead(request.recordId),
-        })
-        break
-      }
-      case RuntimeActionIds.SiteAnnouncementsMarkAllRead: {
-        sendResponse({
-          success: true,
-          data: await siteAnnouncementStorage.markAllRead(request.siteKey),
-        })
-        break
-      }
-      case RuntimeActionIds.SiteAnnouncementsUpdatePreferences: {
-        sendResponse({
-          success: true,
-          data: await siteAnnouncementScheduler.updateSettings(
-            request.settings ?? {},
-          ),
-        })
-        break
-      }
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
+    try {
+      await siteAnnouncementScheduler.reconcileScheduleFromPreferences()
+    } catch (error) {
+      logger.warn("Failed to reconcile site announcement schedule", error)
+    }
+    return {
+      success: true,
+      data: await siteAnnouncementStorage.getStatus(),
     }
   } catch (error) {
     logger.error("Message handling failed", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request for locally cached announcement records.
+ */
+export async function resolveSiteAnnouncementsListRecordsMessage(): Promise<
+  RuntimeMessageResponse<SiteAnnouncementRecord[]>
+> {
+  try {
+    return {
+      success: true,
+      data: await siteAnnouncementStorage.listRecords(),
+    }
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to check site announcements immediately.
+ */
+export async function resolveSiteAnnouncementsCheckNowMessage(
+  request?: SiteAnnouncementsCheckNowRequest,
+): Promise<RuntimeMessageResponse<SiteAnnouncementCheckResult | null>> {
+  try {
+    const accountIds = Array.isArray(request?.accountIds)
+      ? request.accountIds
+      : undefined
+    return {
+      success: true,
+      data: await siteAnnouncementScheduler.runManualCheck(accountIds),
+    }
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to mark one announcement record as read.
+ */
+export async function resolveSiteAnnouncementsMarkReadMessage(
+  request: SiteAnnouncementsMarkReadRequest,
+): Promise<RuntimeMessageResponse<undefined>> {
+  try {
+    await syncSub2ApiAnnouncementRead(request.recordId)
+    return (await siteAnnouncementStorage.markRead(request.recordId))
+      ? ({ success: true, data: undefined } as const)
+      : createRuntimeMessageFailure("Failed to mark announcement as read")
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to mark all matching announcement records as read.
+ */
+export async function resolveSiteAnnouncementsMarkAllReadMessage(
+  request: SiteAnnouncementsMarkAllReadRequest,
+): Promise<RuntimeMessageResponse<number>> {
+  try {
+    return {
+      success: true,
+      data: await siteAnnouncementStorage.markAllRead(request.siteKey),
+    }
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to update site-announcement preferences.
+ */
+export async function resolveSiteAnnouncementsUpdatePreferencesMessage(
+  request: SiteAnnouncementsUpdatePreferencesRequest,
+): Promise<RuntimeMessageResponse<SiteAnnouncementPreferences>> {
+  try {
+    return {
+      success: true,
+      data: await siteAnnouncementScheduler.updateSettings(
+        request.settings ?? {},
+      ),
+    }
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
   }
 }

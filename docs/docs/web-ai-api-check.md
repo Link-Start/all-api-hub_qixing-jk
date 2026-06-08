@@ -26,7 +26,7 @@
 - **自动提取**：从源文本中自动分离 `Base URL`、`密钥` 和 `API 类型`。
 - **即时测试**：点击“开始测试”，插件会验证 Key 的连通性及可用模型。
 - **获取模型列表**：一键拉取上游站点支持的全部模型 ID。
-- **保存到凭证**：测试通过后，可一键将其保存到插件的 [API 凭证](./api-credential-profiles.md) 中，方便后续导出到 CherryStudio 等工具。
+- **保存到 API 凭据库**：测试通过后，可一键将其保存到插件的 [API 凭据库](./api-credential-profiles.md) 中，方便后续复制、验证或导出到 CherryStudio 等工具。
 
 ## 配置与自定义
 
@@ -50,5 +50,5 @@
 
 ## 相关文档
 
-- [API 凭证](./api-credential-profiles.md)：管理已保存的嗅探结果。
+- [API 凭据库](./api-credential-profiles.md)：管理已保存的嗅探结果。
 - [接口验证与健康状态](./auto-refresh.md)：了解插件如何验证接口。

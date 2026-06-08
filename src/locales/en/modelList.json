@@ -25,6 +25,10 @@
     "verifyApi": "Verify API",
     "verifyCliSupport": "Verify CLI Support"
   },
+  "aihubmixCatalogFallbackNotice": {
+    "description": "This account's actual available model scope could not be confirmed, so the full AIHubMix model catalog is shown. Some models may not be callable with this account; use the site's account permissions and real verification results as the final source of truth.",
+    "title": "Fell back to the full AIHubMix model catalog"
+  },
   "allAccounts": "All accounts",
   "allBillingModes": "All Billing Modes",
   "allGroups": "All Groups",
@@ -138,13 +142,16 @@
     "subtitle": "Account: {{accountName}} · Model: {{modelId}}",
     "title": "Key for model"
   },
+  "lowestPrice": "Lowest Price",
+  "lowestPriceWithinAccountFilters": "This row is the lowest price within the current account filters and same billing mode.",
+  "lowestPriceWithinBillingMode": "This row is the lowest price within the same billing mode.",
   "messages": {
     "copyFailed": "Copy failed",
     "modelNameCopied": "Model name copied",
     "modelNamesCopied": "Model names copied"
   },
   "noMatchingModels": "No matching models found",
-  "noSourcesDescription": "Add a site account or API credential profile before viewing the model list.",
+  "noSourcesDescription": "Add a site account or API credential before viewing the model list.",
   "noSourcesTitle": "No model sources yet",
   "optimalGroup": "Best Group: {{group}}",
   "optimalGroupLowestPriceWithinAccountFilters": "Best group within the current account-group filter: {{group}}. This row is also the lowest price within the same billing mode.",
@@ -154,12 +161,12 @@
   "output": "Output:",
   "output1MTokens": "Output (1M tokens)",
   "perCall": "Per call:",
-  "pleaseSelectFirst": "Please select an account or API credential profile first to view model list",
+  "pleaseSelectFirst": "Please select an account or API credential first to view model list",
   "pleaseSelectSource": "Please select a source",
   "pricingDescription": "Price information comes from the API interface provided by the site, and the actual cost is subject to the prices published by each site. The price of pay-per-use models is the cost per 1M tokens, and pay-per-call models display the cost per call",
   "pricingNote": "Model Pricing Note",
   "profileSourceNotice": {
-    "description": "Stored API credential profiles only provide model discovery and verification. Pricing, group filters, account summaries, and key compatibility are unavailable for this source.",
+    "description": "Saved API credentials only provide model discovery and verification. Pricing, group filters, account summaries, and key compatibility are unavailable for this source.",
     "title": "Profile-backed model catalog"
   },
   "providerTabs": {
@@ -214,8 +221,8 @@
     "incompatibleFormat": "Data format incompatible",
     "loadFailed": "Failed to load model data, please try again later",
     "loading": "Loading model data...",
-    "profileLoadFailed": "Failed to load models for this API credential profile: {{errorMessage}}",
-    "profileLoadFailedTitle": "Failed to load models for this API credential profile",
+    "profileLoadFailed": "Failed to load models for this API credential: {{errorMessage}}",
+    "profileLoadFailedTitle": "Failed to load models for this API credential",
     "retryLoad": "Retry Load"
   },
   "title": "Model List",

@@ -21,6 +21,9 @@ const config: KnipConfig = {
     "tests/setup.ts",
     "tests/setup.node.ts",
     "tests/setup.shared.ts",
+    // Playwright runs this through the build dependency project in
+    // playwright.config.ts, which Knip does not discover as a static import.
+    "e2e/setup/build.setup.ts",
   ],
   project: [
     "src/**/*.{ts,tsx}",
@@ -70,8 +73,20 @@ const config: KnipConfig = {
     "src/types/managedSiteModelRedirect.ts": ["exports"],
     "src/types/managedSiteModelSync.ts": ["types"],
     "src/types/octopus.ts": ["enumMembers"],
-    "src/services/apiService/common/type.ts": ["types"],
     "src/services/models/modelMetadata/index.ts": ["types"],
+
+    // apiTransport is the preferred service boundary, while selected
+    // apiService/common modules remain as compatibility aliases during the
+    // staged account-site migration.
+    "src/services/apiTransport/type.ts": ["exports", "types", "duplicates"],
+    "src/services/apiService/common/minIntervalLimiter.ts": ["files"],
+    "src/services/apiService/common/siteRequestLimiter.ts": ["files"],
+    "src/services/apiService/common/type.ts": [
+      "exports",
+      "types",
+      "duplicates",
+    ],
+    "src/services/apiService/common/utils.ts": ["exports"],
 
     // Shared hook option typing is part of the hook surface even when callers
     // currently rely on inference instead of importing the interface.

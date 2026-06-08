@@ -11,12 +11,12 @@
 | Chrome 商店 | [Chrome 商店](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome version](https://img.shields.io/chrome-web-store/v/lapnciffpekdengooeolaienkeoilfeo?label=Chrome&logo=googlechrome&style=flat)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome Web Store Users](https://img.shields.io/chrome-web-store/users/lapnciffpekdengooeolaienkeoilfeo?label=Chrome%20Users)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
 | Edge 商店 | [Edge 商店](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge version](https://img.shields.io/badge/dynamic/json?label=Edge&prefix=v&query=%24.version&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fpcokpjaffghgipcgjhapgdpeddlhblaa&logo=microsoftedge&style=flat)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge Add-ons Users](https://img.shields.io/badge/dynamic/json?label=Edge%20Users&query=$.activeInstallCount&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/pcokpjaffghgipcgjhapgdpeddlhblaa)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | Firefox 商店 | [Firefox 商店](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Firefox version](https://img.shields.io/amo/v/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox&logo=firefoxbrowser&style=flat)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Mozilla Add-on Users](https://img.shields.io/amo/users/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox%20Users)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
-| GitHub Releases | [查看全部版本](https://github.com/qixing-jk/all-api-hub/releases) | [![GitHub version](https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat)](https://github.com/qixing-jk/all-api-hub/releases/latest) | [![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/qixing-jk/all-api-hub/total?label=Total%20Downloads)](https://github.com/qixing-jk/all-api-hub/releases) |
 
 <details>
 <summary>📦 需要手动安装、Safari 或手机端？（点击展开）</summary>
 
-- **GitHub Release**：无法访问商店时，可前往 [GitHub Releases](https://github.com/qixing-jk/all-api-hub/releases) 下载正式版或 Nightly 版。
+- **GitHub Stable**：无法安装商店版，或需要临时手动安装已发布修复时，可前往 [GitHub Releases](https://github.com/qixing-jk/all-api-hub/releases) 下载正式版。手动安装版本不会像商店版一样自动更新，你可以 Star / Watch 仓库来接收新版本通知。
+- **Nightly 预发布**：适合想抢先体验并协助测试的用户，可能不如商店稳定版稳定。Nightly 也属于手动安装通道，不会自动更新。
 - **Safari (Mac)**：需要通过 Xcode 安装，详见 [Safari 安装指南](./safari-install.md)。
 - **QQ / 360 等**：支持 Chromium 内核浏览器手动加载，详见 [手动安装指南](./other-browser-install.md)。
 - **移动端**：支持 Edge 手机版、Firefox Android、Kiwi 等，详见 [移动端 FAQ](./faq.md#mobile-browser-support)。
@@ -40,6 +40,10 @@
 4. 点击 **`自动识别`**。
 5. 确认信息无误后，点击 **`确认添加`**。
 
+::: tip 还没有账号？
+如果你正在寻找稳定、高效且兼容性良好的 AI 中转服务，可以尝试我们的合作伙伴 [PackyCode](https://www.packyapi.com/register?aff=all-api-hub)（注册并充值时填写 `all-api-hub` 优惠码可享 9 折）。
+:::
+
 > **过盾提示**：如果站点有 Cloudflare 验证（五秒盾），插件会自动弹出窗口协助过盾，验证通过后会自动继续识别。
 
 <a id="manual-addition"></a>
@@ -54,14 +58,13 @@
 
 ## 3. 支持的站点类型
 
-All API Hub 几乎支持市面上所有主流的 AI 中转站架构，包括：
-- **One API / New API** 系列（最常见）
-- **Sub2API**
-- **AIHubMix**
-- **AnyRouter / VoAPI / Super-API** 等特色架构
+不论你用的是哪种架构，我们基本都支持：
+- **账号站点兼容架构**：One API, New API, Veloera, One-Hub, Done-Hub, Sub2API 等。
+- **特色账号平台与兼容实现**：AIHubMix, AnyRouter, Neo-API, Super-API, v-api 等。
+- **自建管理后台**：New API, Veloera, Done-Hub, Octopus, AxonHub, Claude Code Hub 等，用于渠道管理、迁移和部分模型同步。
 
 ::: tip 兼容性提示
-只要是基于以上开源系统搭建的站点，通常都能完美支持。完整的兼容列表请查看 [支持的站点与系统类型](./supported-sites.md)。
+如果是基于账号站点兼容架构搭建的中转站，通常可以作为账号添加；AxonHub、Octopus、Claude Code Hub 等则主要作为自建管理后台使用。完整的兼容列表请查看 [支持的站点与系统类型](./supported-sites.md)。
 :::
 
 <a id="quick-export-sites"></a>
@@ -86,8 +89,8 @@ All API Hub 几乎支持市面上所有主流的 AI 中转站架构，包括：
 
 ### 🔑 密钥管理与快捷集成
 - **[令牌管理](./key-management.md)**：集中管理站点令牌，支持一键补全。
-- **[独立 API 凭证](./api-credential-profiles.md)**：无需账号保存 URL+Key，支持批量验证。
-- **[网页 API 嗅探](./web-ai-api-check.md)**：在网页内快速识别并测试 API 配置。
+- **[API 凭据库](./api-credential-profiles.md)**：无需账号保存 `Base URL + API Key`，用于复制、验证和查看模型。
+- **[网页 API 嗅探](./web-ai-api-check.md)**：在网页内快速识别并测试 API 配置，可保存到 API 凭据库。
 
 ### ⚡ 自动化与信息追踪
 - **[自动签到流](./auto-checkin.md)**：每天自动帮你完成所有站点的签到。

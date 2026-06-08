@@ -4,9 +4,14 @@ import { DEFAULT_CHANNEL_FIELDS } from "~/constants/managedSite"
 import { SITE_TYPES } from "~/constants/siteType"
 import { ensureAccountApiToken } from "~/services/accounts/accountOperations"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { normalizeAccountForManagedChannel } from "~/services/accounts/utils/siteUrlNormalization"
 import { getApiService } from "~/services/apiService"
 import { fetchChannel as fetchVeloeraChannel } from "~/services/apiService/veloera"
-import { findManagedSiteChannelByComparableInputs } from "~/services/managedSites/utils/channelMatching"
+import {
+  MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS,
+  MatchResolutionUnresolvedError,
+} from "~/services/managedSites/channelMatch"
+import { resolveManagedSiteImportDuplicate } from "~/services/managedSites/importDuplicateResolution"
 import { fetchManagedSiteAvailableModels } from "~/services/managedSites/utils/fetchManagedSiteAvailableModels"
 import { fetchTokenScopedModels } from "~/services/managedSites/utils/fetchTokenScopedModels"
 import { ApiToken, AuthTypeEnum, DisplaySiteData, SiteAccount } from "~/types"
@@ -23,6 +28,7 @@ import type {
   AutoConfigToNewApiResponse,
   ServiceResponse,
 } from "~/types/serviceResponse"
+import type { VeloeraConfig } from "~/types/veloeraConfig"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import { normalizeList, parseDelimitedList } from "~/utils/core/string"
@@ -40,24 +46,31 @@ import { resolveDefaultChannelGroups } from "./defaultChannelGroups"
  */
 const logger = createLogger("VeloeraService")
 
+const veloeraImportDuplicateService = {
+  siteType: SITE_TYPES.VELOERA,
+  searchChannel,
+  hydrateComparableChannelKeys,
+  fetchChannelSecretKey,
+}
+
+const toVeloeraRequestConfig = (config: VeloeraConfig) => ({
+  baseUrl: config.baseUrl,
+  auth: {
+    authType: AuthTypeEnum.AccessToken,
+    accessToken: config.adminToken,
+    userId: config.userId,
+  },
+})
+
 /**
  * Searches channels matching the keyword.
  */
 export async function searchChannel(
-  baseUrl: string,
-  accessToken: string,
-  userId: number | string,
+  config: VeloeraConfig,
   keyword: string,
 ): Promise<ManagedSiteChannelListData | null> {
   return await getApiService(SITE_TYPES.VELOERA).searchChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken,
-        userId,
-      },
-    },
+    toVeloeraRequestConfig(config),
     keyword,
   )
 }
@@ -66,20 +79,11 @@ export async function searchChannel(
  * Creates a channel.
  */
 export async function createChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: VeloeraConfig,
   channelData: CreateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.VELOERA).createChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toVeloeraRequestConfig(config),
     channelData,
   )
 }
@@ -88,20 +92,11 @@ export async function createChannel(
  * Updates a channel.
  */
 export async function updateChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: VeloeraConfig,
   channelData: UpdateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.VELOERA).updateChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toVeloeraRequestConfig(config),
     channelData,
   )
 }
@@ -109,21 +104,9 @@ export async function updateChannel(
 /**
  * Deletes a channel.
  */
-export async function deleteChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  channelId: number,
-) {
+export async function deleteChannel(config: VeloeraConfig, channelId: number) {
   return await getApiService(SITE_TYPES.VELOERA).deleteChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toVeloeraRequestConfig(config),
     channelId,
   )
 }
@@ -132,20 +115,11 @@ export async function deleteChannel(
  * Fetches the full secret key for a Veloera channel from its detail payload.
  */
 export async function fetchChannelSecretKey(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: VeloeraConfig,
   channelId: number,
 ): Promise<string> {
   const channel = await fetchVeloeraChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toVeloeraRequestConfig(config),
     channelId,
   )
 
@@ -155,6 +129,43 @@ export async function fetchChannelSecretKey(
   }
 
   return key
+}
+
+/**
+ * Hydrates Veloera channel keys from detail payloads for shared comparison.
+ */
+export async function hydrateComparableChannelKeys(
+  config: VeloeraConfig,
+  candidates: ManagedSiteChannel[],
+): Promise<ManagedSiteChannel[]> {
+  const hydratedCandidates: ManagedSiteChannel[] = []
+
+  for (const candidate of candidates) {
+    if (candidate.key?.trim()) {
+      hydratedCandidates.push(candidate)
+      continue
+    }
+
+    try {
+      const key = await fetchChannelSecretKey(config, candidate.id)
+
+      hydratedCandidates.push({
+        ...candidate,
+        key,
+      })
+    } catch (error) {
+      logger.warn("Failed to hydrate Veloera channel key", {
+        channelId: candidate.id,
+        error: getErrorMessage(error),
+      })
+
+      throw new MatchResolutionUnresolvedError(
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
+      )
+    }
+  }
+
+  return hydratedCandidates
 }
 
 /**
@@ -247,9 +258,10 @@ export async function prepareChannelFormData(
   account: DisplaySiteData,
   token: ApiToken | AccountToken,
 ): Promise<ChannelFormData> {
+  const upstreamAccount = normalizeAccountForManagedChannel(account)
   const tokenModelList = parseDelimitedList(token.models)
   const { models: availableModels, fetchFailed } = await fetchTokenScopedModels(
-    account,
+    upstreamAccount,
     token,
   )
   const resolvedModels =
@@ -267,7 +279,7 @@ export async function prepareChannelFormData(
     name: buildChannelName(account, token),
     type: DEFAULT_CHANNEL_FIELDS.type,
     key: token.key,
-    base_url: account.baseUrl,
+    base_url: upstreamAccount.baseUrl,
     models: normalizeList(resolvedModels),
     ...(fetchFailed ? { modelPrefillFetchFailed: true } : {}),
     groups: normalizeList(resolvedGroups),
@@ -309,44 +321,6 @@ export function buildChannelPayload(
 }
 
 /**
- * Finds a channel that matches the account base URL and models.
- *
- * When `key` is provided, the match is refined to include the key to avoid treating
- * different keys as duplicates.
- *
- * Warning: this feature is not supported on Veloera for reliable absence
- * checks. The helper depends on Veloera's keyword search endpoint, which does
- * not reliably support base URL search, so negative results must not be treated
- * as conclusive proof that a channel is absent.
- */
-export async function findMatchingChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  accountBaseUrl: string,
-  models: string[],
-  key?: string,
-): Promise<ManagedSiteChannel | null> {
-  const searchResults = await searchChannel(
-    baseUrl,
-    adminToken,
-    userId,
-    accountBaseUrl,
-  )
-
-  if (!searchResults) {
-    return null
-  }
-
-  return findManagedSiteChannelByComparableInputs({
-    channels: searchResults.items,
-    accountBaseUrl,
-    models,
-    key,
-  })
-}
-
-/**
  * Imports an account as a channel into Veloera.
  */
 async function importToVeloera(
@@ -372,14 +346,17 @@ async function importToVeloera(
 
     const formData = await prepareChannelFormData(account, token)
 
-    const existingChannel = await findMatchingChannel(
-      veloeraBaseUrl!,
-      veloeraAdminToken!,
-      veloeraUserId!,
-      account.baseUrl,
-      formData.models,
-      formData.key,
-    )
+    const managedConfig = {
+      baseUrl: veloeraBaseUrl!,
+      adminToken: veloeraAdminToken!,
+      userId: veloeraUserId!,
+    }
+
+    const existingChannel = await resolveManagedSiteImportDuplicate({
+      service: veloeraImportDuplicateService,
+      managedConfig,
+      formData,
+    })
 
     if (existingChannel) {
       return {
@@ -392,12 +369,7 @@ async function importToVeloera(
 
     const payload = buildChannelPayload(formData)
 
-    const createdChannelResponse = await createChannel(
-      veloeraBaseUrl!,
-      veloeraAdminToken!,
-      veloeraUserId!,
-      payload,
-    )
+    const createdChannelResponse = await createChannel(managedConfig, payload)
 
     if (createdChannelResponse.success) {
       return {

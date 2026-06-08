@@ -1,18 +1,16 @@
 import { SITE_TYPES } from "~/constants/siteType"
-import { expect, test } from "~~/e2e/fixtures/extensionTest"
+import { test } from "~~/e2e/fixtures/extensionTest"
 import {
   forceExtensionLanguage,
-  installExtensionPageGuards,
   seedUserPreferences,
   stubLlmMetadataIndex,
 } from "~~/e2e/utils/commonUserFlows"
 import { getServiceWorker } from "~~/e2e/utils/extensionState"
 import {
-  autoDetectAccountFromAddDialog,
-  expectAccountListItemVisible,
-  openAccountManagementPage,
-  waitForSavedAccount,
-} from "~~/e2e/utils/realSite/accountAdd"
+  realSiteAccountUsageChecks,
+  runRealSiteAccountFixtureUsageChecks,
+} from "~~/e2e/utils/realSite/accountUsage"
+import { runCompatibleRealSiteAccountSaveFlow } from "~~/e2e/utils/realSite/compatibleAccountSaveFlow"
 import {
   getNewApiRealSiteSkipReason,
   loginToRealNewApiSite,
@@ -27,11 +25,11 @@ test.describe("real-site E2E: New API account add flow", () => {
     await stubLlmMetadataIndex(context)
   })
 
-  test("logs into a real New API site and auto-detects then saves the account", async ({
+  test("logs into a real New API site, saves the account, then verifies account usage workflows", async ({
     context,
     extensionId,
     page,
-  }) => {
+  }, testInfo) => {
     const realSite = resolveNewApiRealSiteConfig()
     test.skip(
       !realSite.config,
@@ -48,32 +46,43 @@ test.describe("real-site E2E: New API account add flow", () => {
       openChangelogOnUpdate: false,
     })
 
-    const sitePage = await context.newPage()
-    const loginResult = await loginToRealNewApiSite(sitePage, config)
-    expect(loginResult.user).toBeTruthy()
-
-    installExtensionPageGuards(page)
-    await openAccountManagementPage({ page, extensionId })
-
-    const dialog = await autoDetectAccountFromAddDialog(page, config.baseUrl)
-    await expect(dialog.confirmAddButton).toBeEnabled({ timeout: 60_000 })
-
-    await dialog.confirmAddButton.click()
-    await expect(dialog.dialog).toBeHidden({ timeout: 60_000 })
-
-    const savedAccount = await waitForSavedAccount({
-      serviceWorker,
-      siteType: SITE_TYPES.NEW_API,
-      baseUrl: config.baseUrl,
-    })
-
-    expect(savedAccount.site_type).toBe(SITE_TYPES.NEW_API)
-    expect(savedAccount.site_url).toBe(config.baseUrl)
-    expect(String(savedAccount.account_info.id)).not.toBe("")
-    expect(savedAccount.account_info.username.trim()).not.toBe("")
-
-    await expectAccountListItemVisible(page, savedAccount.id)
-
-    await sitePage.close()
+    const accountFixture =
+      await test.step("save account from real site auto-detect", async () => {
+        const sitePage = await context.newPage()
+        try {
+          return await runCompatibleRealSiteAccountSaveFlow({
+            page,
+            extensionId,
+            serviceWorker,
+            sitePage,
+            config,
+            siteType: SITE_TYPES.NEW_API,
+            login: loginToRealNewApiSite,
+          })
+        } finally {
+          if (!sitePage.isClosed()) {
+            await sitePage.close()
+          }
+        }
+      })
+    await runRealSiteAccountFixtureUsageChecks(
+      {
+        testInfo,
+        page,
+        extensionId,
+        serviceWorker,
+        account: accountFixture,
+        label: "New API",
+      },
+      [
+        realSiteAccountUsageChecks.keyLifecycle(),
+        realSiteAccountUsageChecks.keyToApiProfileAndPopupModels(),
+        realSiteAccountUsageChecks.providerDestinations({
+          validateDestinationPages: true,
+        }),
+        realSiteAccountUsageChecks.modelCatalog(),
+        realSiteAccountUsageChecks.modelToKey({ envPrefix: "NEW_API" }),
+      ],
+    )
   })
 })

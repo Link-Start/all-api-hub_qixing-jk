@@ -3,6 +3,8 @@ import path from "node:path"
 import type { Page, TestInfo } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH, POPUP_PAGE_PATH } from "~/constants/extensionPages"
+import { OPTIONS_TEST_IDS } from "~/entrypoints/options/testIds"
+import { getPopupViewTestId } from "~/entrypoints/popup/testIds"
 
 interface ExtensionMemorySnapshot {
   usedJSHeapSize: number
@@ -38,8 +40,8 @@ interface ProbeSettleOptions {
 }
 
 const APP_SHELL_SELECTOR_BY_PAGE_PATH: Record<string, string> = {
-  [OPTIONS_PAGE_PATH]: '[data-testid="options-app"]',
-  [POPUP_PAGE_PATH]: '[data-testid="popup-view-accounts"]',
+  [OPTIONS_PAGE_PATH]: `[data-testid="${OPTIONS_TEST_IDS.app}"]`,
+  [POPUP_PAGE_PATH]: `[data-testid="${getPopupViewTestId("accounts")}"]`,
 }
 const PROBE_POLL_INTERVAL_MS = 50
 

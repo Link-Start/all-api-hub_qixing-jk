@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { USAGE_ANALYTICS_TEST_IDS } from "~/features/UsageAnalytics/testIds"
 import {
   getDayKeyFromUnixSeconds,
   subtractDaysFromDayKey,
@@ -67,7 +68,7 @@ async function seedUsageAnalyticsJourneyData(
       site_name: "Usage Hub A",
       site_url: "https://usage-a.example.com",
       account_info: {
-        id: 21,
+        id: "21",
         username: "usage-user-a",
         access_token: "usage-token-a",
       },
@@ -77,7 +78,7 @@ async function seedUsageAnalyticsJourneyData(
       site_name: "Usage Hub B",
       site_url: "https://usage-b.example.com",
       account_info: {
-        id: 22,
+        id: "22",
         username: "usage-user-b",
         access_token: "usage-token-b",
       },
@@ -268,7 +269,7 @@ test("exports the selected usage analytics account range as JSON", async ({
 
   const downloadPromise = page.waitForEvent("download")
   await page
-    .getByTestId("usage-analytics-page")
+    .getByTestId(USAGE_ANALYTICS_TEST_IDS.page)
     .getByRole("button", { name: "Export" })
     .click()
 

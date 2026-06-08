@@ -10,8 +10,10 @@ import {
   InvalidTokenPayloadError,
   resolveDisplayAccountTokenForSecret,
 } from "~/services/accounts/utils/apiServiceRequest"
+import { formatOptionalSkPrefixSiteToken } from "~/services/apiService/common/apiKey"
 import { isTokenCompatibleWithModel } from "~/services/models/utils/tokenModelCompatibility"
 import { AuthTypeEnum, type ApiToken, type DisplaySiteData } from "~/types"
+import { sleep } from "~/utils/core/async"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 
@@ -19,12 +21,16 @@ import { createLogger } from "~/utils/core/logger"
  * Logger scoped to the "model key" dialog so token loading and clipboard failures can be diagnosed safely.
  */
 const logger = createLogger("ModelKeyDialogHook")
+const POST_CREATE_TOKEN_REFRESH_ATTEMPTS = 5
+const POST_CREATE_TOKEN_REFRESH_INTERVAL_MS = 1_000
 
 const isCreatedApiToken = (value: unknown): value is ApiToken =>
   !!value &&
   typeof value === "object" &&
   typeof (value as Partial<ApiToken>).id === "number" &&
   typeof (value as Partial<ApiToken>).key === "string"
+
+export type ModelKeyDialogCreateResult = "success" | "failure" | "skipped"
 
 /**
  * Input params for `useModelKeyDialog`.
@@ -69,14 +75,16 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
   }, [account, canCreateToken, t])
 
   const fetchTokens = useCallback(async () => {
-    if (!account) return
+    if (!account) return false
 
     setIsLoading(true)
     setError(null)
     setCreateError(null)
 
     try {
-      setTokens(await fetchDisplayAccountTokens(account))
+      const fetchedTokens = await fetchDisplayAccountTokens(account)
+      setTokens(fetchedTokens)
+      return true
     } catch (error) {
       const errorMessage =
         error instanceof InvalidTokenPayloadError
@@ -97,6 +105,7 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
           : {}),
       })
       setError(t("modelList:keyDialog.loadFailed", { error: errorMessage }))
+      return false
     } finally {
       setIsLoading(false)
     }
@@ -155,6 +164,34 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
     [compatibleTokens, selectedTokenId],
   )
 
+  const fetchTokensUntilCompatibleAfterCreate = useCallback(async () => {
+    if (!account) {
+      return { refreshedTokens: [], refreshedCompatible: [] }
+    }
+
+    for (
+      let attempt = 1;
+      attempt <= POST_CREATE_TOKEN_REFRESH_ATTEMPTS;
+      attempt++
+    ) {
+      const refreshedTokens = await fetchDisplayAccountTokens(account)
+      const refreshedCompatible = refreshedTokens.filter((token) =>
+        isTokenCompatibleWithModel(token, modelContext),
+      )
+
+      if (
+        refreshedCompatible.length > 0 ||
+        attempt === POST_CREATE_TOKEN_REFRESH_ATTEMPTS
+      ) {
+        return { refreshedTokens, refreshedCompatible }
+      }
+
+      await sleep(POST_CREATE_TOKEN_REFRESH_INTERVAL_MS)
+    }
+
+    return { refreshedTokens: [], refreshedCompatible: [] }
+  }, [account, modelContext])
+
   const copySelectedKey = useCallback(async () => {
     if (!account || !selectedToken) return
 
@@ -179,11 +216,11 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
 
   const refreshTokensAfterCreate = useCallback(
     async (createdToken?: ApiToken) => {
-      if (!account) return
+      if (!account) return "skipped" as const
 
       if (!canCreateToken) {
         setCreateError(t("modelList:keyDialog.createNotSupported"))
-        return
+        return "skipped" as const
       }
 
       setCreateError(null)
@@ -199,33 +236,34 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
           })
           if (isTokenCompatibleWithModel(createdToken, modelContext)) {
             setSelectedTokenId(createdToken.id)
-            setOneTimeToken(createdToken)
+            setOneTimeToken(
+              formatOptionalSkPrefixSiteToken(createdToken, account.siteType),
+            )
             toast.success(t("modelList:keyDialog.createSuccess"))
+            return "success" as const
           } else {
             setCreateError(
               t("modelList:keyDialog.noCompatibleFoundAfterCreate", {
                 modelId,
               }),
             )
+            return "failure" as const
           }
-          return
         }
 
-        const refreshedTokens = await fetchDisplayAccountTokens(account)
+        const { refreshedTokens, refreshedCompatible } =
+          await fetchTokensUntilCompatibleAfterCreate()
         setTokens(refreshedTokens)
-
-        const refreshedCompatible = refreshedTokens.filter((token) =>
-          isTokenCompatibleWithModel(token, modelContext),
-        )
 
         if (refreshedCompatible.length === 0) {
           setCreateError(
             t("modelList:keyDialog.noCompatibleFoundAfterCreate", { modelId }),
           )
-          return
+          return "failure" as const
         }
 
         toast.success(t("modelList:keyDialog.createSuccess"))
+        return "success" as const
       } catch (error) {
         const errorMessage =
           error instanceof InvalidTokenPayloadError
@@ -251,28 +289,36 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
         setCreateError(
           t("modelList:keyDialog.createFailed", { error: errorMessage }),
         )
+        return "failure" as const
       } finally {
         setIsLoading(false)
       }
     },
-    [account, canCreateToken, modelContext, modelId, t],
+    [
+      account,
+      canCreateToken,
+      fetchTokensUntilCompatibleAfterCreate,
+      modelContext,
+      modelId,
+      t,
+    ],
   )
 
   const createDefaultKey = useCallback(
     async (group: string) => {
-      if (!account) return
+      if (!account) return "skipped" as const
 
       if (!canCreateToken) {
         setCreateError(t("modelList:keyDialog.createNotSupported"))
-        return
+        return "skipped" as const
       }
 
-      if (isCreating) return
+      if (isCreating) return "skipped" as const
 
       const normalizedGroup = typeof group === "string" ? group.trim() : ""
       if (!normalizedGroup) {
         setCreateError(t("modelList:keyDialog.createGroupRequired"))
-        return
+        return "skipped" as const
       }
 
       setIsCreating(true)
@@ -287,7 +333,7 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
           throw new Error("create_token_failed")
         }
 
-        await refreshTokensAfterCreate(
+        return await refreshTokensAfterCreate(
           isCreatedApiToken(created) ? created : undefined,
         )
       } catch (error) {
@@ -301,6 +347,7 @@ export function useModelKeyDialog(params: UseModelKeyDialogParams) {
         setCreateError(
           t("modelList:keyDialog.createFailed", { error: errorMessage }),
         )
+        return "failure" as const
       } finally {
         setIsCreating(false)
       }

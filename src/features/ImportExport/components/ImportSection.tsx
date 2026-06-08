@@ -12,6 +12,14 @@ import {
   FormField,
   Textarea,
 } from "~/components/ui"
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
+import {
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+
+import { IMPORT_EXPORT_TEST_IDS } from "../testIds"
 
 interface ImportSectionProps {
   importData: string
@@ -104,7 +112,13 @@ const ImportSection = ({
                         <p>• {t("import.containsChannelConfigs")}</p>
                       )}
                       {validation.hasApiCredentialProfiles && (
-                        <p>• {t("import.containsApiCredentialProfiles")}</p>
+                        <p
+                          data-testid={
+                            IMPORT_EXPORT_TEST_IDS.containsApiCredentialProfiles
+                          }
+                        >
+                          • {t("import.containsApiCredentialProfiles")}
+                        </p>
                       )}
                       <p>
                         • {t("import.backupTime")}: {validation.timestamp}
@@ -118,18 +132,28 @@ const ImportSection = ({
             </Alert>
           )}
 
-          {/* 导入按钮 */}
-          <Button
-            onClick={handleImport}
-            disabled={isImporting || !validation?.valid}
-            loading={isImporting}
-            variant="default"
-            bleed
+          <ProductAnalyticsScope
+            entrypoint={PRODUCT_ANALYTICS_ENTRYPOINTS.Options}
+            featureId={PRODUCT_ANALYTICS_FEATURE_IDS.ImportExport}
+            surfaceId={
+              PRODUCT_ANALYTICS_SURFACE_IDS.OptionsImportExportImportSection
+            }
           >
-            {isImporting
-              ? t("common:status.importing")
-              : t("common:actions.import")}
-          </Button>
+            {/* 导入按钮 */}
+            <Button
+              id="import-backup-action"
+              onClick={handleImport}
+              disabled={isImporting || !validation?.valid}
+              loading={isImporting}
+              variant="default"
+              bleed
+              data-testid={IMPORT_EXPORT_TEST_IDS.importBackupButton}
+            >
+              {isImporting
+                ? t("common:status.importing")
+                : t("common:actions.import")}
+            </Button>
+          </ProductAnalyticsScope>
         </CardContent>
       </Card>
     </section>

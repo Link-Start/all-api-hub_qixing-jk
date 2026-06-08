@@ -89,6 +89,33 @@ async function expectConfiguredActionPopup(
     .toBe(expectedPopup)
 }
 
+async function hasSidePanelOpenSupport(
+  serviceWorker: Awaited<ReturnType<typeof getServiceWorker>>,
+): Promise<boolean> {
+  return await serviceWorker.evaluate(() => {
+    const chromeApi = (globalThis as any).chrome
+    return typeof chromeApi?.sidePanel?.open === "function"
+  })
+}
+
+async function hasActionClickListeners(
+  serviceWorker: Awaited<ReturnType<typeof getServiceWorker>>,
+): Promise<boolean> {
+  return await serviceWorker.evaluate(() => {
+    const chromeApi = (globalThis as any).chrome
+    return Boolean(chromeApi.action?.onClicked?.hasListeners?.())
+  })
+}
+
+async function expectActionClickListenerState(
+  serviceWorker: Awaited<ReturnType<typeof getServiceWorker>>,
+  expectedHasListeners: boolean,
+) {
+  await expect
+    .poll(async () => hasActionClickListeners(serviceWorker))
+    .toBe(expectedHasListeners)
+}
+
 test.beforeEach(async ({ context, page }) => {
   installExtensionPageGuards(page)
   await forceExtensionLanguage(page, "en")
@@ -141,6 +168,7 @@ test("updates toolbar action behavior from settings into the live extension acti
   })
 
   await expectConfiguredActionPopup(serviceWorker, POPUP_PAGE_PATH)
+  await expectActionClickListenerState(serviceWorker, false)
 
   await page.goto(
     `chrome-extension://${extensionId}/${OPTIONS_PAGE_PATH}#${MENU_ITEM_IDS.BASIC}`,
@@ -154,10 +182,16 @@ test("updates toolbar action behavior from settings into the live extension acti
     "actionClickBehavior",
     "sidepanel",
   )
-  await expectConfiguredActionPopup(serviceWorker, "")
+  const sidePanelOpenSupported = await hasSidePanelOpenSupport(serviceWorker)
+  await expectConfiguredActionPopup(
+    serviceWorker,
+    sidePanelOpenSupported ? "" : POPUP_PAGE_PATH,
+  )
+  await expectActionClickListenerState(serviceWorker, sidePanelOpenSupported)
 
   await page.getByRole("button", { name: "Popup" }).click()
 
   await expectStoredPreference(serviceWorker, "actionClickBehavior", "popup")
   await expectConfiguredActionPopup(serviceWorker, POPUP_PAGE_PATH)
+  await expectActionClickListenerState(serviceWorker, false)
 })

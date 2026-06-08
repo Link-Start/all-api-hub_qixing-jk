@@ -33,6 +33,10 @@
           "label": "JA",
           "name": "Japanese"
         },
+        "vi": {
+          "label": "VI",
+          "name": "Vietnamese"
+        },
         "zh-CN": {
           "label": "SC",
           "name": "Simplified Chinese"
@@ -108,7 +112,7 @@
     },
     "title": "Claude Code Hub Integration Settings",
     "unsupported": {
-      "description": "Channel migration, model sync, model redirect, and full key reveal are not available for Claude Code Hub in this version.",
+      "description": "Model sync and model redirect are not available for Claude Code Hub in this version.",
       "title": "Unsupported channel actions"
     },
     "validation": {
@@ -356,6 +360,7 @@
       "allowAll": "Allow recommended permissions",
       "maybeLater": "Maybe later"
     },
+    "analyticsDisclosure": "The extension includes optional anonymous product analytics that help us prioritize fixes for common issues, improve core workflows and compatibility, and reduce unnecessary friction. It does not collect API keys, cookies, account URLs, balances, request content, or user input.",
     "intro": "As an open-source project, we only ask for the minimal optional permissions needed to enable advanced workflows. You stay in full control.",
     "openSourceBadge": "Open-source & community-driven",
     "permissionListDescription": "These permissions are required for firewall-bypass flows so data refresh jobs keep working on protected sites.",
@@ -374,6 +379,12 @@
       "error": "Permission request was dismissed",
       "success": "All recommended permissions granted"
     }
+  },
+  "productAnalytics": {
+    "description": "Anonymous statistics that help us spot common issues sooner, improve everyday workflows, and strengthen compatibility. We do not collect API keys, cookies, account URLs, balances, request content, or user input.",
+    "enableDescription": "Allow limited feature usage, error category, and coarse site-type statistics so we can focus on the parts that affect your experience most.",
+    "enableLabel": "Enable anonymous product analytics",
+    "title": "Anonymous product analytics"
   },
   "refresh": {
     "autoRefresh": "Auto Refresh",
@@ -454,13 +465,15 @@
   "siteAnnouncementNotifications": {
     "description": "Controls whether enabled account sites are checked for site announcements in the background.",
     "page": {
-      "description": "Checks in the background every {{intervalMinutes}} minutes by default. You can also run a manual check.",
+      "description": "Checks in the background every {{intervalMinutes}} minutes. You can also run a manual check.",
       "open": "View announcements",
       "title": "Announcement page"
     },
     "polling": {
       "enable": "Enable site announcement polling",
-      "enableDesc": "When disabled, scheduled background polling stops. Existing local records are kept, and the announcement page can still run a manual check."
+      "enableDesc": "When disabled, scheduled background polling stops. Existing local records are kept, and the announcement page can still run a manual check.",
+      "interval": "Polling interval",
+      "intervalDesc": "Set the background site announcement polling interval in minutes, from 15 to 1440."
     },
     "title": "Site announcements"
   },

@@ -2,17 +2,15 @@ import { SITE_TYPES } from "~/constants/siteType"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
 import {
   forceExtensionLanguage,
-  installExtensionPageGuards,
   seedUserPreferences,
   stubLlmMetadataIndex,
 } from "~~/e2e/utils/commonUserFlows"
 import { getServiceWorker } from "~~/e2e/utils/extensionState"
+import { runRealSiteAccountSaveFlow } from "~~/e2e/utils/realSite/accountSaveFlow"
 import {
-  autoDetectAccountFromAddDialog,
-  expectAccountListItemVisible,
-  openAccountManagementPage,
-  waitForSavedAccount,
-} from "~~/e2e/utils/realSite/accountAdd"
+  realSiteAccountUsageChecks,
+  runRealSiteAccountFixtureUsageChecks,
+} from "~~/e2e/utils/realSite/accountUsage"
 import {
   getSub2ApiRealSiteSkipReason,
   loginToRealSub2ApiSite,
@@ -27,11 +25,11 @@ test.describe("real-site E2E: Sub2API auto-detect account add flow", () => {
     await stubLlmMetadataIndex(context)
   })
 
-  test("logs into a real Sub2API site and auto-detects then saves the account", async ({
+  test("logs into a real Sub2API site, saves the account, then verifies account usage", async ({
     context,
     extensionId,
     page,
-  }) => {
+  }, testInfo) => {
     const realSite = resolveSub2ApiRealSiteConfig()
     test.skip(
       !realSite.config,
@@ -50,99 +48,106 @@ test.describe("real-site E2E: Sub2API auto-detect account add flow", () => {
       },
     })
 
-    const sitePage = await context.newPage()
-    try {
-      const loginResult = await loginToRealSub2ApiSite(sitePage, config)
-      expect(loginResult.authState.accessToken).not.toBe("")
+    const accountFixture =
+      await test.step("save account from real site auto-detect", async () => {
+        const sitePage = await context.newPage()
+        try {
+          return await runRealSiteAccountSaveFlow({
+            page,
+            extensionId,
+            serviceWorker,
+            sitePage,
+            baseUrl: config.baseUrl,
+            siteType: SITE_TYPES.SUB2API,
+            expectedDetectedSiteType: SITE_TYPES.SUB2API,
+            login: async (realSitePage) => {
+              const loginResult = await loginToRealSub2ApiSite(
+                realSitePage,
+                config,
+              )
+              expect(loginResult.authState.accessToken).not.toBe("")
 
-      installExtensionPageGuards(page)
-      await openAccountManagementPage({ page, extensionId })
+              return {
+                prepareDetectedDialog: async (dialog) => {
+                  await expect(dialog.siteNameInput).toHaveValue(/.+/, {
+                    timeout: 60_000,
+                  })
 
-      const dialog = await autoDetectAccountFromAddDialog(page, config.baseUrl)
+                  await expect(dialog.userIdInput).toHaveValue(/.+/, {
+                    timeout: 60_000,
+                  })
+                  await expect
+                    .poll(
+                      async () =>
+                        (await dialog.accessTokenInput.inputValue()) ===
+                        loginResult.authState.accessToken,
+                      { timeout: 60_000 },
+                    )
+                    .toBe(true)
+                  await expect(
+                    dialog.sub2apiRefreshTokenSwitch,
+                  ).toHaveAttribute("aria-checked", "false")
+                  await expect(dialog.sub2apiImportSessionButton).toHaveCount(0)
 
-      await expect(dialog.siteNameInput).toHaveValue(/.+/, {
-        timeout: 60_000,
-      })
+                  if (!loginResult.authState.refreshToken) {
+                    return
+                  }
 
-      await expect(dialog.userIdInput).toHaveValue(/.+/, {
-        timeout: 60_000,
-      })
-      await expect(dialog.accessTokenInput).toHaveValue(
-        loginResult.authState.accessToken,
-        {
-          timeout: 60_000,
-        },
-      )
-      await expect(dialog.siteTypeTrigger).toHaveAttribute(
-        "data-site-type",
-        SITE_TYPES.SUB2API,
-      )
-      await expect(dialog.sub2apiRefreshTokenSwitch).toHaveAttribute(
-        "aria-checked",
-        "false",
-      )
-      await expect(dialog.sub2apiImportSessionButton).toHaveCount(0)
+                  await dialog.sub2apiRefreshTokenSwitch.click()
+                  await expect(
+                    dialog.sub2apiRefreshTokenSwitch,
+                  ).toHaveAttribute("aria-checked", "true")
 
-      let importedHostedSession = false
+                  const importSessionButtonVisible =
+                    await dialog.sub2apiImportSessionButton
+                      .waitFor({ state: "visible", timeout: 5_000 })
+                      .then(() => true)
+                      .catch(() => false)
 
-      if (loginResult.authState.refreshToken) {
-        await dialog.sub2apiRefreshTokenSwitch.click()
-        await expect(dialog.sub2apiRefreshTokenSwitch).toHaveAttribute(
-          "aria-checked",
-          "true",
-        )
+                  if (!importSessionButtonVisible) {
+                    return
+                  }
 
-        const importSessionButtonVisible =
-          await dialog.sub2apiImportSessionButton
-            .waitFor({ state: "visible", timeout: 5_000 })
-            .then(() => true)
-            .catch(() => false)
-
-        if (importSessionButtonVisible) {
-          await dialog.sub2apiImportSessionButton.click()
-          await expect(dialog.sub2apiRefreshTokenInput).toHaveValue(
-            loginResult.authState.refreshToken,
-            {
-              timeout: 60_000,
+                  await dialog.sub2apiImportSessionButton.click()
+                  await expect
+                    .poll(
+                      async () =>
+                        (await dialog.sub2apiRefreshTokenInput.inputValue()) ===
+                        loginResult.authState.refreshToken,
+                      { timeout: 60_000 },
+                    )
+                    .toBe(true)
+                },
+              }
             },
-          )
-          importedHostedSession = true
+          })
+        } finally {
+          if (!sitePage.isClosed()) {
+            await sitePage.close()
+          }
         }
-      }
-
-      await expect(dialog.confirmAddButton).toBeEnabled({ timeout: 60_000 })
-      await dialog.confirmAddButton.click()
-      await expect(dialog.dialog).not.toBeVisible({ timeout: 60_000 })
-
-      const savedAccount = await waitForSavedAccount({
-        serviceWorker,
-        siteType: SITE_TYPES.SUB2API,
-        baseUrl: config.baseUrl,
       })
-
-      expect(savedAccount.site_type).toBe(SITE_TYPES.SUB2API)
-      expect(savedAccount.site_url).toBe(config.baseUrl)
-      expect(savedAccount.account_info.id).toBeDefined()
-      expect(savedAccount.account_info.id).not.toBeNull()
-      expect(String(savedAccount.account_info.id)).toMatch(/^\d+$/)
-      expect(savedAccount.account_info.access_token).toBe(
-        loginResult.authState.accessToken,
-      )
-
-      if (loginResult.authState.refreshToken && importedHostedSession) {
-        expect(savedAccount.sub2apiAuth?.refreshToken).toBe(
-          loginResult.authState.refreshToken,
-        )
-        if (typeof loginResult.authState.tokenExpiresAt === "number") {
-          expect(savedAccount.sub2apiAuth?.tokenExpiresAt).toBe(
-            loginResult.authState.tokenExpiresAt,
-          )
-        }
-      }
-
-      await expectAccountListItemVisible(page, savedAccount.id)
-    } finally {
-      await sitePage.close()
-    }
+    await runRealSiteAccountFixtureUsageChecks(
+      {
+        testInfo,
+        page,
+        extensionId,
+        serviceWorker,
+        account: accountFixture,
+        label: "Sub2API",
+      },
+      [
+        realSiteAccountUsageChecks.keyLifecycle(),
+        realSiteAccountUsageChecks.keyToApiProfileAndPopupModels(),
+        realSiteAccountUsageChecks.providerDestinations({
+          validateDestinationPages: true,
+        }),
+        realSiteAccountUsageChecks.accountBackedModelCatalogUnavailable({
+          reason:
+            "Sub2API account model catalog skipped because this site type does not expose an account-backed model catalog.",
+        }),
+        realSiteAccountUsageChecks.modelToKey({ envPrefix: "SUB2API" }),
+      ],
+    )
   })
 })

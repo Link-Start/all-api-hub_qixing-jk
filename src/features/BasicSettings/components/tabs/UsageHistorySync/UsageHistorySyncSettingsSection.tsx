@@ -15,14 +15,15 @@ import {
   Switch,
 } from "~/components/ui"
 import { USAGE_HISTORY_SCHEDULE_MODE } from "~/types/usageHistory"
+import type { UsageHistoryScheduleMode } from "~/types/usageHistory"
 
 interface UsageHistorySyncSettingsSectionProps {
   enabled: boolean
   onEnabledChange: (value: boolean) => void
   retentionDays: number
   onRetentionDaysChange: (value: number) => void
-  scheduleMode: string
-  onScheduleModeChange: (value: string) => void
+  scheduleMode: UsageHistoryScheduleMode
+  onScheduleModeChange: (value: UsageHistoryScheduleMode) => void
   syncIntervalMinutes: number
   onSyncIntervalMinutesChange: (value: number) => void
   alarmsSupported: boolean
@@ -92,17 +93,19 @@ export default function UsageHistorySyncSettingsSection({
             />
           </div>
 
-          <div
-            id="usage-history-sync-interval-hours"
-            className="grid grid-cols-1 gap-2"
-          >
+          <div className="grid grid-cols-1 gap-2">
             <Label
               htmlFor="usage-history-sync-schedule-mode"
               className="text-sm font-medium"
             >
               {t("settings.scheduleMode")}
             </Label>
-            <Select value={scheduleMode} onValueChange={onScheduleModeChange}>
+            <Select
+              value={scheduleMode}
+              onValueChange={(value) =>
+                onScheduleModeChange(value as UsageHistoryScheduleMode)
+              }
+            >
               <SelectTrigger id="usage-history-sync-schedule-mode">
                 <SelectValue
                   placeholder={t("settings.scheduleModePlaceholder")}
@@ -130,7 +133,10 @@ export default function UsageHistorySyncSettingsSection({
             )}
           </div>
 
-          <div className="grid grid-cols-1 gap-2">
+          <div
+            id="usage-history-sync-interval-hours"
+            className="grid grid-cols-1 gap-2"
+          >
             <Label className="text-sm font-medium">
               {t("settings.syncIntervalHours")}
             </Label>

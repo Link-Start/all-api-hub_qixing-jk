@@ -9,6 +9,7 @@ export const SITE_TYPES = {
   VELOERA: "Veloera",
   ONE_HUB: "one-hub",
   DONE_HUB: "done-hub",
+  V_API: "v-api",
   VO_API: "VoAPI",
   SUPER_API: "Super-API",
   RIX_API: "Rix-Api",
@@ -24,6 +25,7 @@ export const SITE_TYPES = {
 
 export const AIHUBMIX_API_ORIGIN = "https://aihubmix.com"
 export const AIHUBMIX_WEB_ORIGIN = "https://console.aihubmix.com"
+export const AIHUBMIX_LOGIN_PATH = "/sign-in"
 export const AIHUBMIX_HOSTNAMES = [
   "aihubmix.com",
   "www.aihubmix.com",
@@ -37,6 +39,7 @@ export const ACCOUNT_SITE_TYPES = [
   SITE_TYPES.VELOERA,
   SITE_TYPES.ONE_HUB,
   SITE_TYPES.DONE_HUB,
+  SITE_TYPES.V_API,
   SITE_TYPES.VO_API,
   SITE_TYPES.SUPER_API,
   SITE_TYPES.RIX_API,
@@ -90,6 +93,7 @@ export const ACCOUNT_SITE_TITLE_RULES = [
   { name: SITE_TYPES.VELOERA, regex: makeTitleRegex(SITE_TYPES.VELOERA) },
   { name: SITE_TYPES.ONE_HUB, regex: makeTitleRegex(SITE_TYPES.ONE_HUB) },
   { name: SITE_TYPES.DONE_HUB, regex: makeTitleRegex(SITE_TYPES.DONE_HUB) },
+  { name: SITE_TYPES.V_API, regex: makeTitleRegex(SITE_TYPES.V_API) },
   { name: SITE_TYPES.VO_API, regex: makeTitleRegex(SITE_TYPES.VO_API) },
   { name: SITE_TYPES.SUPER_API, regex: makeTitleRegex(SITE_TYPES.SUPER_API) },
   { name: SITE_TYPES.RIX_API, regex: makeTitleRegex(SITE_TYPES.RIX_API) },
@@ -123,6 +127,7 @@ function makeTitleRegex(name: string): RegExp {
 }
 
 // 默认的用量路径
+const DEFAULT_LOGIN_PATH = "/login"
 const DEFAULT_USAGE_PATH = "/console/log"
 const DEFAULT_CHECKIN_PATH = "/console/personal"
 const DEFAULT_REDEEM_PATH = "/console/topup"
@@ -130,6 +135,7 @@ const DEFAULT_ADMIN_CREDENTIALS_PATH = DEFAULT_CHECKIN_PATH
 const DEFAULT_SITE_ANNOUNCEMENTS_PATH = "/"
 
 interface SiteRouteConfig {
+  loginPath: string
   usagePath: string
   checkInPath: string
   adminCredentialsPath: string
@@ -166,6 +172,12 @@ const SITE_ROUTE_CONFIGS: Partial<
     redeemPath: "/panel/topup",
     adminCredentialsPath: "/panel/profile",
   },
+  [SITE_TYPES.V_API]: {
+    usagePath: "/panel/log",
+    checkInPath: "/panel/profile",
+    redeemPath: "/panel/topup",
+    adminCredentialsPath: "/panel/profile",
+  },
   [SITE_TYPES.RIX_API]: {
     usagePath: "/log",
     checkInPath: "/panel",
@@ -179,12 +191,14 @@ const SITE_ROUTE_CONFIGS: Partial<
     siteAnnouncementsPath: "/dashboard",
   },
   [SITE_TYPES.AIHUBMIX]: {
+    loginPath: AIHUBMIX_LOGIN_PATH,
     usagePath: "/statistics",
     redeemPath: "/topup",
     checkInPath: "/",
     adminCredentialsPath: "/",
   },
   Default: {
+    loginPath: DEFAULT_LOGIN_PATH,
     usagePath: DEFAULT_USAGE_PATH,
     checkInPath: DEFAULT_CHECKIN_PATH,
     adminCredentialsPath: DEFAULT_ADMIN_CREDENTIALS_PATH,

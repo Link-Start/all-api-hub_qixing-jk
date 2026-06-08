@@ -8,10 +8,28 @@ import {
 } from "react"
 import toast from "react-hot-toast"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import {
+  ExternalCheckInMessageTypes,
+  sendExternalCheckInMessage,
+} from "~/services/checkin/externalCheckInMessaging"
+import { buildAccountRefreshDiagnostics } from "~/services/productAnalytics/accountRefresh"
+import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  startProductAnalyticsAction,
+  type ProductAnalyticsActionContext,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { DisplaySiteData } from "~/types"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import { t } from "~/utils/i18n/core"
@@ -33,7 +51,7 @@ interface AccountActionsContextType {
   handleSetAccountDisabled: (
     account: DisplaySiteData,
     disabled: boolean,
-  ) => Promise<void>
+  ) => Promise<boolean>
   handleSetAccountsDisabled: (
     accounts: DisplaySiteData[],
     disabled: boolean,
@@ -48,7 +66,11 @@ interface AccountActionsContextType {
   ) => Promise<void>
   handleOpenExternalCheckIns: (
     accounts: DisplaySiteData[],
-    options?: { openAll?: boolean; openInNewWindow?: boolean },
+    options?: {
+      openAll?: boolean
+      openInNewWindow?: boolean
+      analyticsContext?: ProductAnalyticsActionContext
+    },
   ) => Promise<void>
 }
 
@@ -74,6 +96,14 @@ export const AccountActionsProvider = ({
       if (account.disabled === true) return
 
       setRefreshingAccountId(account.id)
+      const tracker = startProductAnalyticsAction({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccount,
+        surfaceId:
+          PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      })
+      let analyticsCompleted = false
 
       const refreshPromise = async () => {
         const result = await accountStorage.refreshAccount(account.id, force)
@@ -91,10 +121,36 @@ export const AccountActionsProvider = ({
 
       try {
         await toast.promise(
-          refreshPromise().then((result) => {
+          refreshPromise().then(async (result) => {
             if (!result.refreshed) {
+              analyticsCompleted = true
+              tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+                diagnostics: buildAccountRefreshDiagnostics({
+                  sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+                  mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+                  siteType: account.siteType,
+                  requestedAuthMode: account.authType,
+                  itemCount: 1,
+                  successCount: 0,
+                  failureCount: 0,
+                  skippedCount: 1,
+                }),
+              })
               return t("messages:toast.success.refreshSkipped")
             }
+            analyticsCompleted = true
+            tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+              diagnostics: buildAccountRefreshDiagnostics({
+                sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+                mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+                siteType: account.siteType,
+                requestedAuthMode: account.authType,
+                itemCount: 1,
+                successCount: 1,
+                failureCount: 0,
+                skippedCount: 0,
+              }),
+            })
             return t("messages:toast.success.refreshAccount", {
               accountName: account.name,
             })
@@ -110,6 +166,23 @@ export const AccountActionsProvider = ({
           },
         )
       } catch (error) {
+        if (!analyticsCompleted) {
+          analyticsCompleted = true
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+            diagnostics: buildAccountRefreshDiagnostics({
+              sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+              mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+              siteType: account.siteType,
+              requestedAuthMode: account.authType,
+              itemCount: 1,
+              successCount: 0,
+              failureCount: 1,
+              skippedCount: 0,
+              error,
+            }),
+          })
+        }
         logger.error("Error refreshing account", error)
       } finally {
         setRefreshingAccountId(null)
@@ -130,7 +203,7 @@ export const AccountActionsProvider = ({
             error: t("messages:storage.updateFailed", { error: "" }),
           }),
         )
-        return
+        return false
       }
 
       await loadAccountData()
@@ -144,6 +217,7 @@ export const AccountActionsProvider = ({
               accountName: account.name,
             }),
       )
+      return true
     },
     [loadAccountData],
   )
@@ -269,8 +343,17 @@ export const AccountActionsProvider = ({
   const handleOpenExternalCheckIns = useCallback(
     async (
       accounts: DisplaySiteData[],
-      options?: { openAll?: boolean; openInNewWindow?: boolean },
+      options?: {
+        openAll?: boolean
+        openInNewWindow?: boolean
+        analyticsContext?: ProductAnalyticsActionContext
+      },
     ) => {
+      const tracker = options?.analyticsContext
+        ? startProductAnalyticsAction(options.analyticsContext)
+        : undefined
+      let analyticsCompleted = false
+
       const enabledAccounts = accounts.filter((account) => !account.disabled)
       const accountsToOpen = options?.openAll
         ? enabledAccounts
@@ -279,24 +362,38 @@ export const AccountActionsProvider = ({
           )
 
       if (!accountsToOpen.length) {
+        analyticsCompleted = true
+        tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Skipped)
         toast.error(t("messages:toast.error.externalCheckInNonePending"))
         return
       }
 
       try {
-        const response = await sendRuntimeMessage({
-          action: RuntimeActionIds.ExternalCheckInOpenAndMark,
-          accountIds: accountsToOpen.map((account) => account.id),
-          openInNewWindow: Boolean(options?.openInNewWindow),
-        })
+        const response = await sendExternalCheckInMessage(
+          ExternalCheckInMessageTypes.OpenAndMark,
+          {
+            accountIds: accountsToOpen.map((account) => account.id),
+            openInNewWindow: Boolean(options?.openInNewWindow),
+          },
+        )
 
-        if (!response?.data) {
-          throw new Error(response?.error || "Empty response")
+        if (!response?.success || !response.data) {
+          analyticsCompleted = true
+          tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          })
+          throw new Error(
+            response?.success === false ? response.error : "Empty response",
+          )
         }
 
         await loadAccountData()
 
         if (response.data.failedCount > 0) {
+          analyticsCompleted = true
+          tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          })
           toast.error(
             t("messages:errors.operation.failed", {
               error: `${response.data.failedCount}/${response.data.totalCount} failed`,
@@ -304,8 +401,16 @@ export const AccountActionsProvider = ({
           )
           return
         }
+        analyticsCompleted = true
+        tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Success)
       } catch (error) {
         logger.error("Error opening external check-ins", error)
+        if (!analyticsCompleted) {
+          analyticsCompleted = true
+          tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+            errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+          })
+        }
         toast.error(
           t("messages:errors.operation.failed", {
             error: getErrorMessage(error),

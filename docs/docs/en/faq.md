@@ -117,22 +117,24 @@ Common incompatibility scenarios:
 
 1. **Check Issues**: Go to [GitHub Issues](https://github.com/qixing-jk/all-api-hub/issues) to search for similar problems.
 2. **Use the Latest Version**:
-   - Store versions are updated slowly; it is recommended to use the GitHub Release version.
-   - Or use the development version from the main branch directly.
+   - Most users should stay on the store build and let the browser update it automatically.
+   - If a fix has not reached the store yet, or you cannot install the store build, you can temporarily install it from GitHub Releases.
+   - GitHub Stable, Nightly, and main-branch builds are for temporary verification and testing. Manual installations do not auto-update. You can Star / Watch the repository to receive new version notifications.
 
 ### How to get the latest version?
 
-The plugin is released on multiple platforms, with varying update speeds:
+The plugin is released on multiple platforms. Prefer the official store that matches your browser:
 
 | Platform             | Update Speed                               | Version Acquisition                                                              |
 |----------------------|--------------------------------------------|----------------------------------------------------------------------------------|
-| **GitHub Releases**  | ⚡ Fastest                                  | [Download Here](https://github.com/qixing-jk/all-api-hub/releases)               |
-| **Chrome Web Store** | 🐌 Slower (3-5 days review)                | [Install Here](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
-| **Edge Add-ons**     | 🐌 Slower (3-5 days review)                | [Install Here](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
+| **Chrome Web Store** | Automatic updates after review             | [Install Here](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
+| **Edge Add-ons**     | Automatic updates after review             | [Install Here](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | **Firefox Add-ons**  | ⚡ Fast (a few hours review)                | [Install Here](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
+| **GitHub Stable**    | Fastest published build, manual install    | [Download Here](https://github.com/qixing-jk/all-api-hub/releases/latest) |
+| **Nightly pre-release** | Fastest access to in-progress changes, may be unstable | [Download Here](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) |
 
 ::: tip Recommendation
-If you encounter a bug that has been fixed, it is recommended to download the latest version from GitHub Releases and install it manually. For browsers like QQ Browser, 360 Series Browsers, Cheetah Browser, Brave, Vivaldi, Opera, etc., please refer to the [QQ / 360 and Other Browser Installation Guide](./other-browser-install.md).
+Chrome, Edge, and Firefox users should prioritize the store build. Use GitHub Releases only when a fix has not reached the store yet, you cannot install the store build, or you use a browser that needs manual loading, such as QQ Browser, 360 Series Browsers, Cheetah Browser, Brave, Vivaldi, or Opera. These manual installations do not auto-update. You can Star / Watch the repository to receive new version notifications, and see the [QQ / 360 and Other Browser Installation Guide](./other-browser-install.md) for those browsers.
 :::
 
 ## ⚙️ Feature Usage Issues
@@ -313,9 +315,9 @@ This tool is primarily intended for developers or advanced users interested in v
 
 ### Where is the data stored?
 
-- **Local Storage**: All data is stored in the browser's local storage.
-- **Completely Offline**: The core functionality of the plugin does not require an internet connection.
-- **No Data Upload**: Data is not uploaded to any third-party servers.
+- **Local by default**: Accounts, keys, and site configuration are stored in the browser by default.
+- **Network access when needed**: Network requests are made only for the relevant feature, such as refreshing balances, calling site APIs, using WebDAV backup or sync, or sending enabled anonymous product analytics.
+- **Sensitive data protection**: Unless you enable WebDAV backup or sync, account data and keys are not uploaded to external storage. Anonymous product analytics do not collect API keys, cookies, account URLs, balances, request content, or user input.
 
 ### Will the data be lost?
 

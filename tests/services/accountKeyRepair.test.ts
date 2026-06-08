@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import {
-  RuntimeActionIds,
-  RuntimeMessageTypes,
-} from "~/constants/runtimeActions"
+import { RuntimeMessageTypes } from "~/constants/runtimeActions"
 import { SITE_TYPES } from "~/constants/siteType"
 import { AuthTypeEnum } from "~/types"
 import {
@@ -159,7 +156,7 @@ describe("accountKeyRepair", () => {
       authType: AuthTypeEnum.AccessToken,
       disabled: false,
       account_info: {
-        id: 101,
+        id: "101",
         access_token: "access-token",
         username: "valid",
         quota: 0,
@@ -177,7 +174,7 @@ describe("accountKeyRepair", () => {
       authType: AuthTypeEnum.Cookie,
       disabled: false,
       account_info: {
-        id: 202,
+        id: "202",
         access_token: "",
         username: "cookie-user",
         quota: 0,
@@ -202,7 +199,7 @@ describe("accountKeyRepair", () => {
         baseUrl: sub2apiAccount.site_url,
         siteType: sub2apiAccount.site_type,
         authType: AuthTypeEnum.AccessToken,
-        userId: 1,
+        userId: "1",
         token: "sub2api-token",
       }),
       buildDisplaySiteData({
@@ -211,7 +208,7 @@ describe("accountKeyRepair", () => {
         baseUrl: aihubmixAccount.site_url,
         siteType: aihubmixAccount.site_type,
         authType: AuthTypeEnum.AccessToken,
-        userId: 2,
+        userId: "2",
         token: "aihubmix-token",
       }),
       buildDisplaySiteData({
@@ -220,7 +217,7 @@ describe("accountKeyRepair", () => {
         baseUrl: validAccount.site_url,
         siteType: "new-api",
         authType: AuthTypeEnum.AccessToken,
-        userId: 101,
+        userId: "101",
         token: "access-token",
       }),
       buildDisplaySiteData({
@@ -229,7 +226,7 @@ describe("accountKeyRepair", () => {
         baseUrl: invalidDisplayAccount.site_url,
         siteType: "new-api",
         authType: AuthTypeEnum.Cookie,
-        userId: 202,
+        userId: "202",
         token: "",
         cookieAuthSessionCookie: "",
       }),
@@ -327,7 +324,7 @@ describe("accountKeyRepair", () => {
       authType: AuthTypeEnum.Cookie,
       disabled: false,
       account_info: {
-        id: 404,
+        id: "404",
         access_token: "",
         username: "cookie-user",
         quota: 0,
@@ -353,7 +350,7 @@ describe("accountKeyRepair", () => {
             baseUrl: noneAuthAccount.site_url,
             siteType: "new-api",
             authType: AuthTypeEnum.None,
-            userId: 1,
+            userId: "1",
           }),
         ]
       }
@@ -364,7 +361,7 @@ describe("accountKeyRepair", () => {
         baseUrl: cookieAccount.site_url,
         siteType: "new-api",
         authType: AuthTypeEnum.Cookie,
-        userId: 404,
+        userId: "404",
         token: "",
         cookieAuthSessionCookie: "session=abc",
       })
@@ -434,7 +431,7 @@ describe("accountKeyRepair", () => {
         authType: AuthTypeEnum.AccessToken,
         disabled: false,
         account_info: {
-          id: 303,
+          id: "303",
           access_token: "queued-token",
           username: "queued",
           quota: 0,
@@ -453,7 +450,7 @@ describe("accountKeyRepair", () => {
         baseUrl: "https://queued.example.com",
         siteType: "new-api",
         authType: AuthTypeEnum.AccessToken,
-        userId: 303,
+        userId: "303",
         token: "queued-token",
       }),
     ])
@@ -517,20 +514,15 @@ describe("accountKeyRepair", () => {
     })
   })
 
-  it("handles runtime actions for start, get-progress, unknown action, and thrown failures", async () => {
-    const sendResponse = vi.fn()
+  it("exposes typed operation helpers for start and get-progress", async () => {
     mocks.getAllAccounts.mockResolvedValue([])
     mocks.convertToDisplayData.mockReturnValue([])
 
-    const { handleAccountKeyRepairMessage } = await import(
+    const { getAccountKeyRepairProgress, startAccountKeyRepair } = await import(
       "~/services/accounts/accountKeyAutoProvisioning/repair"
     )
 
-    await handleAccountKeyRepairMessage(
-      { action: RuntimeActionIds.AccountKeyRepairStart },
-      sendResponse,
-    )
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(startAccountKeyRepair()).resolves.toEqual({
       success: true,
       data: expect.objectContaining({
         jobId: "job-123",
@@ -538,30 +530,15 @@ describe("accountKeyRepair", () => {
       }),
     })
 
-    await handleAccountKeyRepairMessage(
-      { action: RuntimeActionIds.AccountKeyRepairGetProgress },
-      sendResponse,
-    )
-    expect(sendResponse).toHaveBeenLastCalledWith({
+    await expect(getAccountKeyRepairProgress()).resolves.toEqual({
       success: true,
       data: expect.objectContaining({
         jobId: "job-123",
       }),
     })
 
-    await handleAccountKeyRepairMessage({ action: "unknown" }, sendResponse)
-    expect(sendResponse).toHaveBeenLastCalledWith({
-      success: false,
-      error: "Unknown action",
-    })
-
     mocks.getAllAccounts.mockRejectedValueOnce(new Error("boom"))
-    const failingResponse = vi.fn()
-    await handleAccountKeyRepairMessage(
-      { action: RuntimeActionIds.AccountKeyRepairStart },
-      failingResponse,
-    )
-    expect(failingResponse).toHaveBeenCalledWith({
+    await expect(startAccountKeyRepair()).resolves.toEqual({
       success: true,
       data: expect.objectContaining({
         jobId: "job-123",
@@ -570,8 +547,7 @@ describe("accountKeyRepair", () => {
     })
   })
 
-  it("returns an error payload when the message handler itself throws", async () => {
-    const sendResponse = vi.fn()
+  it("propagates typed operation helper failures to the listener failure wrapper", async () => {
     const repairModule = await import(
       "~/services/accounts/accountKeyAutoProvisioning/repair"
     )
@@ -579,15 +555,9 @@ describe("accountKeyRepair", () => {
       .spyOn(repairModule.accountKeyRepairRunner, "start")
       .mockRejectedValueOnce(new Error("handler boom"))
 
-    await repairModule.handleAccountKeyRepairMessage(
-      { action: RuntimeActionIds.AccountKeyRepairStart },
-      sendResponse,
+    await expect(repairModule.startAccountKeyRepair()).rejects.toThrow(
+      "handler boom",
     )
-
     expect(startSpy).toHaveBeenCalledTimes(1)
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "handler boom",
-    })
   })
 })

@@ -24,6 +24,19 @@ import {
   normalizeApiCredentialModelIds,
 } from "~/services/apiCredentialProfiles/modelCatalog"
 import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  startProductAnalyticsAction,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { resolveProductAnalyticsErrorCategoryFromProbeResult } from "~/services/productAnalytics/verification"
+import {
   API_TYPES,
   getApiVerificationProbeDefinitions,
   runApiVerificationProbe,
@@ -36,7 +49,10 @@ import {
   getApiVerificationProbeLabel,
   translateApiVerificationSummary,
 } from "~/services/verification/aiApiVerification/i18n"
-import { toSanitizedErrorSummary } from "~/services/verification/aiApiVerification/utils"
+import {
+  buildSafeProbeFailureDiagnostics,
+  toSanitizedErrorSummary,
+} from "~/services/verification/aiApiVerification/utils"
 import {
   createProfileModelVerificationHistoryTarget,
   createProfileVerificationHistoryTarget,
@@ -45,10 +61,20 @@ import {
 import type { ApiCredentialProfile } from "~/types/apiCredentialProfiles"
 import { createLogger } from "~/utils/core/logger"
 
+import {
+  API_CREDENTIAL_PROFILES_TEST_IDS,
+  getApiCredentialProfileVerifyProbeTestId,
+} from "../testIds"
+
 /**
  * Unified logger scoped to API credential profile verification dialog.
  */
 const logger = createLogger("VerifyApiCredentialProfileDialog")
+const analyticsContext = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ApiCredentialProfiles,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsApiCredentialProfilesDialog,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+}
 
 interface VerifyApiCredentialProfileDialogProps {
   isOpen: boolean
@@ -170,6 +196,7 @@ export function VerifyApiCredentialProfileDialog({
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null)
   const [isPersisting, setIsPersisting] = useState(false)
 
+  const apiTypeRef = useRef(apiType)
   const fetchModelsRequestIdRef = useRef(0)
   const pendingHistoryContextKeyRef = useRef<string | null>(null)
   const lastLoadedHistoryContextKeyRef = useRef<string | null>(null)
@@ -205,6 +232,11 @@ export function VerifyApiCredentialProfileDialog({
 
   const isAnyProbeRunning = probes.some((p) => p.isRunning)
   const canClose = !isRunning && !isAnyProbeRunning && !isPersisting
+
+  useEffect(() => {
+    apiTypeRef.current = apiType
+  }, [apiType])
+
   const getHistoryTargetForModel = useCallback(
     (nextModelId?: string) => {
       if (!profile) return null
@@ -237,6 +269,21 @@ export function VerifyApiCredentialProfileDialog({
     )
   }, [profile, t])
 
+  const preserveCurrentProbeStateForModel = useCallback(
+    (nextModelId: string, nextApiType: ApiVerificationApiType) => {
+      if (!profile) return
+
+      pendingHistoryContextKeyRef.current = null
+      lastLoadedHistoryContextKeyRef.current =
+        createVerificationHistoryContextKey(
+          profile.id,
+          nextApiType,
+          nextModelId,
+        )
+    },
+    [profile],
+  )
+
   const fetchModels = useCallback(
     async (nextApiType: ApiVerificationApiType) => {
       if (!profile) return
@@ -259,7 +306,18 @@ export function VerifyApiCredentialProfileDialog({
         setModelOptions(normalized)
         const suggestedModelId = pickSuggestedModelId(nextApiType, normalized)
         if (suggestedModelId) {
-          setModelId((current) => (current.trim() ? current : suggestedModelId))
+          setModelId((current) => {
+            if (current.trim()) return current
+
+            const hasActiveProbeState = probesRef.current.some(
+              (probe) => probe.isRunning || probe.result,
+            )
+            if (hasActiveProbeState && nextApiType === apiTypeRef.current) {
+              preserveCurrentProbeStateForModel(suggestedModelId, nextApiType)
+            }
+
+            return suggestedModelId
+          })
         }
       } catch (error) {
         const message =
@@ -277,7 +335,7 @@ export function VerifyApiCredentialProfileDialog({
         }
       }
     },
-    [profile, t],
+    [preserveCurrentProbeStateForModel, profile, probesRef, t],
   )
 
   useEffect(() => {
@@ -405,8 +463,16 @@ export function VerifyApiCredentialProfileDialog({
   const runProbe = async (
     probeId: ApiVerificationProbeId,
     modelIdOverride?: string,
+    trackAnalytics = true,
   ): Promise<ApiVerificationProbeResult | null> => {
     if (!profile) return null
+
+    const tracker = trackAnalytics
+      ? startProductAnalyticsAction({
+          ...analyticsContext,
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbe,
+        })
+      : null
 
     const pendingProbes = probesRef.current.map((probe) =>
       probe.definition.id === probeId
@@ -444,19 +510,32 @@ export function VerifyApiCredentialProfileDialog({
           modelsOutput.suggestedModelId ?? modelsOutput.modelIdsPreview?.[0]
         if (suggested) {
           // Avoid overriding user input while the probe is in-flight.
-          setModelId((current) => (current.trim() ? current : suggested))
+          setModelId((current) => {
+            if (current.trim()) return current
+            preserveCurrentProbeStateForModel(suggested, apiType)
+            return suggested
+          })
         }
       }
 
       await persistProbeResults(nextProbes, modelIdOverride)
+      if (result.status === "pass") {
+        tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Success)
+      } else {
+        tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory:
+            resolveProductAnalyticsErrorCategoryFromProbeResult(result),
+        })
+      }
       return result
     } catch (error) {
+      const sanitizedMessage = toSanitizedErrorSummary(error, [
+        profile.apiKey,
+        profile.baseUrl,
+      ])
       logger.error("Probe failed", {
         probeId,
-        message: toSanitizedErrorSummary(error, [
-          profile.apiKey,
-          profile.baseUrl,
-        ]),
+        message: sanitizedMessage,
       })
 
       const fallback: ApiVerificationProbeResult = {
@@ -464,6 +543,7 @@ export function VerifyApiCredentialProfileDialog({
         status: "fail",
         latencyMs: 0,
         summary: t("aiApiVerification:verifyDialog.errors.unexpected"),
+        ...buildSafeProbeFailureDiagnostics(error, sanitizedMessage),
       }
 
       const nextProbes = probesRef.current.map((probe) => {
@@ -476,6 +556,9 @@ export function VerifyApiCredentialProfileDialog({
       })
       replaceProbes(nextProbes)
       await persistProbeResults(nextProbes, modelIdOverride)
+      tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+      })
       return fallback
     }
   }
@@ -495,17 +578,23 @@ export function VerifyApiCredentialProfileDialog({
 
   const runAll = async () => {
     if (!profile) return
+    const tracker = startProductAnalyticsAction({
+      ...analyticsContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbeSuite,
+    })
+    const results: ApiVerificationProbeResult[] = []
     setIsRunning(true)
     setPersistedSummary(null)
-    replaceProbes(buildProbeState(apiType))
 
     try {
+      replaceProbes(buildProbeState(apiType))
       const ordered = getApiVerificationProbeDefinitions(apiType)
       let modelIdForSuite = modelId.trim()
 
       for (const probe of ordered) {
         if (probe.id === "models") {
-          const result = await runProbe("models")
+          const result = await runProbe("models", undefined, false)
+          if (result) results.push(result)
           if (!modelIdForSuite && result) {
             const modelsOutput = extractModelsProbeOutput(result)
             const suggested =
@@ -513,15 +602,66 @@ export function VerifyApiCredentialProfileDialog({
               modelsOutput?.modelIdsPreview?.[0]
             if (suggested) {
               modelIdForSuite = suggested
-              setModelId((current) => (current.trim() ? current : suggested))
+              setModelId((current) => {
+                if (current.trim()) return current
+                preserveCurrentProbeStateForModel(suggested, apiType)
+                return suggested
+              })
             }
           }
           continue
         }
 
         if (probe.requiresModelId && !modelIdForSuite) continue
-        await runProbe(probe.id, modelIdForSuite)
+        const result = await runProbe(probe.id, modelIdForSuite, false)
+        if (result) results.push(result)
       }
+
+      if (results.length === 0) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped)
+        return
+      }
+
+      const successCount = results.filter(
+        (result) => result.status === "pass",
+      ).length
+      const failureCount = results.length - successCount
+      const insights = {
+        itemCount: results.length,
+        successCount,
+        failureCount,
+      }
+
+      const hasFailedProbe = failureCount > 0
+      if (hasFailedProbe) {
+        const errorCategory = results
+          .filter((result) => result.status === "fail")
+          .map((result) =>
+            resolveProductAnalyticsErrorCategoryFromProbeResult(result),
+          )
+          .find(
+            (category) =>
+              category !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          )
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory:
+            errorCategory ?? PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights,
+        })
+        return
+      }
+
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, { insights })
+    } catch (error) {
+      logger.error("Probe suite failed", {
+        message: toSanitizedErrorSummary(error, [
+          profile.apiKey,
+          profile.baseUrl,
+        ]),
+      })
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+      })
     } finally {
       setIsRunning(false)
     }
@@ -537,7 +677,12 @@ export function VerifyApiCredentialProfileDialog({
         ) : null}
       </div>
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose} disabled={!canClose}>
+        <Button
+          variant="secondary"
+          onClick={onClose}
+          disabled={!canClose}
+          data-testid={API_CREDENTIAL_PROFILES_TEST_IDS.verifyDialogCloseButton}
+        >
           {t("aiApiVerification:verifyDialog.actions.close")}
         </Button>
         <Button
@@ -584,6 +729,7 @@ export function VerifyApiCredentialProfileDialog({
                 ) : null}
               </div>
               <SearchableSelect
+                aria-label={t("aiApiVerification:verifyDialog.meta.apiType")}
                 options={[
                   {
                     value: API_TYPES.OPENAI_COMPATIBLE,
@@ -631,7 +777,7 @@ export function VerifyApiCredentialProfileDialog({
 
               <SearchableSelect
                 aria-label={t("aiApiVerification:verifyDialog.meta.model")}
-                data-testid="profile-verify-model-id"
+                data-testid={API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId}
                 options={modelOptions.map((id) => ({ value: id, label: id }))}
                 value={modelId}
                 onChange={(value) => {
@@ -710,7 +856,9 @@ export function VerifyApiCredentialProfileDialog({
               return (
                 <div
                   key={probe.definition.id}
-                  data-testid={`profile-verify-probe-${probe.definition.id}`}
+                  data-testid={getApiCredentialProfileVerifyProbeTestId(
+                    probe.definition.id,
+                  )}
                   className="dark:border-dark-bg-tertiary rounded-md border border-gray-100 p-3"
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -745,6 +893,9 @@ export function VerifyApiCredentialProfileDialog({
                       size="sm"
                       variant="secondary"
                       onClick={() => runProbe(probe.definition.id)}
+                      data-testid={
+                        API_CREDENTIAL_PROFILES_TEST_IDS.verifyProbeRunButton
+                      }
                       disabled={
                         isRunning ||
                         isPersisting ||

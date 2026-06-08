@@ -5,16 +5,27 @@
     "expand": "Expand",
     "markAllRead": "Mark all read",
     "markRead": "Mark read",
+    "pollingSettings": "Polling settings",
     "viewSource": "View site announcement"
   },
   "badges": {
     "notified": "Notified",
     "unread": "Unread"
   },
-  "description": "Review announcements fetched in the background, manage unread state, and trigger a manual check.",
+  "description": {
+    "disabledSummary": "Automatic polling is off; you can still trigger a manual check.",
+    "enabledInterval": "Current interval: every {{intervalMinutes}} minutes.",
+    "enabledSummary": "Automatic polling is on; review fetched announcements, manage unread state, and trigger a manual check.",
+    "pollingSettingsLink": "Configure automatic polling"
+  },
   "empty": {
+    "addAccount": "Add account",
     "description": "New announcements discovered by background checks will appear here.",
+    "descriptionWhenPollingDisabled": "You can check manually now; automatic polling can be managed in settings.",
     "filtered": "No announcements match the current filters",
+    "noAccounts": "Add an account before checking announcements",
+    "noAccountsDesc": "Announcement checks need at least one enabled account to know which sites should be polled.",
+    "pollingSettingsLink": "Configure automatic polling",
     "title": "No announcement records"
   },
   "filters": {
@@ -23,6 +34,7 @@
     "allSiteTypes": "All types",
     "read": "Read",
     "readState": "Read state",
+    "searchSite": "Search sites",
     "site": "Site",
     "siteType": "Site type",
     "unread": "Unread"
@@ -31,7 +43,9 @@
   "messages": {
     "checkCompleted": "Announcement check completed",
     "checkFailed": "Announcement check failed",
-    "loadFailed": "Failed to load announcements"
+    "loadFailed": "Failed to load announcements",
+    "markAllReadFailed": "Failed to mark announcements as read",
+    "markReadFailed": "Failed to mark announcement as read"
   },
   "notification": {
     "multipleUnread_one": "{{title}}, plus {{count}} unread announcement",

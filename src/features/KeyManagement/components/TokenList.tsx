@@ -15,6 +15,7 @@ import { CCSwitchExportDialog } from "~/components/CCSwitchExportDialog"
 import { ManagedSiteIcon } from "~/components/icons/ManagedSiteIcon"
 import { Badge, Button, Card, Checkbox, EmptyState } from "~/components/ui"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
+import { KEY_MANAGEMENT_TEST_IDS } from "~/features/KeyManagement/testIds"
 import { cn } from "~/lib/utils"
 import type { ManagedSiteTokenChannelStatus } from "~/services/managedSites/tokenChannelStatus"
 import { getManagedSiteLabel } from "~/services/managedSites/utils/managedSite"
@@ -208,6 +209,7 @@ function TokenEmptyState({
           onClick: handleAddToken,
           variant: "success",
           icon: <PlusIcon className="h-4 w-4" />,
+          testId: KEY_MANAGEMENT_TEST_IDS.emptyStateAddTokenButton,
         }}
       />
     )

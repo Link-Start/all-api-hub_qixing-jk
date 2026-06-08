@@ -1,27 +1,17 @@
-import {
-  ArrowLeftRight,
-  BarChart3,
-  Bookmark,
-  CalendarCheck2,
-  Cpu,
-  Info,
-  KeyRound,
-  Layers,
-  LineChart,
-  Megaphone,
-  Palette,
-  RefreshCcw,
-  Settings,
-  UserRound,
-  UserRoundKey,
-} from "lucide-react"
 import { createElement, lazy, Suspense, type ComponentType } from "react"
 
+import {
+  DEV_OPTIONS_MENU_ITEM_ICONS,
+  OPTIONS_MENU_ITEM_ICONS,
+} from "~/components/icons/optionsPageIcons"
 import { DEV_MENU_ITEM_IDS } from "~/constants/devOptionsMenuIds"
 import {
   MENU_ITEM_IDS,
+  OPTIONS_MENU_CATEGORY_IDS,
+  type OptionsMenuCategoryId,
   type OptionsPageMenuItemId,
 } from "~/constants/optionsMenuIds"
+import { isDevelopmentMode } from "~/utils/core/environment"
 
 import BasicSettings from "./pages/BasicSettings"
 
@@ -35,6 +25,9 @@ function createLazyMenuComponent(
 }
 
 const About = createLazyMenuComponent(() => import("./pages/About"))
+const OptionsOverview = createLazyMenuComponent(
+  () => import("./pages/OptionsOverview"),
+)
 const AccountManagement = createLazyMenuComponent(
   () => import("./pages/AccountManagement"),
 )
@@ -71,102 +64,108 @@ const UsageAnalytics = createLazyMenuComponent(
 // 菜单项类型定义
 interface MenuItem {
   id: OptionsPageMenuItemId
-  name: string
   icon: ComponentType<{ className?: string }>
   component: ComponentType<any>
+  category?: OptionsMenuCategoryId
 }
 
 // 菜单配置
 const BASE_MENU_ITEMS: MenuItem[] = [
   {
+    id: MENU_ITEM_IDS.OVERVIEW,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.OVERVIEW],
+    component: OptionsOverview,
+    category: OPTIONS_MENU_CATEGORY_IDS.GENERAL,
+  },
+  {
     id: MENU_ITEM_IDS.BASIC,
-    name: "基本设置",
-    icon: Settings,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.BASIC],
     component: BasicSettings,
+    category: OPTIONS_MENU_CATEGORY_IDS.GENERAL,
   },
   {
     id: MENU_ITEM_IDS.ACCOUNT,
-    name: "账户管理",
-    icon: UserRound,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.ACCOUNT],
     component: AccountManagement,
-  },
-  {
-    id: MENU_ITEM_IDS.BOOKMARK,
-    name: "书签",
-    icon: Bookmark,
-    component: BookmarkManagement,
-  },
-  {
-    id: MENU_ITEM_IDS.AUTO_CHECKIN,
-    name: "自动签到",
-    icon: CalendarCheck2,
-    component: AutoCheckin,
-  },
-  {
-    id: MENU_ITEM_IDS.MODELS,
-    name: "模型列表",
-    icon: Cpu,
-    component: ModelList,
-  },
-  {
-    id: MENU_ITEM_IDS.KEYS,
-    name: "密钥管理",
-    icon: UserRoundKey,
-    component: KeyManagement,
+    category: OPTIONS_MENU_CATEGORY_IDS.GENERAL,
   },
   {
     id: MENU_ITEM_IDS.API_CREDENTIAL_PROFILES,
-    name: "API 凭证",
-    icon: KeyRound,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.API_CREDENTIAL_PROFILES],
     component: ApiCredentialProfiles,
+    category: OPTIONS_MENU_CATEGORY_IDS.GENERAL,
   },
   {
-    id: MENU_ITEM_IDS.BALANCE_HISTORY,
-    name: "余额历史",
-    icon: LineChart,
-    component: BalanceHistory,
+    id: MENU_ITEM_IDS.BOOKMARK,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.BOOKMARK],
+    component: BookmarkManagement,
+    category: OPTIONS_MENU_CATEGORY_IDS.GENERAL,
+  },
+  {
+    id: MENU_ITEM_IDS.MODELS,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.MODELS],
+    component: ModelList,
+    category: OPTIONS_MENU_CATEGORY_IDS.API,
+  },
+  {
+    id: MENU_ITEM_IDS.KEYS,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.KEYS],
+    component: KeyManagement,
+    category: OPTIONS_MENU_CATEGORY_IDS.API,
+  },
+  {
+    id: MENU_ITEM_IDS.AUTO_CHECKIN,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.AUTO_CHECKIN],
+    component: AutoCheckin,
+    category: OPTIONS_MENU_CATEGORY_IDS.AUTOMATION,
   },
   {
     id: MENU_ITEM_IDS.SITE_ANNOUNCEMENTS,
-    name: "网站公告",
-    icon: Megaphone,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.SITE_ANNOUNCEMENTS],
     component: SiteAnnouncements,
+    category: OPTIONS_MENU_CATEGORY_IDS.AUTOMATION,
+  },
+  {
+    id: MENU_ITEM_IDS.BALANCE_HISTORY,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.BALANCE_HISTORY],
+    component: BalanceHistory,
+    category: OPTIONS_MENU_CATEGORY_IDS.INSIGHTS,
   },
   {
     id: MENU_ITEM_IDS.USAGE_ANALYTICS,
-    name: "用量分析",
-    icon: BarChart3,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.USAGE_ANALYTICS],
     component: UsageAnalytics,
+    category: OPTIONS_MENU_CATEGORY_IDS.INSIGHTS,
   },
   {
     id: MENU_ITEM_IDS.MANAGED_SITE_CHANNELS,
-    name: "渠道管理",
-    icon: Layers,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.MANAGED_SITE_CHANNELS],
     component: ManagedSiteChannels,
+    category: OPTIONS_MENU_CATEGORY_IDS.SITE_MANAGEMENT,
   },
   {
     id: MENU_ITEM_IDS.MANAGED_SITE_MODEL_SYNC,
-    name: "模型同步",
-    icon: RefreshCcw,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.MANAGED_SITE_MODEL_SYNC],
     component: ManagedSiteModelSync,
+    category: OPTIONS_MENU_CATEGORY_IDS.SITE_MANAGEMENT,
   },
   {
     id: MENU_ITEM_IDS.IMPORT_EXPORT,
-    name: "导入/导出",
-    icon: ArrowLeftRight,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.IMPORT_EXPORT],
     component: ImportExport,
+    category: OPTIONS_MENU_CATEGORY_IDS.SYSTEM,
   },
   {
     id: MENU_ITEM_IDS.ABOUT,
-    name: "关于",
-    icon: Info,
+    icon: OPTIONS_MENU_ITEM_ICONS[MENU_ITEM_IDS.ABOUT],
     component: About,
+    category: OPTIONS_MENU_CATEGORY_IDS.SYSTEM,
   },
 ]
 
 const DEV_MENU_ITEMS: MenuItem[] = []
 
-if (import.meta.env.MODE === "development") {
+if (isDevelopmentMode()) {
   const MeshGradientLab = lazy(() => import("./pages/MeshGradientLab"))
 
   const MeshGradientLabComponent: ComponentType<any> = (props) =>
@@ -178,8 +177,7 @@ if (import.meta.env.MODE === "development") {
 
   DEV_MENU_ITEMS.push({
     id: DEV_MENU_ITEM_IDS.MESH_GRADIENT_LAB,
-    name: "Mesh Gradient Lab (Dev)",
-    icon: Palette,
+    icon: DEV_OPTIONS_MENU_ITEM_ICONS[DEV_MENU_ITEM_IDS.MESH_GRADIENT_LAB],
     component: MeshGradientLabComponent,
   })
 }

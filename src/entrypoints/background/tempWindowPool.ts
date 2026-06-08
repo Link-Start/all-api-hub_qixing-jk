@@ -10,6 +10,24 @@ import {
   TempWindowFallbackPreferences,
   userPreferences,
 } from "~/services/preferences/userPreferences"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_STATUS_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsActionId,
+  type ProductAnalyticsErrorCategory,
+  type ProductAnalyticsResult,
+  type ProductAnalyticsStatusKind,
+} from "~/services/productAnalytics/events"
+import {
+  recordShieldBypassTempWindowFetchResult,
+  recordShieldBypassTempWindowTurnstileFetchResult,
+} from "~/services/productAnalytics/shieldBypassSummary"
 import { getAccountSiteType } from "~/services/siteDetection/detectSiteType"
 import { AuthTypeEnum } from "~/types"
 import type {
@@ -23,12 +41,18 @@ import {
   classifyRecoverableWindowCreationFailure,
   createTab,
   createWindow,
+  getTab,
+  getWindow,
   hasWindowsAPI,
   isAllowedIncognitoAccess,
   onTabRemoved,
   onWindowRemoved,
+  queryTabs,
   removeTabOrWindow,
+  sendTabMessage,
   sendTabMessageWithRetry,
+  updateTab,
+  updateWindow,
   WINDOW_CREATION_FAILURE_REASONS,
   type WindowCreationFailureReason,
 } from "~/utils/browser/browserApi"
@@ -63,11 +87,26 @@ const DEFAULT_TEMP_CONTEXT_MODE: TempWindowFallbackPreferences["tempContextMode"
   "composite"
 
 const TEMP_WINDOW_FETCH_NO_RESPONSE_ERROR = "No response from temp window fetch"
+const TURNSTILE_TOKEN_UNAVAILABLE_ERROR = "Turnstile token not available"
+const TEMP_WINDOW_ANALYTICS_FAILURE_REASONS = {
+  IncognitoAccessRequired: "incognito_access_required",
+  InvalidFetchRequest: "invalid_fetch_request",
+  TempWindowFetchNoResponse: "temp_window_fetch_no_response",
+  TurnstileTokenUnavailable: "turnstile_token_unavailable",
+} as const
+type TempWindowAnalyticsFailureReason =
+  (typeof TEMP_WINDOW_ANALYTICS_FAILURE_REASONS)[keyof typeof TEMP_WINDOW_ANALYTICS_FAILURE_REASONS]
 
 /** Retry delay when the content script is not ready to receive messages. */
 const SHIELD_BYPASS_UI_RETRY_MS = 250
 /** Max retry attempts for showing the shield-bypass UI in the temp tab. */
 const SHIELD_BYPASS_UI_MAX_RETRIES = 20
+
+const backgroundShieldBypassAnalyticsScope = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+} as const
 
 /**
  * Best-effort: Ask the content script in the temporary tab/window to show a
@@ -80,7 +119,7 @@ async function showShieldBypassUiInTab(meta: {
 }) {
   for (let attempt = 1; attempt <= SHIELD_BYPASS_UI_MAX_RETRIES; attempt += 1) {
     try {
-      await browser.tabs.sendMessage(meta.tabId, {
+      await sendTabMessage(meta.tabId, {
         action: RuntimeActionIds.ContentShowShieldBypassUi,
         origin: meta.origin,
         requestId: meta.requestId,
@@ -144,6 +183,7 @@ async function prepareTempContextFetchOptions(params: {
   resolvedAuthType?: AuthTypeEnum
   accountId?: string
   cookieAuthSessionCookie?: string
+  cookieStoreId?: string
   addFirefoxAuthModeHeader?: boolean
 }): Promise<{
   ruleIds: number[]
@@ -159,6 +199,7 @@ async function prepareTempContextFetchOptions(params: {
   if (!isProtectionBypassFirefoxEnv() && rawOptions.credentials === "omit") {
     const cookieHeader = await getCookieHeaderForUrl(url, {
       includeSession: false,
+      ...(params.cookieStoreId ? { storeId: params.cookieStoreId } : {}),
     })
 
     if (cookieHeader) {
@@ -192,6 +233,7 @@ async function prepareTempContextFetchOptions(params: {
     if (sessionCookie && sessionCookie.trim()) {
       const wafCookieHeader = await getCookieHeaderForUrl(url, {
         includeSession: false,
+        ...(params.cookieStoreId ? { storeId: params.cookieStoreId } : {}),
       })
       const mergedCookieHeader = mergeCookieHeaders(
         wafCookieHeader,
@@ -420,6 +462,7 @@ function isUnsupportedTempContextError(
 function toTempWindowFailureResponse(error: unknown): {
   error: string
   code?: ApiErrorCode
+  reason?: TempWindowAnalyticsFailureReason
 } {
   if (isUnsupportedTempContextError(error)) {
     return {
@@ -430,7 +473,137 @@ function toTempWindowFailureResponse(error: unknown): {
 
   return {
     error: getErrorMessage(error),
+    ...(error instanceof Error &&
+    error.message === TEMP_WINDOW_FETCH_NO_RESPONSE_ERROR
+      ? {
+          reason:
+            TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.TempWindowFetchNoResponse,
+        }
+      : {}),
   }
+}
+
+/**
+ * Converts temp-window response success into a fixed analytics result enum.
+ */
+function getTempWindowAnalyticsResult(
+  response: { success?: unknown } | undefined,
+): ProductAnalyticsResult {
+  return response?.success
+    ? PRODUCT_ANALYTICS_RESULTS.Success
+    : PRODUCT_ANALYTICS_RESULTS.Failure
+}
+
+/**
+ * Converts analytics completion result into a coarse health-style status.
+ */
+function getTempWindowAnalyticsStatusKind(
+  result: ProductAnalyticsResult,
+): ProductAnalyticsStatusKind {
+  return result === PRODUCT_ANALYTICS_RESULTS.Success
+    ? PRODUCT_ANALYTICS_STATUS_KINDS.Healthy
+    : PRODUCT_ANALYTICS_STATUS_KINDS.Error
+}
+
+/**
+ * Maps structured temp-window failures to privacy-safe analytics categories.
+ */
+function getTempWindowErrorCategory(input: {
+  code?: ApiErrorCode
+  status?: number
+  reason?: TempWindowAnalyticsFailureReason
+}): ProductAnalyticsErrorCategory {
+  if (
+    input.code === API_ERROR_CODES.TEMP_WINDOW_PERMISSION_REQUIRED ||
+    input.reason ===
+      TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.IncognitoAccessRequired
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Permission
+  }
+
+  if (
+    input.code === API_ERROR_CODES.TEMP_WINDOW_DISABLED ||
+    input.code === API_ERROR_CODES.FEATURE_UNSUPPORTED ||
+    input.code === API_ERROR_CODES.TEMP_WINDOW_WINDOWS_API_UNAVAILABLE ||
+    input.code === API_ERROR_CODES.TEMP_WINDOW_WINDOW_CREATION_UNAVAILABLE ||
+    input.code === API_ERROR_CODES.TEMP_WINDOW_WINDOW_HANDLE_UNAVAILABLE
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unsupported
+  }
+
+  if (input.code === API_ERROR_CODES.HTTP_401 || input.status === 401) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth
+  }
+
+  if (input.code === API_ERROR_CODES.HTTP_429 || input.status === 429) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.RateLimit
+  }
+
+  if (
+    input.code === API_ERROR_CODES.HTTP_403 ||
+    input.status === 403 ||
+    (typeof input.status === "number" && input.status >= 500)
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Network
+  }
+
+  if (
+    input.reason ===
+    TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.TurnstileTokenUnavailable
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Timeout
+  }
+
+  if (
+    input.code === API_ERROR_CODES.NETWORK_ERROR ||
+    input.reason ===
+      TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.TempWindowFetchNoResponse
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Network
+  }
+
+  if (
+    input.reason === TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.InvalidFetchRequest
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+  }
+
+  return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+}
+
+/**
+ * Emits temp-window completion analytics without request URLs or response bodies.
+ */
+function trackTempWindowFetchCompleted(input: {
+  actionId: ProductAnalyticsActionId
+  result: ProductAnalyticsResult
+  errorCategory?: ProductAnalyticsErrorCategory
+}) {
+  if (input.actionId === PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch) {
+    void recordShieldBypassTempWindowFetchResult(
+      input.result === PRODUCT_ANALYTICS_RESULTS.Success
+        ? PRODUCT_ANALYTICS_RESULTS.Success
+        : PRODUCT_ANALYTICS_RESULTS.Failure,
+    )
+  } else if (
+    input.actionId === PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch
+  ) {
+    void recordShieldBypassTempWindowTurnstileFetchResult(
+      input.result === PRODUCT_ANALYTICS_RESULTS.Success
+        ? PRODUCT_ANALYTICS_RESULTS.Success
+        : PRODUCT_ANALYTICS_RESULTS.Failure,
+    )
+  }
+
+  void trackProductAnalyticsActionCompleted({
+    ...backgroundShieldBypassAnalyticsScope,
+    actionId: input.actionId,
+    result: input.result,
+    ...(input.errorCategory ? { errorCategory: input.errorCategory } : {}),
+    insights: {
+      statusKind: getTempWindowAnalyticsStatusKind(input.result),
+    },
+  })
 }
 
 // 手动打开的临时窗口/标签页
@@ -758,13 +931,30 @@ export async function handleAutoDetectSite(
   request: any,
   sendResponse: (response?: any) => void,
 ) {
-  const { url, requestId } = request
+  const { url, requestId, useIncognito, suppressMinimize } = request
 
   try {
-    const [userData, siteType] = await Promise.all([
-      getSiteDataFromTab(url, requestId),
-      getAccountSiteType(url),
-    ])
+    if (useIncognito) {
+      const allowed = await isAllowedIncognitoAccess()
+      if (allowed === false) {
+        sendResponse({
+          success: false,
+          error: t("messages:background.incognitoAccessRequired"),
+        })
+        return
+      }
+    }
+
+    const siteType = await getAccountSiteType(url)
+    const userData = await getSiteDataFromTab(
+      url,
+      requestId,
+      suppressMinimize,
+      {
+        incognito: Boolean(useIncognito),
+        siteType,
+      },
+    )
 
     let result = null
     if (siteType && userData) {
@@ -805,12 +995,22 @@ export async function handleTempWindowFetch(
     accountId,
     authType,
     cookieAuthSessionCookie,
+    useIncognito,
+    cookieStoreId,
   } = request
 
   if (!originUrl || !fetchUrl) {
+    const error = t("messages:background.invalidFetchRequest")
     sendResponse({
       success: false,
-      error: t("messages:background.invalidFetchRequest"),
+      error,
+    })
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: getTempWindowErrorCategory({
+        reason: TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.InvalidFetchRequest,
+      }),
     })
     return
   }
@@ -832,10 +1032,31 @@ export async function handleTempWindowFetch(
   const resolvedAuthType = resolveAuthTypeEnum(authType)
 
   try {
+    if (useIncognito) {
+      const allowed = await isAllowedIncognitoAccess()
+      if (allowed === false) {
+        const error = t("messages:background.incognitoAccessRequired")
+        sendResponse({
+          success: false,
+          error,
+        })
+        trackTempWindowFetchCompleted({
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+          result: PRODUCT_ANALYTICS_RESULTS.Failure,
+          errorCategory: getTempWindowErrorCategory({
+            reason:
+              TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.IncognitoAccessRequired,
+          }),
+        })
+        return
+      }
+    }
+
     const context = await acquireTempContext(
       originUrl,
       tempRequestId,
       suppressMinimize,
+      { incognito: Boolean(useIncognito) },
     )
     const { tabId } = context
 
@@ -846,6 +1067,7 @@ export async function handleTempWindowFetch(
       resolvedAuthType,
       accountId,
       cookieAuthSessionCookie,
+      cookieStoreId,
     })
     for (const ruleId of prepared.ruleIds) {
       ruleIds.add(ruleId)
@@ -865,6 +1087,19 @@ export async function handleTempWindowFetch(
     }
 
     sendResponse(response)
+    const result = getTempWindowAnalyticsResult(response)
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      result,
+      ...(result === PRODUCT_ANALYTICS_RESULTS.Failure
+        ? {
+            errorCategory: getTempWindowErrorCategory({
+              code: (response as { code?: ApiErrorCode })?.code,
+              status: (response as { status?: number })?.status,
+            }),
+          }
+        : {}),
+    })
   } catch (error) {
     const failure = toTempWindowFailureResponse(error)
 
@@ -881,6 +1116,11 @@ export async function handleTempWindowFetch(
       success: false,
       error: failure.error,
       code: failure.code,
+    })
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: getTempWindowErrorCategory(failure),
     })
   } finally {
     for (const ruleId of ruleIds) {
@@ -914,6 +1154,7 @@ export async function handleTempWindowTurnstileFetch(
     accountId,
     authType,
     cookieAuthSessionCookie,
+    cookieStoreId,
     turnstileTimeoutMs,
     turnstileParamName,
     turnstilePreTrigger,
@@ -925,10 +1166,18 @@ export async function handleTempWindowTurnstileFetch(
   }
 
   if (!originUrl || !pageUrl || !fetchUrl) {
+    const error = t("messages:background.invalidFetchRequest")
     sendResponse({
       success: false,
-      error: t("messages:background.invalidFetchRequest"),
+      error,
       turnstile,
+    })
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: getTempWindowErrorCategory({
+        reason: TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.InvalidFetchRequest,
+      }),
     })
     return
   }
@@ -955,10 +1204,19 @@ export async function handleTempWindowTurnstileFetch(
     if (useIncognito) {
       const allowed = await isAllowedIncognitoAccess()
       if (allowed === false) {
+        const error = t("messages:background.incognitoAccessRequired")
         sendResponse({
           success: false,
-          error: t("messages:background.incognitoAccessRequired"),
+          error,
           turnstile,
+        })
+        trackTempWindowFetchCompleted({
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+          result: PRODUCT_ANALYTICS_RESULTS.Failure,
+          errorCategory: getTempWindowErrorCategory({
+            reason:
+              TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.IncognitoAccessRequired,
+          }),
         })
         return
       }
@@ -973,7 +1231,7 @@ export async function handleTempWindowTurnstileFetch(
     const { tabId } = context
 
     // Ensure the temp tab is on the requested page URL so Turnstile can render.
-    await browser.tabs.update(tabId, { url: pageUrl })
+    await updateTab(tabId, { url: pageUrl })
     await waitForTabComplete(tabId, {
       requestId: tempRequestId,
       origin: normalizeOrigin(originUrl),
@@ -1010,8 +1268,16 @@ export async function handleTempWindowTurnstileFetch(
     if (!token) {
       sendResponse({
         success: false,
-        error: "Turnstile token not available",
+        error: TURNSTILE_TOKEN_UNAVAILABLE_ERROR,
         turnstile,
+      })
+      trackTempWindowFetchCompleted({
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+        result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        errorCategory: getTempWindowErrorCategory({
+          reason:
+            TEMP_WINDOW_ANALYTICS_FAILURE_REASONS.TurnstileTokenUnavailable,
+        }),
       })
       return
     }
@@ -1030,6 +1296,7 @@ export async function handleTempWindowTurnstileFetch(
       resolvedAuthType,
       accountId,
       cookieAuthSessionCookie,
+      cookieStoreId,
       addFirefoxAuthModeHeader: true,
     })
     for (const ruleId of prepared.ruleIds) {
@@ -1049,7 +1316,24 @@ export async function handleTempWindowTurnstileFetch(
       throw new Error(TEMP_WINDOW_FETCH_NO_RESPONSE_ERROR)
     }
 
-    sendResponse({ ...response, turnstile } satisfies TempWindowTurnstileFetch)
+    const responseWithTurnstile = {
+      ...response,
+      turnstile,
+    } satisfies TempWindowTurnstileFetch
+    sendResponse(responseWithTurnstile)
+    const result = getTempWindowAnalyticsResult(response)
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      result,
+      ...(result === PRODUCT_ANALYTICS_RESULTS.Failure
+        ? {
+            errorCategory: getTempWindowErrorCategory({
+              code: response?.code,
+              status: response?.status,
+            }),
+          }
+        : {}),
+    })
   } catch (error) {
     const failure = toTempWindowFailureResponse(error)
 
@@ -1067,6 +1351,11 @@ export async function handleTempWindowTurnstileFetch(
       error: failure.error,
       code: failure.code,
       turnstile,
+    })
+    trackTempWindowFetchCompleted({
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: getTempWindowErrorCategory(failure),
     })
   } finally {
     for (const ruleId of ruleIds) {
@@ -1086,15 +1375,22 @@ async function getSiteDataFromTab(
   url: string,
   requestId: string,
   suppressMinimize?: boolean,
+  options: { incognito?: boolean; siteType?: string } = {},
 ) {
   try {
-    const context = await acquireTempContext(url, requestId, suppressMinimize)
+    const context = await acquireTempContext(
+      url,
+      requestId,
+      suppressMinimize,
+      options,
+    )
     const { tabId } = context
 
     // 通过 content script 获取用户信息
     const userResponse = await sendTabMessageWithRetry(tabId, {
       action: RuntimeActionIds.ContentGetUserFromLocalStorage,
       url: url,
+      siteType: options.siteType,
     })
 
     await releaseTempContext(requestId)
@@ -1513,7 +1809,7 @@ async function openPopupWindowTempContext(params: {
 
     windowId = popupWindowId
 
-    const tabs = await browser.tabs.query({
+    const tabs = await queryTabs({
       windowId,
       active: true,
     })
@@ -1532,7 +1828,7 @@ async function openPopupWindowTempContext(params: {
     // Best-effort minimize to reduce disturbance unless suppressed (e.g., popup context).
     if (!params.suppressMinimize) {
       try {
-        await browser.windows.update(windowId, { state: "minimized" })
+        await updateWindow(windowId, { state: "minimized" })
         logTempWindow("quietWindowMinimized", {
           requestId: params.requestId,
           origin: params.origin,
@@ -1778,7 +2074,12 @@ async function openTabInCompositeWindow(params: {
     let existingCompositeWindowConfirmed = false
 
     try {
-      await browser.windows.get(previousCompositeWindowId)
+      const existingCompositeWindow = await getWindow(previousCompositeWindowId)
+      if (!existingCompositeWindow) {
+        throw createRecoverableWindowCreationError(
+          WINDOW_CREATION_FAILURE_REASONS.WINDOW_HANDLE_UNAVAILABLE,
+        )
+      }
       existingCompositeWindowConfirmed = true
       const tab = await createTab(params.url, false, {
         windowId: previousCompositeWindowId,
@@ -1873,7 +2174,7 @@ async function openTabInCompositeWindow(params: {
 
       if (!params.suppressMinimize) {
         try {
-          await browser.windows.update(windowId, { state: "minimized" })
+          await updateWindow(windowId, { state: "minimized" })
           logTempWindow("compositeWindowMinimized", {
             requestId: params.requestId,
             origin: params.origin,
@@ -1889,7 +2190,7 @@ async function openTabInCompositeWindow(params: {
         }
       }
 
-      const tabs = await browser.tabs.query({
+      const tabs = await queryTabs({
         windowId,
         active: true,
       })
@@ -2115,7 +2416,7 @@ function clearStaleTempRequestMappings() {
  */
 async function isContextAlive(context: TempContext) {
   try {
-    await browser.tabs.get(context.tabId)
+    await getTab(context.tabId)
     return true
   } catch {
     return false
@@ -2243,7 +2544,7 @@ function waitForTabComplete(
 
     const checkStatus = async () => {
       try {
-        const tab = await browser.tabs.get(tabId)
+        const tab = await getTab(tabId)
 
         attempts += 1
         if (tab.status !== lastTabStatus) {

@@ -117,22 +117,24 @@ Sub2API 站点常见特征：控制台接口在 `/api/v1/*`，并使用 **短期
 
 1. **查询Issue**：前往 [GitHub Issues](https://github.com/qixing-jk/all-api-hub/issues) 搜索是否有相同问题
 2. **使用最新版本**：
-   - 商店版本更新较慢，建议使用 GitHub Release 版本
-   - 或直接使用 main 分支的开发版本
+   - 大多数用户建议优先使用商店版，等待浏览器商店自动更新
+   - 如果修复尚未上架商店，或你无法安装商店版，可临时从 GitHub Releases 手动安装
+   - GitHub Stable、Nightly 或 main 分支开发版适合临时验证和协助测试，手动安装后不会自动更新；你可以 Star / Watch 仓库来接收新版本通知
 
 ### 如何获取最新版本？
 
-插件在多个平台发布，更新速度有差异：
+插件在多个平台发布，建议优先选择与你的浏览器匹配的官方商店版本：
 
 | 平台 | 更新速度          | 版本获取 |
 |------|---------------|---------|
-| **GitHub Releases** | ⚡ 最快          | [前往下载](https://github.com/qixing-jk/all-api-hub/releases) |
-| **Chrome Web Store** | 🐌 较慢（3-5天审核） | [前往安装](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
-| **Edge Add-ons** | 🐌 较慢（3-5天审核） | [前往安装](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
+| **Chrome Web Store** | 自动更新，需等待审核 | [前往安装](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
+| **Edge Add-ons** | 自动更新，需等待审核 | [前往安装](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | **Firefox Add-ons** | ⚡ 快（几个小时审核）   | [前往安装](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
+| **GitHub Stable** | 最快获取已发布版本，需手动安装 | [前往下载](https://github.com/qixing-jk/all-api-hub/releases/latest) |
+| **Nightly 预发布** | 最快体验开发中变更，可能不稳定 | [前往下载](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) |
 
 ::: tip 建议
-如果遇到已修复的Bug，建议从 GitHub Releases 下载最新版本手动安装。QQ 浏览器、360 系浏览器、猎豹浏览器、Brave、Vivaldi、Opera 等浏览器可参考 [QQ / 360 等浏览器安装指南](./other-browser-install.md)。
+Chrome、Edge、Firefox 用户优先使用商店版。只有在修复尚未上架商店、无法安装商店版，或使用 QQ 浏览器、360 系浏览器、猎豹浏览器、Brave、Vivaldi、Opera 等需要手动加载的浏览器时，才建议从 GitHub Releases 临时安装；这类手动安装版本不会自动更新，可 Star / Watch 仓库接收新版本通知，并参考 [QQ / 360 等浏览器安装指南](./other-browser-install.md)。
 :::
 
 ## ⚙️ 功能使用问题
@@ -313,9 +315,9 @@ WebDAV 备份可以帮你在多设备间同步数据：
 
 ### 数据存储在哪里？
 
-- **本地存储**：所有数据保存在浏览器本地存储中
-- **完全离线**：插件核心功能无需联网
-- **不上传数据**：不会向任何第三方服务器上传数据
+- **默认本地存储**：账号、Key 与站点配置默认保存在浏览器本地
+- **按需联网**：刷新余额、调用站点接口、启用 WebDAV 备份/同步或开启匿名产品统计时，才会按对应功能发起网络请求
+- **敏感数据保护**：除非你主动启用 WebDAV 备份/同步，否则账号与 Key 不会上传到外部存储；匿名产品统计不会收集 API Key、Cookie、账号 URL、余额、请求内容或用户输入
 
 ### 数据会丢失吗？
 

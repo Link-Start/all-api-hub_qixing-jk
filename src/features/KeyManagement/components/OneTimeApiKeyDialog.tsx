@@ -4,6 +4,7 @@ import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
 
 import { Alert, Button, Input, Modal } from "~/components/ui"
+import { KEY_MANAGEMENT_TEST_IDS } from "~/features/KeyManagement/testIds"
 import type { ApiToken } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
@@ -15,6 +16,10 @@ interface OneTimeApiKeyDialogProps {
   token: ApiToken | null
   onClose: () => void
   autoCopy?: boolean
+  saveAction?: {
+    onSave: () => Promise<void>
+    label?: string
+  }
 }
 
 /**
@@ -26,10 +31,12 @@ export function OneTimeApiKeyDialog({
   token,
   onClose,
   autoCopy = true,
+  saveAction,
 }: OneTimeApiKeyDialogProps) {
   const { t } = useTranslation("keyManagement")
   const keyInputId = useId()
   const [copied, setCopied] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   const copyKey = useCallback(async () => {
     if (!token?.key) return
@@ -60,6 +67,19 @@ export function OneTimeApiKeyDialog({
     onClose()
   }
 
+  const handleSave = async () => {
+    if (!saveAction || isSaving) return
+
+    setIsSaving(true)
+    try {
+      await saveAction.onSave()
+    } catch {
+      // The caller owns user-facing failure feedback; keep the one-time key visible.
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <Modal
       isOpen={isOpen && !!token}
@@ -80,9 +100,25 @@ export function OneTimeApiKeyDialog({
       }
       footer={
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="secondary" onClick={handleClose}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleClose}
+            data-testid={KEY_MANAGEMENT_TEST_IDS.oneTimeKeyCloseButton}
+          >
             {t("oneTimeKey.close")}
           </Button>
+          {saveAction ? (
+            <Button
+              type="button"
+              onClick={() => void handleSave()}
+              loading={isSaving}
+              disabled={isSaving}
+              data-testid={KEY_MANAGEMENT_TEST_IDS.oneTimeKeySaveButton}
+            >
+              {saveAction.label ?? t("actions.saveToApiProfiles")}
+            </Button>
+          ) : null}
           <Button
             type="button"
             onClick={copyKey}

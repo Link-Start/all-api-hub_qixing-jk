@@ -2,7 +2,10 @@ import {
   MENU_ITEM_IDS,
   type OptionsMenuItemId,
 } from "~/constants/optionsMenuIds"
-import { getAccountSiteApiRouter } from "~/constants/siteType"
+import {
+  resolveAccountSiteRouteUrl,
+  SITE_ROUTE_KINDS,
+} from "~/services/accounts/utils/siteRouteResolver"
 import type { DisplaySiteData } from "~/types"
 import { isExtensionPopup, OPTIONS_PAGE_URL } from "~/utils/browser"
 import {
@@ -12,11 +15,16 @@ import {
   focusTab,
   getExtensionURL,
   hasWindowsAPI,
+  queryTabs as queryTabsApi,
+  updateTab as updateTabApi,
 } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
-import { joinUrl } from "~/utils/core/url"
-import { getFeedbackDestinationUrls } from "~/utils/navigation/feedbackLinks"
+import {
+  getFeedbackDestinationUrls,
+  getSiteSupportRequestUrl,
+  type SiteSupportRequestContext,
+} from "~/utils/navigation/feedbackLinks"
 
 /**
  * Unified logger scoped to navigation helpers and options-page routing.
@@ -201,7 +209,7 @@ const updateTab = async (
   tabId: number,
   updateInfo: browser.tabs._UpdateUpdateProperties,
 ): Promise<void> => {
-  await browser.tabs.update(tabId, updateInfo)
+  await updateTabApi(tabId, updateInfo)
 }
 
 /**
@@ -220,7 +228,7 @@ const queryTabs = async (
   queryInfo: browser.tabs._QueryQueryInfo,
 ): Promise<browser.tabs.Tab[]> => {
   try {
-    return (await browser.tabs.query(queryInfo)) || []
+    return (await queryTabsApi(queryInfo)) || []
   } catch (error) {
     logger.warn("Failed to query tabs", error)
     return []
@@ -279,6 +287,27 @@ const withPopupClose = <T extends any[]>(
   }
 }
 
+interface BookmarkCreationNavigationParams {
+  name: string
+  url: string
+}
+
+interface ApiCredentialProfileCreationNavigationParams {
+  name: string
+  baseUrl: string
+  apiKeyCreateUrl?: string
+  apiKeyCreateHint?: string
+}
+
+interface BookmarkManagerNavigationParams {
+  search?: string
+  create?: BookmarkCreationNavigationParams
+}
+
+interface ApiCredentialProfilesNavigationParams {
+  create?: ApiCredentialProfileCreationNavigationParams
+}
+
 /**
  * Opens or focuses the account manager page, preferring in-page navigation when already on options.html.
  * @param params Optional query parameters to prefilter accounts.
@@ -312,9 +341,19 @@ const _openFullManagerPage = (
  * @param params Optional query parameters to prefilter bookmarks.
  * @param params.search Search keyword applied to the bookmark list.
  */
-const _openFullBookmarkManagerPage = (params?: { search?: string }) => {
+const _openFullBookmarkManagerPage = (
+  params?: BookmarkManagerNavigationParams,
+) => {
   const targetHash = getBookmarkHash()
-  const searchParams = params?.search ? { search: params.search } : undefined
+  const searchParams = params?.create
+    ? {
+        action: "add",
+        name: params.create.name,
+        url: params.create.url,
+      }
+    : params?.search
+      ? { search: params.search }
+      : undefined
 
   if (isOnOptionsPage()) {
     replaceWithinOptionsPage(targetHash, searchParams)
@@ -328,15 +367,19 @@ const _openFullBookmarkManagerPage = (params?: { search?: string }) => {
  * Navigates to the basic settings area, optionally focusing a sub-tab.
  * @param tabId Optional tab ID within settings.
  * @param options Optional in-page navigation behavior tweaks.
+ * @param options.anchor Optional element anchor within the selected settings tab.
  * @param options.preserveHistory When true and already inside options.html,
  * push a new history entry so users can return to the originating context.
  */
 const navigateToBasicSettings = (
   tabId?: string,
-  options?: { preserveHistory?: boolean },
+  options?: { preserveHistory?: boolean; anchor?: string },
 ) => {
   const targetHash = getBasicSettingsHash()
-  const searchParams = tabId ? { tab: tabId } : undefined
+  const searchParams =
+    tabId || options?.anchor
+      ? { tab: tabId, anchor: options?.anchor }
+      : undefined
 
   if (isOnOptionsPage()) {
     if (options?.preserveHistory) {
@@ -418,12 +461,30 @@ const _openSettingsPage = () => {
 }
 
 /**
+ * Opens the optional-permissions onboarding dialog through the Overview URL.
+ */
+const _openPermissionsOnboardingPage = (params?: { reason?: string }) => {
+  const searchParams = {
+    onboarding: "permissions",
+    reason: params?.reason,
+  }
+  const targetHash = `#${MENU_ITEM_IDS.OVERVIEW}`
+
+  if (isOnOptionsPage()) {
+    replaceWithinOptionsPage(targetHash, searchParams)
+    return
+  }
+
+  return openOrFocusOptionsPage(targetHash, searchParams)
+}
+
+/**
  * Navigates directly to a named settings tab.
  * @param tabId Unique identifier for the tab to activate.
  */
 const _openSettingsTab = (
   tabId: string,
-  options?: { preserveHistory?: boolean },
+  options?: { preserveHistory?: boolean; anchor?: string },
 ) => {
   return navigateToBasicSettings(tabId, options)
 }
@@ -451,6 +512,19 @@ const _openFeatureRequestPage = async () => {
 }
 
 /**
+ * Opens the site-support request issue form in a new browser tab.
+ */
+const _openSiteSupportRequestPage = async (
+  context?: SiteSupportRequestContext,
+) => {
+  await createActiveTab(
+    context
+      ? getSiteSupportRequestUrl(context)
+      : getFeedbackDestinationUrls().siteSupportRequest,
+  )
+}
+
+/**
  * Opens the repository discussions page in a new browser tab.
  */
 const _openDiscussionsPage = async () => {
@@ -467,15 +541,26 @@ const _openCommunityPage = async (language?: string) => {
 /**
  * Opens the API credential profiles section, preferring in-page navigation when already on options.html.
  */
-const _openApiCredentialProfilesPage = () => {
+const _openApiCredentialProfilesPage = (
+  params?: ApiCredentialProfilesNavigationParams,
+) => {
   const targetHash = getApiCredentialProfilesHash()
+  const searchParams = params?.create
+    ? {
+        action: "add",
+        name: params.create.name,
+        baseUrl: params.create.baseUrl,
+        apiKeyCreateUrl: params.create.apiKeyCreateUrl,
+        apiKeyCreateHint: params.create.apiKeyCreateHint,
+      }
+    : undefined
 
   if (isOnOptionsPage()) {
-    replaceWithinOptionsPage(targetHash)
+    replaceWithinOptionsPage(targetHash, searchParams)
     return
   }
 
-  return openOrFocusOptionsPage(targetHash)
+  return openOrFocusOptionsPage(targetHash, searchParams)
 }
 
 /**
@@ -544,9 +629,9 @@ const _openAccountBaseUrl = async (
  * @param account Account definition containing base URL and site type.
  */
 const _openUsagePage = async (account: DisplaySiteData) => {
-  const logUrl = joinUrl(
-    account.baseUrl,
-    getAccountSiteApiRouter(account.siteType).usagePath,
+  const logUrl = await resolveAccountSiteRouteUrl(
+    account,
+    SITE_ROUTE_KINDS.Usage,
   )
   await createActiveTab(logUrl)
 }
@@ -556,10 +641,7 @@ const _openUsagePage = async (account: DisplaySiteData) => {
  * @param account Account metadata used to resolve the check-in URL.
  */
 const getCheckInPageUrl = (account: DisplaySiteData) =>
-  joinUrl(
-    account.baseUrl,
-    getAccountSiteApiRouter(account.siteType).checkInPath,
-  )
+  resolveAccountSiteRouteUrl(account, SITE_ROUTE_KINDS.CheckIn)
 
 /**
  * Best-effort URL opener for grouped navigation flows.
@@ -638,7 +720,7 @@ const openUrlsBestEffort = async (
  * @param account Account metadata used to resolve the check-in URL.
  */
 const _openCheckInPage = async (account: DisplaySiteData) => {
-  const checkInUrl = getCheckInPageUrl(account)
+  const checkInUrl = await getCheckInPageUrl(account)
   await createActiveTab(checkInUrl)
 }
 
@@ -650,10 +732,7 @@ const _openCheckInPage = async (account: DisplaySiteData) => {
 const _openCustomCheckInPage = async (account: DisplaySiteData) => {
   const customCheckInUrl =
     account.checkIn?.customCheckIn?.url ||
-    joinUrl(
-      account.baseUrl,
-      getAccountSiteApiRouter(account.siteType).checkInPath,
-    )
+    (await resolveAccountSiteRouteUrl(account, SITE_ROUTE_KINDS.CheckIn))
   await createActiveTab(customCheckInUrl)
 }
 
@@ -664,10 +743,7 @@ const _openCustomCheckInPage = async (account: DisplaySiteData) => {
 const _openRedeemPage = async (account: DisplaySiteData) => {
   const redeemUrl =
     account.checkIn?.customCheckIn?.redeemUrl ||
-    joinUrl(
-      account.baseUrl,
-      getAccountSiteApiRouter(account.siteType).redeemPath,
-    )
+    (await resolveAccountSiteRouteUrl(account, SITE_ROUTE_KINDS.Redeem))
   await createActiveTab(redeemUrl)
 }
 
@@ -692,8 +768,9 @@ export const openAccountManagerWithSearch = withPopupClose((search: string) =>
  * Launch the bookmark manager root view, auto-closing the popup when invoked
  * from popup.html to prevent duplicate UI shells.
  */
-export const openFullBookmarkManagerPage = withPopupClose(() =>
-  _openFullBookmarkManagerPage(),
+export const openFullBookmarkManagerPage = withPopupClose(
+  (params?: BookmarkManagerNavigationParams) =>
+    _openFullBookmarkManagerPage(params),
 )
 
 /**
@@ -709,6 +786,13 @@ export const openBookmarkManagerWithSearch = withPopupClose((search: string) =>
  * applicable, so the user ends up in the options page only.
  */
 export const openSettingsPage = withPopupClose(_openSettingsPage)
+
+/**
+ * Open the optional-permissions onboarding flow for manual review/debugging.
+ */
+export const openPermissionsOnboardingPage = withPopupClose(
+  _openPermissionsOnboardingPage,
+)
 
 /**
  * Open a specific settings tab while ensuring popup teardown happens after
@@ -764,6 +848,13 @@ export const openBugReportPage = withPopupClose(_openBugReportPage)
 export const openFeatureRequestPage = withPopupClose(_openFeatureRequestPage)
 
 /**
+ * Open the site-support issue template and close the popup afterward when needed.
+ */
+export const openSiteSupportRequestPage = withPopupClose(
+  _openSiteSupportRequestPage,
+)
+
+/**
  * Open the docs community hub and close the popup afterward when needed.
  */
 export const openDiscussionsPage = withPopupClose(_openDiscussionsPage)
@@ -777,7 +868,8 @@ export const openCommunityPage = withPopupClose(_openCommunityPage)
  * Open the API credential profiles page and close the popup afterward when applicable.
  */
 export const openApiCredentialProfilesPage = withPopupClose(
-  _openApiCredentialProfilesPage,
+  (params?: ApiCredentialProfilesNavigationParams) =>
+    _openApiCredentialProfilesPage(params),
 )
 
 /**
@@ -851,10 +943,8 @@ export const openCheckInPages = async (
   accounts: DisplaySiteData[],
   options?: { openInNewWindow?: boolean },
 ) => {
-  const result = await openUrlsBestEffort(
-    accounts.map(getCheckInPageUrl),
-    options,
-  )
+  const urls = await Promise.all(accounts.map(getCheckInPageUrl))
+  const result = await openUrlsBestEffort(urls, options)
   closeIfPopup()
   return result
 }

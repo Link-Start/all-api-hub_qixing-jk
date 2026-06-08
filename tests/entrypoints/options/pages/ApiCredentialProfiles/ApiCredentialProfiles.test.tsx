@@ -22,7 +22,7 @@ const mockOpenModelsPage = vi.fn()
 const mockFetchOpenAICompatibleModelIds = vi.fn(
   async (
     _params: Parameters<
-      typeof import("~/services/apiService/openaiCompatible").fetchOpenAICompatibleModelIds
+      typeof import("~/services/aiApi/openaiCompatible").fetchOpenAICompatibleModelIds
     >[0],
   ): Promise<string[]> => [],
 )
@@ -142,10 +142,10 @@ vi.mock("~/utils/navigation", () => ({
   openModelsPage: (...args: unknown[]) => mockOpenModelsPage(...args),
 }))
 
-vi.mock("~/services/apiService/openaiCompatible", () => ({
+vi.mock("~/services/aiApi/openaiCompatible", () => ({
   fetchOpenAICompatibleModelIds: (
     params: Parameters<
-      typeof import("~/services/apiService/openaiCompatible").fetchOpenAICompatibleModelIds
+      typeof import("~/services/aiApi/openaiCompatible").fetchOpenAICompatibleModelIds
     >[0],
   ) => mockFetchOpenAICompatibleModelIds(params),
 }))
@@ -214,6 +214,36 @@ describe("ApiCredentialProfiles page", () => {
 
     expect(await screen.findByText("My Profile")).toBeInTheDocument()
     expect(await screen.findByText("https://example.com")).toBeInTheDocument()
+  })
+
+  it("opens a prefilled add dialog from sponsor route params", async () => {
+    render(
+      <ApiCredentialProfiles
+        routeParams={{
+          action: "add",
+          name: "Manual Provider",
+          baseUrl: "https://manual.example.com",
+          apiKeyCreateUrl: "https://manual.example.com/keys?aff=all-api-hub",
+          apiKeyCreateHint: "Use promo code APIHUB after registration.",
+        }}
+      />,
+    )
+
+    expect(
+      await screen.findByText("apiCredentialProfiles:dialog.addTitle"),
+    ).toBeInTheDocument()
+    expect(screen.getByDisplayValue("Manual Provider")).toBeInTheDocument()
+    expect(
+      screen.getByDisplayValue("https://manual.example.com"),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("link", {
+        name: "apiCredentialProfiles:dialog.actions.openApiKeyCreateUrl",
+      }),
+    ).toHaveAttribute("href", "https://manual.example.com/keys?aff=all-api-hub")
+    expect(
+      screen.getByText("Use promo code APIHUB after registration."),
+    ).toBeInTheDocument()
   })
 
   it("edits an existing profile", async () => {

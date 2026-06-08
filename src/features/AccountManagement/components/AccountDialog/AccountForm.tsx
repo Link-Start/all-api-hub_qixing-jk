@@ -26,9 +26,14 @@ import {
 import { ACCOUNT_SITE_TITLE_RULES, SITE_TYPES } from "~/constants/siteType"
 import { AccountFormSection } from "~/features/AccountManagement/components/AccountDialog/AccountFormSection"
 import { ACCOUNT_FORM_MOBILE_DEFAULT_OPEN } from "~/features/AccountManagement/components/AccountDialog/accountFormSections"
+import {
+  CookieAuthPermissionRecommendation,
+  type CookieAuthPermissionRecommendationProps,
+} from "~/features/AccountManagement/components/AccountDialog/CookieAuthPermissionRecommendation"
 import type { AccountDialogDraft } from "~/features/AccountManagement/components/AccountDialog/models"
 import { TagPicker } from "~/features/AccountManagement/components/TagPicker"
 import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
+import { requiresNumericManualAccountIdentity } from "~/services/accounts/accountIdentity"
 import { isValidExchangeRate } from "~/services/accounts/accountOperations"
 import { AuthTypeEnum, type CheckInConfig, type Tag } from "~/types"
 import { formatLocaleDateTime } from "~/utils/core/formatters"
@@ -51,9 +56,13 @@ interface AccountFormProps {
   onNotesChange: (value: string) => void
   onSelectedTagIdsChange: (value: string[]) => void
   onExcludeFromTotalBalanceChange: (value: boolean) => void
+  onExcludeFromTodayIncomeChange: (value: boolean) => void
   onCookieAuthSessionCookieChange: (value: string) => void
   onImportCookieAuthSessionCookie: () => void
   onOpenCookiePermissionSettings: () => void
+  cookieAuthPermissionsGranted?: CookieAuthPermissionRecommendationProps["cookieAuthPermissionsGranted"]
+  isRequestingCookieAuthPermissions?: boolean
+  onRequestCookieAuthPermissions?: () => void
   onSub2apiUseRefreshTokenChange: (value: boolean) => void
   onSub2apiRefreshTokenChange: (value: string) => void
   onImportSub2apiSession: () => void
@@ -88,9 +97,13 @@ export default function AccountForm({
   onNotesChange,
   onSelectedTagIdsChange,
   onExcludeFromTotalBalanceChange,
+  onExcludeFromTodayIncomeChange,
   onCookieAuthSessionCookieChange,
   onImportCookieAuthSessionCookie,
   onOpenCookiePermissionSettings,
+  cookieAuthPermissionsGranted,
+  isRequestingCookieAuthPermissions,
+  onRequestCookieAuthPermissions,
   onSub2apiUseRefreshTokenChange,
   onSub2apiRefreshTokenChange,
   onImportSub2apiSession,
@@ -115,6 +128,7 @@ export default function AccountForm({
     notes,
     tagIds,
     excludeFromTotalBalance,
+    excludeFromTodayIncome,
     cookieAuthSessionCookie,
     sub2apiUseRefreshToken,
     sub2apiRefreshToken,
@@ -123,6 +137,7 @@ export default function AccountForm({
     siteType,
   } = draft
   const isSub2Api = siteType === SITE_TYPES.SUB2API
+  const requiresNumericUserId = requiresNumericManualAccountIdentity(siteType)
 
   return (
     <div className="space-y-3">
@@ -230,10 +245,13 @@ export default function AccountForm({
 
         <FormField label={t("form.userId")} required>
           <Input
-            type="number"
+            type={requiresNumericUserId ? "number" : "text"}
+            autoComplete="off"
             value={userId}
             onChange={(e) => onUserIdChange(e.target.value)}
-            placeholder={t("form.userIdNumber")}
+            placeholder={
+              requiresNumericUserId ? t("form.userIdNumber") : t("form.userId")
+            }
             leftIcon={<span className="font-mono text-sm">#</span>}
             data-testid={ACCOUNT_MANAGEMENT_TEST_IDS.userIdInput}
             required
@@ -359,6 +377,13 @@ export default function AccountForm({
             required
           >
             <div className="space-y-2">
+              <CookieAuthPermissionRecommendation
+                cookieAuthPermissionsGranted={cookieAuthPermissionsGranted}
+                isRequestingCookieAuthPermissions={
+                  isRequestingCookieAuthPermissions
+                }
+                onRequestCookieAuthPermissions={onRequestCookieAuthPermissions}
+              />
               <Button
                 type="button"
                 variant="outline"
@@ -664,6 +689,28 @@ export default function AccountForm({
             id="exclude-from-total-balance"
             className={`${
               excludeFromTotalBalance ? "bg-green-600" : "bg-gray-200"
+            } focus:ring-green-500`}
+          />
+        </div>
+
+        <div className="flex w-full items-center justify-between gap-4">
+          <div className="flex-1">
+            <label
+              htmlFor="exclude-from-today-income"
+              className="dark:text-dark-text-secondary text-sm font-medium text-gray-700"
+            >
+              {t("form.excludeFromTodayIncome")}
+            </label>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {t("form.excludeFromTodayIncomeDesc")}
+            </p>
+          </div>
+          <Switch
+            checked={excludeFromTodayIncome}
+            onChange={onExcludeFromTodayIncomeChange}
+            id="exclude-from-today-income"
+            className={`${
+              excludeFromTodayIncome ? "bg-green-600" : "bg-gray-200"
             } focus:ring-green-500`}
           />
         </div>

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { accountStorage } from "~/services/accounts/accountStorage"
 import {
-  handleUsageHistoryMessage,
+  resolveUsageHistoryPruneMessage,
+  resolveUsageHistorySyncNowMessage,
+  resolveUsageHistoryUpdateSettingsMessage,
   usageHistoryScheduler,
 } from "~/services/history/usageHistory/scheduler"
 import { usageHistoryStorage } from "~/services/history/usageHistory/storage"
@@ -23,6 +24,7 @@ import {
 import {
   clearAlarm,
   createAlarm,
+  getAlarm,
   hasAlarmsAPI,
   onAlarm,
 } from "~/utils/browser/browserApi"
@@ -72,6 +74,7 @@ vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
     ...actual,
     clearAlarm: vi.fn(),
     createAlarm: vi.fn(),
+    getAlarm: vi.fn(),
     hasAlarmsAPI: vi.fn(),
     onAlarm: vi.fn((listener) => {
       registeredAlarmListeners.push(listener)
@@ -105,6 +108,7 @@ describe("usageHistoryScheduler", () => {
     })
     vi.mocked(userPreferences.savePreferences).mockResolvedValue(true)
     vi.mocked(hasAlarmsAPI).mockReturnValue(true)
+    vi.mocked(getAlarm).mockResolvedValue(undefined)
     vi.mocked(accountStorage.getEnabledAccounts).mockResolvedValue([
       { id: "account-1", disabled: false },
       { id: "account-2", disabled: false },
@@ -130,6 +134,7 @@ describe("usageHistoryScheduler", () => {
     await usageHistoryScheduler.initialize()
 
     expect(onAlarm).toHaveBeenCalledTimes(1)
+    expect(clearAlarm).toHaveBeenCalledWith("usageHistorySync")
     expect(createAlarm).toHaveBeenCalledWith("usageHistorySync", {
       periodInMinutes: 45,
       delayInMinutes: 1,
@@ -158,6 +163,20 @@ describe("usageHistoryScheduler", () => {
         scheduleMode: USAGE_HISTORY_SCHEDULE_MODE.ALARM,
       }),
     })
+  })
+
+  it("preserves an existing matching alarm to avoid startup schedule drift", async () => {
+    vi.mocked(getAlarm).mockResolvedValue({
+      name: "usageHistorySync",
+      scheduledTime: Date.now() + 30 * 60_000,
+      periodInMinutes: 45,
+    } as browser.alarms.Alarm)
+
+    await usageHistoryScheduler.initialize()
+
+    expect(getAlarm).toHaveBeenCalledWith("usageHistorySync")
+    expect(clearAlarm).not.toHaveBeenCalled()
+    expect(createAlarm).not.toHaveBeenCalled()
   })
 
   it("falls back to after-refresh scheduling when alarms are unavailable", async () => {
@@ -369,7 +388,7 @@ describe("handleUsageHistoryMessage", () => {
     })
   })
 
-  it("routes update, manual sync, prune, and unknown actions", async () => {
+  it("resolves update, manual sync, and prune typed messages", async () => {
     vi.spyOn(usageHistoryScheduler, "updateSettings").mockResolvedValue({
       warning: "warning",
     })
@@ -379,28 +398,18 @@ describe("handleUsageHistoryMessage", () => {
     })
     vi.mocked(usageHistoryStorage.pruneAllAccounts).mockResolvedValue(true)
 
-    const updateResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      {
-        action: RuntimeActionIds.UsageHistoryUpdateSettings,
-        settings: { enabled: false },
-      },
-      updateResponse,
-    )
-    expect(updateResponse).toHaveBeenCalledWith({
+    const updateResponse = await resolveUsageHistoryUpdateSettingsMessage({
+      settings: { enabled: false },
+    })
+    expect(updateResponse).toEqual({
       success: true,
       data: { warning: "warning" },
     })
 
-    const syncResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      {
-        action: RuntimeActionIds.UsageHistorySyncNow,
-        accountIds: ["account-1"],
-      },
-      syncResponse,
-    )
-    expect(syncResponse).toHaveBeenCalledWith({
+    const syncResponse = await resolveUsageHistorySyncNowMessage({
+      accountIds: ["account-1"],
+    })
+    expect(syncResponse).toEqual({
       success: true,
       data: {
         totals: { success: 1, skipped: 0, error: 0, unsupported: 0 },
@@ -408,42 +417,21 @@ describe("handleUsageHistoryMessage", () => {
       },
     })
 
-    const pruneResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      { action: RuntimeActionIds.UsageHistoryPrune },
-      pruneResponse,
-    )
-    expect(pruneResponse).toHaveBeenCalledWith({ success: true })
+    const pruneResponse = await resolveUsageHistoryPruneMessage()
+    expect(pruneResponse).toEqual({ success: true, data: undefined })
     expect(usageHistoryStorage.pruneAllAccounts).toHaveBeenCalledWith(14)
-
-    const unknownResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      { action: "unknown-action" },
-      unknownResponse,
-    )
-    expect(unknownResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "Unknown action",
-    })
   })
 
-  it("treats non-array sync-now accountIds as a full manual sync request", async () => {
+  it("passes omitted sync-now accountIds as a full manual sync request", async () => {
     vi.spyOn(usageHistoryScheduler, "runManualSync").mockResolvedValue({
       totals: { success: 2, skipped: 0, error: 0, unsupported: 0 },
       perAccount: [],
     })
 
-    const sendResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      {
-        action: RuntimeActionIds.UsageHistorySyncNow,
-        accountIds: "account-1",
-      },
-      sendResponse,
-    )
+    const response = await resolveUsageHistorySyncNowMessage({})
 
     expect(usageHistoryScheduler.runManualSync).toHaveBeenCalledWith(undefined)
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         totals: { success: 2, skipped: 0, error: 0, unsupported: 0 },
@@ -452,20 +440,41 @@ describe("handleUsageHistoryMessage", () => {
     })
   })
 
+  it("rejects malformed scoped sync payloads instead of syncing every account", async () => {
+    const runManualSyncSpy = vi.spyOn(usageHistoryScheduler, "runManualSync")
+
+    const response = await resolveUsageHistorySyncNowMessage({
+      accountIds: "not-an-array" as any,
+    })
+
+    expect(response).toEqual({
+      success: false,
+      error: "accountIds must be an array when provided",
+    })
+    expect(runManualSyncSpy).not.toHaveBeenCalled()
+  })
+
+  it("returns a failure response when a manual sync is already running", async () => {
+    vi.spyOn(usageHistoryScheduler, "runManualSync").mockResolvedValue(null)
+
+    const response = await resolveUsageHistorySyncNowMessage({})
+
+    expect(response).toEqual({
+      success: false,
+      error: "Usage-history sync is already running",
+    })
+  })
+
   it("returns an error response when the scheduler throws", async () => {
     vi.spyOn(usageHistoryScheduler, "updateSettings").mockRejectedValue(
       new Error("scheduler exploded"),
     )
 
-    const sendResponse = vi.fn()
-    await handleUsageHistoryMessage(
-      {
-        action: RuntimeActionIds.UsageHistoryUpdateSettings,
-      },
-      sendResponse,
-    )
+    const response = await resolveUsageHistoryUpdateSettingsMessage({
+      settings: {},
+    })
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: false,
       error: "scheduler exploded",
     })

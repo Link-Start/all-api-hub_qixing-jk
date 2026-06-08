@@ -1,7 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import { SITE_ROUTE_KINDS } from "~/services/accounts/utils/siteRouteResolver"
 import { DEFAULT_PREFERENCES } from "~/services/preferences/userPreferences"
+
+const messagingMocks = vi.hoisted(() => ({
+  onRedemptionAssistMessage: vi.fn(() => vi.fn()),
+}))
+
+vi.mock("~/services/accounts/utils/siteRouteResolver", () => ({
+  SITE_ROUTE_KINDS: {
+    CheckIn: "checkIn",
+    Redeem: "redeem",
+  },
+  resolveAccountSiteRouteUrl: vi.fn(
+    (account: { baseUrl: string }, route: "checkIn" | "redeem") =>
+      Promise.resolve(
+        `${account.baseUrl}${route === "checkIn" ? "/profile" : "/wallet"}`,
+      ),
+  ),
+}))
 
 vi.mock("~/services/preferences/userPreferences", async (importOriginal) => {
   const actual =
@@ -23,7 +40,82 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+vi.mock("~/services/redemption/redemptionAssistMessaging", () => ({
+  RedemptionAssistMessageTypes: {
+    UpdateSettings: "redemptionAssist:updateSettings",
+    ShouldPrompt: "redemptionAssist:shouldPrompt",
+    AutoRedeem: "redemptionAssist:autoRedeem",
+    AutoRedeemByUrl: "redemptionAssist:autoRedeemByUrl",
+  },
+  onRedemptionAssistMessage: messagingMocks.onRedemptionAssistMessage,
+}))
+
+async function resolveShouldPrompt(
+  request: { url: string; codes: string[] },
+  sender: browser.runtime.MessageSender = {},
+) {
+  const { resolveRedemptionAssistShouldPromptMessage } = await import(
+    "~/services/redemption/redemptionAssist"
+  )
+  return resolveRedemptionAssistShouldPromptMessage(request, sender)
+}
+
+async function updateRuntimeSettings(request: { settings: any }) {
+  const { updateRedemptionAssistRuntimeSettings } = await import(
+    "~/services/redemption/redemptionAssist"
+  )
+  return updateRedemptionAssistRuntimeSettings(request)
+}
+
+async function resolveAutoRedeem(request: { accountId: string; code: string }) {
+  const { resolveRedemptionAssistAutoRedeemMessage } = await import(
+    "~/services/redemption/redemptionAssist"
+  )
+  return resolveRedemptionAssistAutoRedeemMessage(request)
+}
+
+async function resolveAutoRedeemByUrl(request: { url: string; code: string }) {
+  const { resolveRedemptionAssistAutoRedeemByUrlMessage } = await import(
+    "~/services/redemption/redemptionAssist"
+  )
+  return resolveRedemptionAssistAutoRedeemByUrlMessage(request)
+}
+
 describe("redemptionAssist shouldPrompt batch filtering", () => {
+  it("registers typed runtime listeners once", async () => {
+    vi.resetModules()
+    messagingMocks.onRedemptionAssistMessage.mockClear()
+
+    const { setupRedemptionAssistMessagingListeners } = await import(
+      "~/services/redemption/redemptionAssist"
+    )
+
+    setupRedemptionAssistMessagingListeners()
+    setupRedemptionAssistMessagingListeners()
+
+    expect(messagingMocks.onRedemptionAssistMessage).toHaveBeenCalledTimes(4)
+    expect(messagingMocks.onRedemptionAssistMessage).toHaveBeenNthCalledWith(
+      1,
+      "redemptionAssist:updateSettings",
+      expect.any(Function),
+    )
+    expect(messagingMocks.onRedemptionAssistMessage).toHaveBeenNthCalledWith(
+      2,
+      "redemptionAssist:shouldPrompt",
+      expect.any(Function),
+    )
+    expect(messagingMocks.onRedemptionAssistMessage).toHaveBeenNthCalledWith(
+      3,
+      "redemptionAssist:autoRedeem",
+      expect.any(Function),
+    )
+    expect(messagingMocks.onRedemptionAssistMessage).toHaveBeenNthCalledWith(
+      4,
+      "redemptionAssist:autoRedeemByUrl",
+      expect.any(Function),
+    )
+  })
+
   it("returns only prompt-eligible codes for a url", async () => {
     vi.resetModules()
     const { userPreferences } = await import(
@@ -49,27 +141,19 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       },
     })
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
     const validHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
     const invalidHex = "g1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
     const tooShort = "1234"
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
+    const response = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://example.com/redeem",
         codes: [validHex, invalidHex, tooShort],
       },
       { tab: { id: 99 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       promptableCodes: [validHex],
     })
@@ -99,23 +183,15 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       },
     })
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
+    const response = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://blocked.example.com/redeem",
         codes: ["a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"],
       },
       { tab: { id: 7 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       promptableCodes: [],
     })
@@ -143,24 +219,17 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       },
     })
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
     const validHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 
-    await handleRedemptionAssistMessage(
+    const response = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://anywhere.example.com/redeem",
         codes: [validHex],
       },
       { tab: { id: 8 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       promptableCodes: [validHex],
     })
@@ -223,43 +292,106 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
     const validHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 
-    await handleRedemptionAssistMessage(
+    const firstResponse = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://allowed.example.com/custom-redeem/code",
         codes: [validHex],
       },
       { tab: { id: 10 } } as any,
-      sendResponse,
     )
 
-    await handleRedemptionAssistMessage(
+    const secondResponse = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://allowed.example.com/custom-check-in",
         codes: [validHex],
       },
       { tab: { id: 10 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenNthCalledWith(1, {
+    expect(firstResponse).toEqual({
       success: true,
       promptableCodes: [validHex],
     })
-    expect(sendResponse).toHaveBeenNthCalledWith(2, {
+    expect(secondResponse).toEqual({
       success: true,
       promptableCodes: [validHex],
     })
     expect(getAllAccounts).toHaveBeenCalledTimes(1)
     expect(convertToDisplayData).toHaveBeenCalledTimes(1)
+  })
+
+  it("derives default check-in and redeem whitelist patterns through the site route resolver", async () => {
+    vi.resetModules()
+    const { userPreferences } = await import(
+      "~/services/preferences/userPreferences"
+    )
+    vi.mocked(userPreferences.getPreferences).mockResolvedValue({
+      ...DEFAULT_PREFERENCES,
+      redemptionAssist: {
+        enabled: true,
+        contextMenu: {
+          enabled: true,
+        },
+        urlWhitelist: {
+          enabled: true,
+          patterns: [],
+          includeAccountSiteUrls: false,
+          includeCheckInAndRedeemUrls: true,
+        },
+        relaxedCodeValidation: false,
+      },
+    })
+
+    const getAllAccounts = vi.fn().mockResolvedValue([])
+    const convertToDisplayData = vi.fn().mockReturnValue([
+      {
+        id: "acc_default_routes",
+        siteType: "new-api",
+        baseUrl: "https://new-api-default.example/path",
+        disabled: false,
+      },
+    ])
+
+    vi.doMock("~/services/accounts/accountStorage", () => ({
+      accountStorage: {
+        getAllAccounts,
+        convertToDisplayData,
+      },
+    }))
+
+    const { resolveAccountSiteRouteUrl } = await import(
+      "~/services/accounts/utils/siteRouteResolver"
+    )
+    const validHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+
+    const response = await resolveShouldPrompt(
+      {
+        url: "https://new-api-default.example/wallet/code",
+        codes: [validHex],
+      },
+      { tab: { id: 12 } } as any,
+    )
+
+    expect(resolveAccountSiteRouteUrl).toHaveBeenCalledWith(
+      {
+        baseUrl: "https://new-api-default.example",
+        siteType: "new-api",
+      },
+      SITE_ROUTE_KINDS.CheckIn,
+    )
+    expect(resolveAccountSiteRouteUrl).toHaveBeenCalledWith(
+      {
+        baseUrl: "https://new-api-default.example",
+        siteType: "new-api",
+      },
+      SITE_ROUTE_KINDS.Redeem,
+    )
+    expect(response).toEqual({
+      success: true,
+      promptableCodes: [validHex],
+    })
   })
 
   it("updates runtime settings through the message handler and disables promptability immediately", async () => {
@@ -284,57 +416,43 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       },
     })
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
     const validHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
 
-    await handleRedemptionAssistMessage(
+    const firstResponse = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://runtime.example.com/redeem",
         codes: [validHex],
       },
       { tab: { id: 11 } } as any,
-      sendResponse,
     )
 
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistUpdateSettings,
-        settings: {
-          enabled: false,
-          relaxedCodeValidation: true,
-          urlWhitelist: {
-            enabled: true,
-            patterns: ["^https://runtime\\.example\\.com"],
-            includeAccountSiteUrls: false,
-            includeCheckInAndRedeemUrls: false,
-          },
+    const updateResponse = await updateRuntimeSettings({
+      settings: {
+        enabled: false,
+        relaxedCodeValidation: true,
+        urlWhitelist: {
+          enabled: true,
+          patterns: ["^https://runtime\\.example\\.com"],
+          includeAccountSiteUrls: false,
+          includeCheckInAndRedeemUrls: false,
         },
       },
-      {} as any,
-      sendResponse,
-    )
+    })
 
-    await handleRedemptionAssistMessage(
+    const secondResponse = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://runtime.example.com/redeem",
         codes: [validHex],
       },
       { tab: { id: 11 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenNthCalledWith(1, {
+    expect(firstResponse).toEqual({
       success: true,
       promptableCodes: [validHex],
     })
-    expect(sendResponse).toHaveBeenNthCalledWith(2, { success: true })
-    expect(sendResponse).toHaveBeenNthCalledWith(3, {
+    expect(updateResponse).toEqual({ success: true })
+    expect(secondResponse).toEqual({
       success: true,
       promptableCodes: [],
     })
@@ -349,23 +467,15 @@ describe("redemptionAssist shouldPrompt batch filtering", () => {
       new Error("prefs exploded"),
     )
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
+    const response = await resolveShouldPrompt(
       {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
         url: "https://example.com/redeem",
         codes: ["z".repeat(32)],
       },
       { tab: { id: 12 } } as any,
-      sendResponse,
     )
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       promptableCodes: ["z".repeat(32)],
     })
@@ -393,25 +503,14 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "acc_1",
-        code: "CODE_1",
-      },
-      {} as any,
-      sendResponse,
-    )
+    const response = await resolveAutoRedeem({
+      accountId: "acc_1",
+      code: "CODE_1",
+    })
 
     expect(redeemCodeForAccount).toHaveBeenCalledWith("acc_1", "CODE_1")
     expect(refreshAccount).toHaveBeenCalledWith("acc_1", true)
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: { success: true, message: "ok" },
     })
@@ -455,25 +554,14 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "https://example.com/redeem",
-        code: "CODE_2",
-      },
-      {} as any,
-      sendResponse,
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "https://example.com/redeem",
+      code: "CODE_2",
+    })
 
     expect(redeemCodeForAccount).toHaveBeenCalledWith("acc_2", "CODE_2")
     expect(refreshAccount).toHaveBeenCalledWith("acc_2", true)
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: true,
@@ -503,24 +591,13 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "acc_3",
-        code: "CODE_3",
-      },
-      {} as any,
-      sendResponse,
-    )
+    const response = await resolveAutoRedeem({
+      accountId: "acc_3",
+      code: "CODE_3",
+    })
 
     expect(refreshAccount).toHaveBeenCalledWith("acc_3", true)
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: { success: true, message: "ok" },
     })
@@ -552,30 +629,25 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const handlePromise = resolveAutoRedeem({
+      accountId: "acc_await",
+      code: "CODE_AWAIT",
+    })
 
-    const sendResponse = vi.fn()
-
-    const handlePromise = handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "acc_await",
-        code: "CODE_AWAIT",
-      },
-      {} as any,
-      sendResponse,
-    )
-
+    await vi.waitFor(() => {
+      expect(refreshAccount).toHaveBeenCalledWith("acc_await", true)
+    })
+    let resolved = false
+    handlePromise.then(() => {
+      resolved = true
+    })
     await Promise.resolve()
-    expect(refreshAccount).toHaveBeenCalledWith("acc_await", true)
-    expect(sendResponse).not.toHaveBeenCalled()
+    expect(resolved).toBe(false)
 
     resolveRefresh?.({ refreshed: true })
-    await handlePromise
+    const response = await handlePromise
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: { success: true, message: "ok" },
     })
@@ -601,24 +673,13 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "acc_4",
-        code: "CODE_4",
-      },
-      {} as any,
-      sendResponse,
-    )
+    const response = await resolveAutoRedeem({
+      accountId: "acc_4",
+      code: "CODE_4",
+    })
 
     expect(refreshAccount).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: { success: false, message: "nope" },
     })
@@ -634,23 +695,12 @@ describe("redemptionAssist post-redeem refresh", () => {
       DEFAULT_PREFERENCES,
     )
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "not-a-url",
+      code: "CODE_BAD_URL",
+    })
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "not-a-url",
-        code: "CODE_BAD_URL",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: false,
@@ -698,23 +748,12 @@ describe("redemptionAssist post-redeem refresh", () => {
       ),
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "https://example.com/redeem",
+      code: "CODE_MULTI",
+    })
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "https://example.com/redeem",
-        code: "CODE_MULTI",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: false,
@@ -756,23 +795,12 @@ describe("redemptionAssist post-redeem refresh", () => {
       ),
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "https://example.com/redeem",
+      code: "CODE_NO_CUSTOM_URL",
+    })
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "https://example.com/redeem",
-        code: "CODE_NO_CUSTOM_URL",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: false,
@@ -831,24 +859,13 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "https://example.com/redeem",
-        code: "CODE_FAIL",
-      },
-      {} as any,
-      sendResponse,
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "https://example.com/redeem",
+      code: "CODE_FAIL",
+    })
 
     expect(refreshAccount).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: false,
@@ -889,23 +906,12 @@ describe("redemptionAssist post-redeem refresh", () => {
       searchAccounts: vi.fn().mockReturnValue([]),
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const response = await resolveAutoRedeemByUrl({
+      url: "https://example.com/redeem",
+      code: "CODE_NONE",
+    })
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "https://example.com/redeem",
-        code: "CODE_NONE",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: true,
       data: {
         success: false,
@@ -917,65 +923,24 @@ describe("redemptionAssist post-redeem refresh", () => {
     })
   })
 
-  it("handles validation failures and unknown runtime actions", async () => {
+  it("handles validation failures", async () => {
     vi.resetModules()
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
-
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-        url: "",
-        codes: [],
-      },
-      {} as any,
-      sendResponse,
-    )
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "",
-        code: "",
-      },
-      {} as any,
-      sendResponse,
-    )
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-        url: "",
-        code: "",
-      },
-      {} as any,
-      sendResponse,
-    )
-    await handleRedemptionAssistMessage(
-      {
-        action: "unknown-action",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenNthCalledWith(1, {
+    await expect(resolveShouldPrompt({ url: "", codes: [] })).resolves.toEqual({
       success: false,
       error: "Missing url or codes",
     })
-    expect(sendResponse).toHaveBeenNthCalledWith(2, {
+    await expect(
+      resolveAutoRedeem({ accountId: "", code: "" }),
+    ).resolves.toEqual({
       success: false,
       error: "Missing accountId or code",
     })
-    expect(sendResponse).toHaveBeenNthCalledWith(3, {
+    await expect(
+      resolveAutoRedeemByUrl({ url: "", code: "" }),
+    ).resolves.toEqual({
       success: false,
       error: "Missing url or code",
-    })
-    expect(sendResponse).toHaveBeenNthCalledWith(4, {
-      success: false,
-      error: "Unknown action",
     })
   })
 
@@ -998,23 +963,12 @@ describe("redemptionAssist post-redeem refresh", () => {
       },
     }))
 
-    const { handleRedemptionAssistMessage } = await import(
-      "~/services/redemption/redemptionAssist"
-    )
+    const response = await resolveAutoRedeem({
+      accountId: "acc_error",
+      code: "CODE_ERR",
+    })
 
-    const sendResponse = vi.fn()
-
-    await handleRedemptionAssistMessage(
-      {
-        action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-        accountId: "acc_error",
-        code: "CODE_ERR",
-      },
-      {} as any,
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    expect(response).toEqual({
       success: false,
       error: "redeem exploded",
     })

@@ -1,5 +1,5 @@
 {
-  "description": "在每天的指定時間視窗內，自動為符合條件的帳號執行簽到。",
+  "description": "在每天的指定時間視窗內，自動為符合條件的帳號執行簽到；下方結果列表顯示已執行的簽到記錄，不是待簽到佇列。",
   "execution": {
     "actions": {
       "devModeHint": "開發模式：為便於測試，操作按鈕將始終顯示。",
@@ -19,10 +19,16 @@
       "uiOpenPretriggerDiagnosticsTitle": "開啟介面時提前觸發今日簽到"
     },
     "empty": {
+      "addAccount": "新增帳號",
+      "noAccounts": "先新增帳號後才能自動簽到",
+      "noAccountsDesc": "自動簽到需要至少一個已啟用帳號，新增帳號後才能執行。",
+      "noDetectionAccounts": "為帳號啟用簽到偵測",
+      "noDetectionAccountsDesc": "現有帳號尚未啟用簽到偵測。開啟帳號管理，為需要參與自動簽到的帳號啟用簽到偵測。",
       "noHistory": "暫無執行歷史",
-      "noHistoryDesc": "點擊\"立即執行\"對所有符合條件的帳號進行自動簽到",
+      "noHistoryDesc": "目前還沒有簽到執行記錄。點擊「立即執行」後，符合條件的帳號會開始簽到，完成後才會出現在結果列表中。",
       "noResults": "沒有匹配的結果",
-      "noResultsDesc": "嘗試修改篩選條件或搜尋關鍵字"
+      "noResultsDesc": "嘗試修改篩選條件或搜尋關鍵字",
+      "openAccounts": "開啟帳號管理"
     },
     "filters": {
       "all": "全部",
@@ -33,6 +39,7 @@
     },
     "hints": {
       "invalidAccessToken": "解決方案：Access Token 可能已失效。請重新登入該站點，然後在「帳號管理 → 編輯帳號」中重新自動識別/重新整理 Access Token；如自動識別後仍出現此問題，請手動獲取並修改 Access Token。",
+      "manualVerificationRequired": "建議先點擊「開啟網站」，在站點頁面完成登入、Turnstile/PoW 等基礎驗證，讓瀏覽器建立有效工作階段後再重試自動簽到。如果完成驗證後仍多次失敗，可能是目前自動簽到流程尚未適配該站點，請暫時改用手動簽到。",
       "noTabWithId": "提示：請不要關閉擴充套件自動建立的標籤頁/視窗，擴充套件會在一段時間後自動關閉。如需手動關閉，請至少等待 1 分鐘後再關閉。",
       "openFailedManualNewWindow": "提示：按住 Shift 點擊“開啟失敗帳號的手動簽到頁”，可在新視窗中開啟。",
       "siteTypeCheckinUnsupported": "解決方案：先到「帳號管理 → 編輯帳號」檢查「站點型別」是否與實際站點一致；如果先前是自動識別出的結果，可在目標站點重新登入後再重新識別一次。若確認站點型別正確但仍顯示不支援，表示該站點目前可能尚未適配自動簽到，請改用「開啟網站」或「手動簽到」處理。"
@@ -137,7 +144,7 @@
     "title": "自動簽到",
     "viewExecution": "檢視簽到歷史",
     "viewExecutionButton": "開啟記錄",
-    "viewExecutionDesc": "檢視每次自動簽到的詳細結果與日誌。",
+    "viewExecutionDesc": "檢視已執行的自動簽到結果、跳過原因和帳號準備狀態；這裡不是待簽到帳號列表。",
     "windowEnd": "時間視窗結束",
     "windowEndDesc": "允許每日自動簽到開始的最晚本地時間。",
     "windowStart": "時間視窗開始",
@@ -159,7 +166,7 @@
       "providerAvailable": "可用",
       "providerUnavailable": "不可用"
     },
-    "description": "列出所有已啟用檢測的帳號，幫助快速定位為什麼某些帳號會被跳過。",
+    "description": "列出所有已啟用檢測的帳號及其準備狀態。處於待執行狀態的帳號會在點擊「立即執行」或到達計劃時間後參與簽到。",
     "table": {
       "autoCheckin": "自動簽到",
       "detection": "檢測",

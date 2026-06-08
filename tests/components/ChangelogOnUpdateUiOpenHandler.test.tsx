@@ -5,6 +5,7 @@ import {
   UpdateLogDialogContainer,
   UpdateLogDialogProvider,
 } from "~/components/dialogs/UpdateLogDialog"
+import { UPDATE_LOG_DIALOG_TEST_IDS } from "~/components/dialogs/UpdateLogDialog/testIds"
 import {
   DEFAULT_PREFERENCES,
   userPreferences,
@@ -40,7 +41,9 @@ describe("ChangelogOnUpdateUiOpenHandler", () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId("update-log-dialog")).toBeInTheDocument()
+      expect(
+        screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root),
+      ).toBeInTheDocument()
     })
 
     first.unmount()
@@ -56,7 +59,7 @@ describe("ChangelogOnUpdateUiOpenHandler", () => {
       expect(consumeSpy).toHaveBeenCalledTimes(2)
     })
 
-    expect(screen.queryByTestId("update-log-dialog")).toBeNull()
+    expect(screen.queryByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root)).toBeNull()
   })
 
   it("clears pending marker without opening when preference is disabled", async () => {
@@ -88,7 +91,7 @@ describe("ChangelogOnUpdateUiOpenHandler", () => {
       expect(consumeSpy).toHaveBeenCalledTimes(1)
     })
 
-    expect(screen.queryByTestId("update-log-dialog")).toBeNull()
+    expect(screen.queryByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root)).toBeNull()
 
     openChangelogOnUpdate = true
     first.unmount()
@@ -104,6 +107,6 @@ describe("ChangelogOnUpdateUiOpenHandler", () => {
       expect(consumeSpy).toHaveBeenCalledTimes(2)
     })
 
-    expect(screen.queryByTestId("update-log-dialog")).toBeNull()
+    expect(screen.queryByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root)).toBeNull()
   })
 })

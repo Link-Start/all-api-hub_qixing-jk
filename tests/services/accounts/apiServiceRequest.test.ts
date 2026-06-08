@@ -19,7 +19,7 @@ const ACCOUNT = {
   siteType: "new-api",
   baseUrl: "https://example.com",
   authType: AuthTypeEnum.AccessToken,
-  userId: 1,
+  userId: "1",
   token: "token",
   cookieAuthSessionCookie: "",
 } as const
@@ -46,7 +46,7 @@ describe("fetchDisplayAccountTokens", () => {
         accountId: "account-1",
         auth: {
           authType: AuthTypeEnum.AccessToken,
-          userId: 1,
+          userId: "1",
           accessToken: "token",
           cookie: "",
         },
@@ -107,6 +107,39 @@ describe("fetchDisplayAccountTokens", () => {
       name: "Masked",
     })
     expect(result).not.toBe(token)
+  })
+
+  it("returns a transient sk-prefixed secret for optional-prefix compatible account types", async () => {
+    const token = { id: 1, key: "plain-secret", status: 1, name: "Plain" }
+    const resolveApiTokenKey = vi.fn().mockResolvedValue("plain-secret")
+    vi.mocked(getApiService).mockReturnValue({ resolveApiTokenKey } as any)
+
+    const result = await resolveDisplayAccountTokenForSecret(
+      { ...ACCOUNT, siteType: "Veloera" } as any,
+      token as any,
+    )
+
+    expect(result).toEqual({
+      id: 1,
+      key: "sk-plain-secret",
+      status: 1,
+      name: "Plain",
+    })
+    expect(result).not.toBe(token)
+    expect(token.key).toBe("plain-secret")
+  })
+
+  it("does not synthesize sk-prefixes for non-compatible account types", async () => {
+    const token = { id: 1, key: "plain-secret", status: 1, name: "Plain" }
+    const resolveApiTokenKey = vi.fn().mockResolvedValue("plain-secret")
+    vi.mocked(getApiService).mockReturnValue({ resolveApiTokenKey } as any)
+
+    const result = await resolveDisplayAccountTokenForSecret(
+      { ...ACCOUNT, siteType: "sub2api" } as any,
+      token as any,
+    )
+
+    expect(result).toBe(token)
   })
 
   it("only allows token management for enabled accounts with complete auth context", () => {

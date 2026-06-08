@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import eslint from "@eslint/js"
 import eslintConfigPrettier from "eslint-config-prettier/flat"
 import importPlugin from "eslint-plugin-import"
@@ -7,7 +8,34 @@ import { defineConfig } from "eslint/config"
 import globals from "globals"
 import tseslint from "typescript-eslint"
 
-import autoImports from "./.wxt/eslint-auto-imports.mjs"
+const autoImportsConfigUrl = new URL(
+  "./.wxt/eslint-auto-imports.mjs",
+  import.meta.url,
+)
+const wxtTsconfigUrl = new URL("./.wxt/tsconfig.json", import.meta.url)
+const wxtPrepared = existsSync(wxtTsconfigUrl)
+const autoImports = existsSync(autoImportsConfigUrl)
+  ? (await import(autoImportsConfigUrl.href)).default
+  : {
+      name: "wxt/auto-imports-unavailable",
+      languageOptions: {
+        globals: {},
+        sourceType: "module",
+      },
+    }
+const typescriptParserOptions = wxtPrepared
+  ? {
+      projectService: true,
+      tsconfigRootDir: import.meta.dirname,
+    }
+  : {
+      tsconfigRootDir: import.meta.dirname,
+    }
+const typescriptResolverOptions = {
+  alwaysTryTypes: true,
+  bun: true,
+  project: wxtPrepared ? "tsconfig.json" : "tsconfig.eslint.json",
+}
 
 const rules = {
   "@typescript-eslint/no-explicit-any": "off",
@@ -27,6 +55,9 @@ const globalsConfig = {
   ...globals.browser,
 }
 
+const jsFamilyFilePattern = "**/*.{js,cjs,mjs,jsx,ts,tsx}"
+const srcJsFamilyFilePattern = "src/**/*.{js,cjs,mjs,jsx,ts,tsx}"
+
 export default defineConfig([
   {
     ignores: [
@@ -37,7 +68,9 @@ export default defineConfig([
       ".output/**",
       ".wxt/**",
       "diagnostics-results/**",
-      "docs/**",
+      "docs/**/*",
+      "!docs/scripts/",
+      "!docs/scripts/**/*.mjs",
       "coverage/**",
       "playwright-report/**",
       "test-results/**",
@@ -58,11 +91,7 @@ export default defineConfig([
     languageOptions: {
       // Use TypeScript ESLint parser for TypeScript files
       parser: tseslint.parser,
-      parserOptions: {
-        // Enable project service for better TypeScript integration
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
+      parserOptions: typescriptParserOptions,
     },
 
     rules: {
@@ -78,18 +107,11 @@ export default defineConfig([
     ],
     languageOptions: {
       parser: tseslint.parser,
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
+      parserOptions: typescriptParserOptions,
     },
     settings: {
       "import/resolver": {
-        typescript: {
-          alwaysTryTypes: true, // Always try to resolve types under `<root>@types` directory even if it doesn't contain any source code, like `@types/unist`
-
-          bun: true, // Resolve Bun modules (https://github.com/import-js/eslint-import-resolver-typescript#bun)
-        },
+        typescript: typescriptResolverOptions,
       },
     },
     rules: {
@@ -113,11 +135,11 @@ export default defineConfig([
     plugins: { jsdoc },
     languageOptions: {
       parser: tseslint.parser,
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
+      parserOptions: typescriptParserOptions,
     },
+  },
+  {
+    files: [jsFamilyFilePattern],
     rules: {
       "jsdoc/require-jsdoc": "off",
       "jsdoc/require-description": "off",
@@ -126,24 +148,76 @@ export default defineConfig([
     },
   },
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: [srcJsFamilyFilePattern],
     rules: {
       "jsdoc/require-jsdoc": "warn",
-      "jsdoc/require-description": "warn",
+      "jsdoc/require-description": "error",
     },
   },
   // Guardrails: avoid direct `console.*` usage in app/runtime code (use `~/utils/core/logger`).
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: [srcJsFamilyFilePattern],
     rules: {
       "no-console": "error",
     },
   },
   // Allow `console.*` in the unified logger implementation and in tests.
   {
-    files: ["src/utils/core/logger.ts", "tests/**/*.{ts,tsx}"],
+    files: [
+      "src/utils/core/logger.{js,cjs,mjs,jsx,ts,tsx}",
+      "tests/**/*.{js,cjs,mjs,jsx,ts,tsx}",
+    ],
     rules: {
       "no-console": "off",
+    },
+  },
+  // Guardrails: keep runtime extension API access inside browser adapter modules.
+  {
+    files: [srcJsFamilyFilePattern],
+    ignores: [
+      "src/utils/browser/**/*.{js,cjs,mjs,jsx,ts,tsx}",
+      "src/utils/core/logger.{js,cjs,mjs,jsx,ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "browser",
+          message:
+            "Do not access the global WebExtension API directly in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+        {
+          name: "chrome",
+          message:
+            "Do not access the global Chrome extension API directly in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[object.name=/^(browser|chrome)$/]",
+          message:
+            "Do not access global WebExtension APIs directly in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+        {
+          selector:
+            "MemberExpression[object.type='TSAsExpression'][object.expression.name=/^(browser|chrome)$/]",
+          message:
+            "Do not access casted global WebExtension APIs directly in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+        {
+          selector:
+            "MemberExpression[object.name=/^(globalThis|window)$/][property.name=/^(browser|chrome)$/]:not(MemberExpression[object.name=/^(globalThis|window)$/][property.name=/^(browser|chrome)$/] MemberExpression)",
+          message:
+            "Do not access global WebExtension APIs through `globalThis` or `window` in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+        {
+          selector:
+            "MemberExpression[object.type='TSAsExpression'][object.expression.name=/^(globalThis|window)$/][property.name=/^(browser|chrome)$/]:not(MemberExpression[object.type='TSAsExpression'][object.expression.name=/^(globalThis|window)$/][property.name=/^(browser|chrome)$/] MemberExpression)",
+          message:
+            "Do not access casted global WebExtension APIs through `globalThis` or `window` in app code. Add a guarded wrapper in `~/utils/browser/browserApi` or another `~/utils/browser/**` adapter.",
+        },
+      ],
     },
   },
   // Guardrails: prevent non-entrypoint code from depending on options page internals.
@@ -152,7 +226,7 @@ export default defineConfig([
   // - Start as a warning while we migrate existing violations out of `entrypoints/options/pages/**`.
   // - Once the repo is clean, upgrade this to "error" so `pnpm -s lint` fails on new violations.
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: [srcJsFamilyFilePattern],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -170,9 +244,37 @@ export default defineConfig([
   },
   // Allow options entrypoint code to depend on options pages.
   {
-    files: ["src/entrypoints/options/**/*.{ts,tsx}"],
+    files: ["src/entrypoints/options/**/*.{js,cjs,mjs,jsx,ts,tsx}"],
     rules: {
       "no-restricted-imports": "off",
+    },
+  },
+  // Guardrails: AI API protocol modules must not depend on account-site apiService internals.
+  {
+    files: ["src/services/aiApi/**/*.{js,cjs,mjs,jsx,ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["~/entrypoints/options/pages/**"],
+              message:
+                "Do not import from `~/entrypoints/options/pages/**` outside the options entrypoint. Extract shared code into `~/features/`, `~/services/`, `~/utils/`, or `~/types/` instead.",
+            },
+            {
+              group: [
+                "~/services/apiService/**",
+                "../apiService/**",
+                "../../apiService/**",
+                "../../../apiService/**",
+              ],
+              message:
+                "AI API protocol modules must not depend on the account-site apiService layer. Use ~/services/apiTransport/** for shared transport code.",
+            },
+          ],
+        },
+      ],
     },
   },
   { rules },

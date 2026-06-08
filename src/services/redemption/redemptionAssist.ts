@@ -1,6 +1,8 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
-import { getAccountSiteApiRouter } from "~/constants/siteType"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import {
+  resolveAccountSiteRouteUrl,
+  SITE_ROUTE_KINDS,
+} from "~/services/accounts/utils/siteRouteResolver"
 import { userPreferences } from "~/services/preferences/userPreferences"
 import { redeemService } from "~/services/redemption/redeemService"
 import { isPossibleRedemptionCode } from "~/services/redemption/utils/redemptionCode"
@@ -8,7 +10,6 @@ import { searchAccounts } from "~/services/search/accountSearch"
 import type { DisplaySiteData } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
-import { joinUrl } from "~/utils/core/url"
 import { tryParseOrigin } from "~/utils/core/urlParsing"
 import {
   buildOriginWhitelistPattern,
@@ -16,6 +17,12 @@ import {
   isUrlAllowedByRegexList,
 } from "~/utils/core/urlWhitelist"
 import { t } from "~/utils/i18n/core"
+
+import {
+  onRedemptionAssistMessage,
+  RedemptionAssistMessageTypes,
+  type RedemptionAssistUpdateSettingsRequest,
+} from "./redemptionAssistMessaging"
 
 /**
  * Unified logger scoped to the redemption assist background service.
@@ -56,18 +63,11 @@ interface RedemptionAssistRuntimeSettings {
   }
 }
 
-/**
- * Request payload for `RuntimeActionIds.RedemptionAssistShouldPrompt` runtime messages.
- */
 export type RedemptionAssistShouldPromptRequest = {
-  action: typeof RuntimeActionIds.RedemptionAssistShouldPrompt
   url: string
   codes: string[]
 }
 
-/**
- * Response payload for `RuntimeActionIds.RedemptionAssistShouldPrompt` runtime messages.
- */
 export type RedemptionAssistShouldPromptResponse =
   | {
       success: true
@@ -76,6 +76,32 @@ export type RedemptionAssistShouldPromptResponse =
   | {
       success: false
       error?: string
+    }
+
+export type RedemptionAssistMutationResponse =
+  | { success: true }
+  | { success: false; error: string }
+
+export type RedemptionAssistAutoRedeemRequest = {
+  accountId: string
+  code: string
+}
+
+export type RedemptionAssistAutoRedeemByUrlRequest = {
+  url: string
+  code: string
+}
+
+export type RedemptionAssistRedeemResponse =
+  | {
+      success: true
+      data:
+        | Awaited<ReturnType<RedemptionAssistService["autoRedeem"]>>
+        | Awaited<ReturnType<RedemptionAssistService["autoRedeemByUrl"]>>
+    }
+  | {
+      success: false
+      error: string
     }
 
 /**
@@ -252,13 +278,18 @@ class RedemptionAssistService {
         const origin = this.getOrigin(account.baseUrl)
         if (!origin) continue
 
-        const router = getAccountSiteApiRouter(account.siteType)
         const resolvedCheckInUrl =
           account.checkIn?.customCheckIn?.url ||
-          joinUrl(origin, router.checkInPath)
+          (await resolveAccountSiteRouteUrl(
+            { baseUrl: origin, siteType: account.siteType },
+            SITE_ROUTE_KINDS.CheckIn,
+          ))
         const resolvedRedeemUrl =
           account.checkIn?.customCheckIn?.redeemUrl ||
-          joinUrl(origin, router.redeemPath)
+          (await resolveAccountSiteRouteUrl(
+            { baseUrl: origin, siteType: account.siteType },
+            SITE_ROUTE_KINDS.Redeem,
+          ))
 
         const checkInPattern = buildOriginWhitelistPattern(resolvedCheckInUrl)
         if (checkInPattern) patterns.push(checkInPattern)
@@ -477,69 +508,118 @@ class RedemptionAssistService {
 export const redemptionAssistService = new RedemptionAssistService()
 
 /**
- * Message handler for redemption assist actions.
- * Centralizes background decision logic and delegates responses to callers.
+ * Converts unexpected Redemption Assist runtime errors to the legacy failure shape.
  */
-export const handleRedemptionAssistMessage = async (
-  request: any,
-  sender: browser.runtime.MessageSender,
-  sendResponse: (response: any) => void,
-) => {
+function toRedemptionAssistFailure(error: unknown) {
+  logger.error("Message handling failed", error)
+  return { success: false as const, error: getErrorMessage(error) }
+}
+
+/**
+ * Applies runtime preference updates received from typed Redemption Assist messages.
+ */
+export async function updateRedemptionAssistRuntimeSettings(
+  request: RedemptionAssistUpdateSettingsRequest,
+): Promise<RedemptionAssistMutationResponse> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.RedemptionAssistUpdateSettings: {
-        redemptionAssistService.updateRuntimeSettings(request.settings || {})
-        sendResponse({ success: true })
-        break
-      }
+    redemptionAssistService.updateRuntimeSettings(request.settings || {})
+    return { success: true }
+  } catch (error) {
+    return toRedemptionAssistFailure(error)
+  }
+}
 
-      case RuntimeActionIds.RedemptionAssistShouldPrompt: {
-        const { url, codes } = request
-        if (!url || !Array.isArray(codes) || codes.length === 0) {
-          sendResponse({ success: false, error: "Missing url or codes" })
-          break
-        }
-        const promptableCodes =
-          await redemptionAssistService.filterPromptableCodes({
-            url,
-            codes,
-            tabId: sender.tab?.id,
-          })
-        const response: RedemptionAssistShouldPromptResponse = {
-          success: true,
-          promptableCodes,
-        }
-        sendResponse(response)
-        break
-      }
-
-      case RuntimeActionIds.RedemptionAssistAutoRedeem: {
-        const { accountId, code } = request
-        if (!accountId || !code) {
-          sendResponse({ success: false, error: "Missing accountId or code" })
-          break
-        }
-        const result = await redemptionAssistService.autoRedeem(accountId, code)
-        sendResponse({ success: true, data: result })
-        break
-      }
-
-      case RuntimeActionIds.RedemptionAssistAutoRedeemByUrl: {
-        const { url, code } = request
-        if (!url || !code) {
-          sendResponse({ success: false, error: "Missing url or code" })
-          break
-        }
-        const result = await redemptionAssistService.autoRedeemByUrl(url, code)
-        sendResponse({ success: true, data: result })
-        break
-      }
-
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
+/**
+ * Resolves which detected redemption codes should prompt in the current tab.
+ */
+export async function resolveRedemptionAssistShouldPromptMessage(
+  request: RedemptionAssistShouldPromptRequest,
+  sender?: browser.runtime.MessageSender,
+): Promise<RedemptionAssistShouldPromptResponse> {
+  try {
+    const { url, codes } = request
+    if (!url || !Array.isArray(codes) || codes.length === 0) {
+      return { success: false, error: "Missing url or codes" }
+    }
+    const promptableCodes = await redemptionAssistService.filterPromptableCodes(
+      {
+        url,
+        codes,
+        tabId: sender?.tab?.id,
+      },
+    )
+    return {
+      success: true,
+      promptableCodes,
     }
   } catch (error) {
-    logger.error("Message handling failed", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+    return toRedemptionAssistFailure(error)
   }
+}
+
+/**
+ * Redeems a code against a specific saved account from a typed runtime request.
+ */
+export async function resolveRedemptionAssistAutoRedeemMessage(
+  request: RedemptionAssistAutoRedeemRequest,
+): Promise<RedemptionAssistRedeemResponse> {
+  try {
+    const { accountId, code } = request
+    if (!accountId || !code) {
+      return { success: false, error: "Missing accountId or code" }
+    }
+    const result = await redemptionAssistService.autoRedeem(accountId, code)
+    return { success: true, data: result }
+  } catch (error) {
+    return toRedemptionAssistFailure(error)
+  }
+}
+
+/**
+ * Resolves the matching account from a URL and redeems the supplied code.
+ */
+export async function resolveRedemptionAssistAutoRedeemByUrlMessage(
+  request: RedemptionAssistAutoRedeemByUrlRequest,
+): Promise<RedemptionAssistRedeemResponse> {
+  try {
+    const { url, code } = request
+    if (!url || !code) {
+      return { success: false, error: "Missing url or code" }
+    }
+    const result = await redemptionAssistService.autoRedeemByUrl(url, code)
+    return { success: true, data: result }
+  } catch (error) {
+    return toRedemptionAssistFailure(error)
+  }
+}
+
+let redemptionAssistMessagingCleanup: Array<() => void> | null = null
+
+/**
+ * Register typed background listeners for Redemption Assist runtime RPCs.
+ */
+export function setupRedemptionAssistMessagingListeners() {
+  if (redemptionAssistMessagingCleanup) {
+    return
+  }
+
+  redemptionAssistMessagingCleanup = [
+    onRedemptionAssistMessage(
+      RedemptionAssistMessageTypes.UpdateSettings,
+      async ({ data }) => updateRedemptionAssistRuntimeSettings(data),
+    ),
+    onRedemptionAssistMessage(
+      RedemptionAssistMessageTypes.ShouldPrompt,
+      async ({ data, sender }) =>
+        resolveRedemptionAssistShouldPromptMessage(data, sender),
+    ),
+    onRedemptionAssistMessage(
+      RedemptionAssistMessageTypes.AutoRedeem,
+      async ({ data }) => resolveRedemptionAssistAutoRedeemMessage(data),
+    ),
+    onRedemptionAssistMessage(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      async ({ data }) => resolveRedemptionAssistAutoRedeemByUrlMessage(data),
+    ),
+  ]
 }

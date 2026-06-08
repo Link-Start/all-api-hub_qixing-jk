@@ -3,16 +3,20 @@ import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
 
 import { DestructiveConfirmDialog } from "~/components/ui"
+import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { DisplaySiteData } from "~/types"
-import { createLogger } from "~/utils/core/logger"
 
 import { AccountInfo } from "./AccountInfo"
-
-/**
- * Logger scoped to account deletion flows so unexpected failures can be inspected without leaking secrets.
- */
-const logger = createLogger("DelAccountDialog")
 
 interface DelAccountDialogProps {
   isOpen: boolean
@@ -36,9 +40,18 @@ export default function DelAccountDialog({
   const handleDelete = async () => {
     if (!account) return
 
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+
     setIsDeleting(true)
+    const deletePromise = accountStorage.deleteAccount(account.id)
     try {
-      await toast.promise(accountStorage.deleteAccount(account.id), {
+      await toast.promise(deletePromise, {
         loading: t("ui:dialog.delete.deleting", { name: account.name }),
         success: (isSuccess) => {
           if (!isSuccess) {
@@ -53,12 +66,18 @@ export default function DelAccountDialog({
             error: err.message || t("messages:errors.unknown"),
           }),
       })
-    } catch (error) {
+      const isDeleted = await deletePromise
+      if (isDeleted) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
+      } else {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        })
+      }
+    } catch (_error) {
       // toast.promise already handles showing the error toast
-      logger.error("Failed to delete account", {
-        error,
-        accountId: account.id,
-        accountName: account.name,
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
       })
     } finally {
       setIsDeleting(false)
@@ -86,6 +105,7 @@ export default function DelAccountDialog({
         void handleDelete()
       }}
       isWorking={isDeleting}
+      confirmButtonTestId={ACCOUNT_MANAGEMENT_TEST_IDS.deleteConfirmButton}
       details={account ? <AccountInfo account={account} /> : null}
     />
   )

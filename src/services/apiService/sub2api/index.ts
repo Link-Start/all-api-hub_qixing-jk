@@ -4,6 +4,10 @@
  * Sub2API differs from One-API/New-API backends in that authenticated endpoints
  * live under `/api/v1/*` and require a dashboard JWT.
  */
+import {
+  AccountUpdateUserTimestampMode,
+  type AccountUpdateUserTimestampMode as AccountUpdateUserTimestampModeValue,
+} from "~/services/accounts/accountDefaults"
 import { determineHealthStatus } from "~/services/apiService/common"
 import { API_ERROR_CODES, ApiError } from "~/services/apiService/common/errors"
 import type {
@@ -142,7 +146,11 @@ type RefreshedSub2ApiRequest<
 
 type Sub2ApiAccountStorageRef = {
   getAccountById: (id: string) => Promise<any>
-  updateAccount: (id: string, updates: Record<string, any>) => Promise<boolean>
+  updateAccount: (
+    id: string,
+    updates: Record<string, any>,
+    options: { userTimestampMode: AccountUpdateUserTimestampModeValue },
+  ) => Promise<boolean>
 } | null
 
 type HydratedSub2ApiAuth<
@@ -244,7 +252,9 @@ const persistSub2ApiAuthUpdate = async (
       }
     }
 
-    const updated = await storage.updateAccount(request.accountId, updates)
+    const updated = await storage.updateAccount(request.accountId, updates, {
+      userTimestampMode: AccountUpdateUserTimestampMode.Preserve,
+    })
     if (!updated) {
       logger.warn("Failed to persist Sub2API auth update after key request", {
         accountId: request.accountId,
@@ -716,7 +726,7 @@ const createRefreshSuccessResult = (
   healthStatus: createHealthyHealthStatus(),
   authUpdate: {
     ...authUpdate,
-    userId: currentUser.userId,
+    userId: String(currentUser.userId),
     username: currentUser.username,
   },
 })

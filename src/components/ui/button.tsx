@@ -1,9 +1,11 @@
-import { Slot, Slottable } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
+import { Slot } from "radix-ui"
 import * as React from "react"
 
 import { Spinner } from "~/components/ui/spinner"
+import { useProductAnalyticsActionTracking } from "~/hooks/useProductAnalyticsActionTracking"
 import { cn } from "~/lib/utils"
+import type { ProductAnalyticsScopedActionConfig } from "~/services/productAnalytics/actionConfig"
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
@@ -63,6 +65,9 @@ function Button({
   rightIcon,
   children,
   spinnerProps,
+  analyticsAction,
+  onClick,
+  disabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
@@ -72,8 +77,14 @@ function Button({
     leftIcon?: React.ReactNode
     rightIcon?: React.ReactNode
     spinnerProps?: React.ComponentProps<typeof Spinner>
+    analyticsAction?: ProductAnalyticsScopedActionConfig
   }) {
-  const Comp = asChild ? Slot : "button"
+  const Comp = asChild ? Slot.Root : "button"
+  const analytics = useProductAnalyticsActionTracking({
+    analyticsAction,
+    disabled: Boolean(disabled || loading),
+  })
+  const trackingProps = analytics.getActionTrackingProps()
 
   const {
     size: spinnerSizeProp,
@@ -91,15 +102,26 @@ function Button({
   ) : (
     leftIcon
   )
+  const handleClick: React.MouseEventHandler<HTMLButtonElement> = (event) => {
+    onClick?.(event)
+
+    if (event.defaultPrevented || disabled || loading || !analyticsAction) {
+      return
+    }
+
+    trackingProps.onClick(event)
+  }
 
   return (
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, bleed, className }))}
+      disabled={disabled}
+      onClick={handleClick}
       {...props}
     >
       {resolvedLeftIcon && <span>{resolvedLeftIcon}</span>}
-      <Slottable>{children}</Slottable>
+      <Slot.Slottable>{children}</Slot.Slottable>
       {rightIcon && <span>{rightIcon}</span>}
     </Comp>
   )

@@ -1,10 +1,19 @@
 import { act, fireEvent, within } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { SETTINGS_ANCHORS } from "~/constants/settingsAnchors"
 import TaskNotificationSettings from "~/features/BasicSettings/components/tabs/Notifications/TaskNotificationSettings"
+import { TaskNotificationMessageTypes } from "~/services/notifications/messaging"
 import { OPTIONAL_PERMISSION_IDS } from "~/services/permissions/permissionManager"
+import {
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_EVENTS,
+  PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS,
+  PRODUCT_ANALYTICS_PERMISSION_IDS,
+  PRODUCT_ANALYTICS_PERMISSION_OPERATIONS,
+  PRODUCT_ANALYTICS_PERMISSION_OUTCOMES,
+  PRODUCT_ANALYTICS_RESULTS,
+} from "~/services/productAnalytics/events"
 import { DEFAULT_SITE_ANNOUNCEMENT_PREFERENCES } from "~/types/siteAnnouncements"
 import {
   DEFAULT_TASK_NOTIFICATION_PREFERENCES,
@@ -23,22 +32,24 @@ import { render, screen, waitFor } from "~~/tests/test-utils/render"
 const {
   hasPermissionMock,
   onOptionalPermissionsChangedMock,
-  requestPermissionMock,
-  sendRuntimeMessageMock,
+  requestPermissionDetailedMock,
+  sendTaskNotificationMessageMock,
   showResultToastMock,
   taskNotificationsMock,
+  trackProductAnalyticsEventMock,
   showUpdateToastMock,
   updateSiteAnnouncementNotificationsMock,
   updateTaskNotificationsMock,
 } = vi.hoisted(() => ({
   hasPermissionMock: vi.fn(),
   onOptionalPermissionsChangedMock: vi.fn(),
-  requestPermissionMock: vi.fn(),
-  sendRuntimeMessageMock: vi.fn(),
+  requestPermissionDetailedMock: vi.fn(),
+  sendTaskNotificationMessageMock: vi.fn(),
   showResultToastMock: vi.fn(),
   taskNotificationsMock: {
     current: undefined as TaskNotificationPreferences | undefined,
   },
+  trackProductAnalyticsEventMock: vi.fn(),
   showUpdateToastMock: vi.fn(),
   updateSiteAnnouncementNotificationsMock: vi.fn(),
   updateTaskNotificationsMock: vi.fn(),
@@ -61,16 +72,16 @@ vi.mock("~/services/permissions/permissionManager", () => ({
   },
   hasPermission: hasPermissionMock,
   onOptionalPermissionsChanged: onOptionalPermissionsChangedMock,
-  requestPermission: requestPermissionMock,
+  requestPermissionDetailed: requestPermissionDetailedMock,
 }))
 
-vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
+vi.mock("~/services/notifications/messaging", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("~/utils/browser/browserApi")>()
+    await importOriginal<typeof import("~/services/notifications/messaging")>()
 
   return {
     ...actual,
-    sendRuntimeMessage: sendRuntimeMessageMock,
+    sendTaskNotificationMessage: sendTaskNotificationMessageMock,
   }
 })
 
@@ -79,13 +90,22 @@ vi.mock("~/utils/core/toastHelpers", () => ({
   showUpdateToast: (...args: unknown[]) => showUpdateToastMock(...args),
 }))
 
+vi.mock("~/services/productAnalytics/events", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/events")>()
+  return {
+    ...actual,
+    trackProductAnalyticsEvent: trackProductAnalyticsEventMock,
+  }
+})
+
 describe("TaskNotificationSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     hasPermissionMock.mockResolvedValue(false)
     onOptionalPermissionsChangedMock.mockReturnValue(() => {})
-    requestPermissionMock.mockResolvedValue(true)
-    sendRuntimeMessageMock.mockResolvedValue({ success: true })
+    requestPermissionDetailedMock.mockResolvedValue({ success: true })
+    sendTaskNotificationMessageMock.mockResolvedValue({ success: true })
     taskNotificationsMock.current = structuredClone(
       DEFAULT_TASK_NOTIFICATION_PREFERENCES,
     )
@@ -115,7 +135,7 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(requestPermissionMock).toHaveBeenCalledWith(
+      expect(requestPermissionDetailedMock).toHaveBeenCalledWith(
         OPTIONAL_PERMISSION_IDS.Notifications,
       )
     })
@@ -124,6 +144,160 @@ describe("TaskNotificationSettings", () => {
       true,
       "settings:taskNotifications.permission.requestSuccess",
       "settings:taskNotifications.permission.requestFailed",
+    )
+    expect(trackProductAnalyticsEventMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_EVENTS.PermissionResult,
+      {
+        permission_id: PRODUCT_ANALYTICS_PERMISSION_IDS.Notifications,
+        result: PRODUCT_ANALYTICS_RESULTS.Success,
+        operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Request,
+        outcome: PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.Granted,
+        was_granted_before: false,
+        was_granted_after: true,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      },
+    )
+  })
+
+  it("uses container-width responsive layout for notification row actions", async () => {
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    const permissionRequestButton = await screen.findByRole("button", {
+      name: "settings:taskNotifications.permission.request",
+    })
+    const actionBar = permissionRequestButton.parentElement?.parentElement
+    const rowHeader = actionBar?.parentElement
+
+    expect(rowHeader).toHaveClass(
+      "flex-col",
+      "[@container(min-width:42rem)]:flex-row",
+      "[@container(min-width:42rem)]:items-center",
+      "[@container(min-width:42rem)]:justify-between",
+    )
+    expect(actionBar).toHaveClass(
+      "w-full",
+      "flex-wrap",
+      "[@container(min-width:42rem)]:w-auto",
+      "[@container(min-width:42rem)]:shrink-0",
+    )
+  })
+
+  it("tracks denied notification permission requests as failures", async () => {
+    requestPermissionDetailedMock.mockResolvedValueOnce({ success: false })
+
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "settings:taskNotifications.permission.request",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(showResultToastMock).toHaveBeenCalledWith(
+        false,
+        "settings:taskNotifications.permission.requestSuccess",
+        "settings:taskNotifications.permission.requestFailed",
+      )
+    })
+    expect(trackProductAnalyticsEventMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_EVENTS.PermissionResult,
+      {
+        permission_id: PRODUCT_ANALYTICS_PERMISSION_IDS.Notifications,
+        result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Request,
+        outcome: PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.Denied,
+        failure_reason: PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.UserDenied,
+        was_granted_before: false,
+        was_granted_after: false,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      },
+    )
+  })
+
+  it("tracks notification permission API exceptions as request failures", async () => {
+    requestPermissionDetailedMock.mockResolvedValueOnce({
+      success: false,
+      failureReason: "api_exception",
+    })
+
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "settings:taskNotifications.permission.request",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(showResultToastMock).toHaveBeenCalledWith(
+        false,
+        "settings:taskNotifications.permission.requestSuccess",
+        "settings:taskNotifications.permission.requestFailed",
+      )
+    })
+    expect(trackProductAnalyticsEventMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_EVENTS.PermissionResult,
+      {
+        permission_id: PRODUCT_ANALYTICS_PERMISSION_IDS.Notifications,
+        result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Request,
+        outcome: PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.ApiError,
+        failure_reason:
+          PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.ApiException,
+        was_granted_before: false,
+        was_granted_after: false,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      },
+    )
+  })
+
+  it("handles rejected notification permission requests without rethrowing", async () => {
+    requestPermissionDetailedMock.mockRejectedValueOnce(
+      new Error("permission request rejected"),
+    )
+
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "settings:taskNotifications.permission.request",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(showResultToastMock).toHaveBeenCalledWith(
+        false,
+        "settings:taskNotifications.permission.requestSuccess",
+        "settings:taskNotifications.permission.requestFailed",
+      )
+    })
+    expect(hasPermissionMock).toHaveBeenCalledTimes(2)
+    expect(trackProductAnalyticsEventMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_EVENTS.PermissionResult,
+      {
+        permission_id: PRODUCT_ANALYTICS_PERMISSION_IDS.Notifications,
+        result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Request,
+        outcome: PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.ApiError,
+        failure_reason:
+          PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.ApiException,
+        was_granted_before: false,
+        was_granted_after: false,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      },
     )
   })
 
@@ -157,7 +331,7 @@ describe("TaskNotificationSettings", () => {
 
   it("sends a browser test notification and reports runtime failures", async () => {
     hasPermissionMock.mockResolvedValue(true)
-    sendRuntimeMessageMock
+    sendTaskNotificationMessageMock
       .mockResolvedValueOnce({ success: true })
       .mockRejectedValueOnce(new Error("runtime failed"))
 
@@ -180,10 +354,10 @@ describe("TaskNotificationSettings", () => {
     fireEvent.click(testButton)
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Browser,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Browser },
+      )
     })
 
     expect(showResultToastMock).toHaveBeenCalledWith({
@@ -199,6 +373,41 @@ describe("TaskNotificationSettings", () => {
       expect(showResultToastMock).toHaveBeenCalledWith({
         success: false,
         message: "runtime failed",
+        errorFallback: "settings:taskNotifications.test.failed",
+      })
+    })
+  })
+
+  it("surfaces resolved browser test notification failures", async () => {
+    hasPermissionMock.mockResolvedValue(true)
+    sendTaskNotificationMessageMock.mockResolvedValueOnce({
+      success: false,
+      error: "delivery failed",
+    })
+
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    await screen.findByText("settings:taskNotifications.channels.browser.title")
+    const browserChannel = document.getElementById(
+      SETTINGS_ANCHORS.TASK_NOTIFICATIONS_CHANNEL_BROWSER,
+    )
+    if (!browserChannel) {
+      throw new Error("Expected browser channel settings row")
+    }
+    const testButton = within(browserChannel).getByRole("button", {
+      name: "settings:taskNotifications.test.action",
+    })
+
+    fireEvent.click(testButton)
+
+    await waitFor(() => {
+      expect(showResultToastMock).toHaveBeenCalledWith({
+        success: false,
+        message: "delivery failed",
+        successFallback: "settings:taskNotifications.test.sent",
         errorFallback: "settings:taskNotifications.test.failed",
       })
     })
@@ -296,10 +505,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Telegram,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Telegram },
+      )
     })
 
     const webhookKeyInput = within(feishuChannel).getByLabelText(
@@ -326,10 +535,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Feishu,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Feishu },
+      )
     })
 
     const dingtalkWebhookKeyInput = within(dingtalkChannel).getByLabelText(
@@ -360,10 +569,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Dingtalk,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Dingtalk },
+      )
     })
 
     const wecomWebhookKeyInput = within(wecomChannel).getByLabelText(
@@ -390,10 +599,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Wecom,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Wecom },
+      )
     })
 
     const ntfyAccessTokenInput = within(ntfyChannel).getByLabelText(
@@ -420,10 +629,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Ntfy,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Ntfy },
+      )
     })
 
     fireEvent.click(
@@ -433,10 +642,10 @@ describe("TaskNotificationSettings", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Webhook,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Webhook },
+      )
     })
 
     expect(
@@ -444,6 +653,45 @@ describe("TaskNotificationSettings", () => {
         "settings:taskNotifications.channels.webhook.urlDescription",
       ),
     ).toBeInTheDocument()
+  })
+
+  it("keeps multi-field channel docs links inline while spacing helper copy from inputs", async () => {
+    hasPermissionMock.mockResolvedValue(true)
+
+    render(<TaskNotificationSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    const dingtalkChannel = document.getElementById(
+      SETTINGS_ANCHORS.TASK_NOTIFICATIONS_CHANNEL_DINGTALK,
+    )
+    const ntfyChannel = document.getElementById(
+      SETTINGS_ANCHORS.TASK_NOTIFICATIONS_CHANNEL_NTFY,
+    )
+    if (!dingtalkChannel || !ntfyChannel) {
+      throw new Error("Expected multi-field channel settings rows")
+    }
+
+    const dingtalkDocsLink = await within(dingtalkChannel).findByRole("link", {
+      name: "settings:taskNotifications.channels.dingtalk.docsLink",
+    })
+    const dingtalkHelperCopy = within(dingtalkChannel).getByText(
+      /settings:taskNotifications\.channels\.dingtalk\.webhookKeyDescription/,
+    )
+    const ntfyDocsLink = await within(ntfyChannel).findByRole("link", {
+      name: "settings:taskNotifications.channels.ntfy.docsLink",
+    })
+    const ntfyHelperCopy = within(ntfyChannel).getByText(
+      /settings:taskNotifications\.channels\.ntfy\.topicUrlDescription/,
+    )
+
+    expect(dingtalkHelperCopy.parentElement).toHaveClass("space-y-3")
+    expect(dingtalkHelperCopy).toHaveClass("leading-relaxed")
+    expect(dingtalkDocsLink.parentElement).toBe(dingtalkHelperCopy)
+    expect(ntfyHelperCopy.parentElement).toHaveClass("space-y-3")
+    expect(ntfyHelperCopy).toHaveClass("leading-relaxed")
+    expect(ntfyDocsLink.parentElement).toBe(ntfyHelperCopy)
   })
 
   it("updates channel switches and saves trimmed third-party channel drafts", async () => {
@@ -801,15 +1049,15 @@ describe("TaskNotificationSettings", () => {
           }),
         }),
       })
-      expect(sendRuntimeMessageMock).toHaveBeenCalledWith({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel: TASK_NOTIFICATION_CHANNELS.Webhook,
-      })
+      expect(sendTaskNotificationMessageMock).toHaveBeenCalledWith(
+        TaskNotificationMessageTypes.Test,
+        { channel: TASK_NOTIFICATION_CHANNELS.Webhook },
+      )
     })
 
     expect(
       updateTaskNotificationsMock.mock.invocationCallOrder[0],
-    ).toBeLessThan(sendRuntimeMessageMock.mock.invocationCallOrder[0])
+    ).toBeLessThan(sendTaskNotificationMessageMock.mock.invocationCallOrder[0])
   })
 
   it("does not send a webhook test notification when saving the draft fails", async () => {
@@ -869,7 +1117,7 @@ describe("TaskNotificationSettings", () => {
       })
     })
 
-    expect(sendRuntimeMessageMock).not.toHaveBeenCalled()
+    expect(sendTaskNotificationMessageMock).not.toHaveBeenCalled()
   })
 
   it("does not save unchanged third-party channel drafts", async () => {

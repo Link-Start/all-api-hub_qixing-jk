@@ -317,6 +317,7 @@
     "community": "社区交流群",
     "discussion": "参与讨论",
     "featureRequest": "提出功能建议",
+    "siteSupportRequest": "反馈未适配站点",
     "trigger": "反馈",
     "triggerTooltip": "打开反馈快捷入口"
   },
@@ -353,13 +354,21 @@
   "navigation": {
     "about": "关于",
     "account": "账户管理",
-    "apiCredentialProfiles": "API 凭证",
+    "apiCredentialProfiles": "API 凭据库",
     "autoCheckin": "自动签到",
     "autoCheckinRunNow": "快速签到",
     "balanceHistory": "余额历史",
     "basic": "基础设置",
     "bookmark": "书签管理",
-    "collapseSidebar": "折叠侧边栏",
+    "categories": {
+      "api": "接口",
+      "automation": "自动化",
+      "general": "常规",
+      "insights": "洞察",
+      "siteManagement": "站点管理",
+      "system": "系统"
+    },
+    "collapseSidebar": "收起侧边栏",
     "expandSidebar": "展开侧边栏",
     "externalCheckinAll": "一键打开外部签到",
     "externalCheckinAllHint": "默认仅打开未签到；Ctrl/Cmd 打开全部；Shift 在新窗口打开；Ctrl/Cmd+Shift 同时生效。",
@@ -369,6 +378,7 @@
     "managedSiteModelSync": "模型同步",
     "meshGradientLab": "网格渐变实验室 (Dev)",
     "models": "模型列表",
+    "overview": "总览",
     "settings": "设置",
     "settingsOptions": "设置选项",
     "sidebarCollapsedHint": "侧边栏已折叠，仅显示图标",
@@ -385,6 +395,7 @@
       "control": "设置项",
       "page": "页面",
       "recent": "最近访问",
+      "section": "设置分区",
       "tab": "设置标签"
     },
     "idleDescription": "输入设置名称、关键词或技术别名后开始搜索。",

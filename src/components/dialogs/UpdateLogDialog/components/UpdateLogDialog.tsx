@@ -8,6 +8,8 @@ import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import { getDocsChangelogUrl } from "~/utils/navigation/docsLinks"
 
+import { UPDATE_LOG_DIALOG_TEST_IDS } from "../testIds"
+
 export interface UpdateLogDialogProps {
   isOpen: boolean
   onClose: () => void
@@ -99,11 +101,11 @@ export function UpdateLogDialog({
 
   const footer = (
     <div
-      data-testid="update-log-dialog-footer"
+      data-testid={UPDATE_LOG_DIALOG_TEST_IDS.footer}
       className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
     >
       <Button
-        data-testid="update-log-dialog-auto-open-toggle"
+        data-testid={UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle}
         variant="outline"
         disabled={isSavingAutoOpen}
         onClick={() => void handleSetAutoOpenEnabled(!autoOpenEnabled)}
@@ -116,11 +118,11 @@ export function UpdateLogDialog({
       </Button>
 
       <div
-        data-testid="update-log-dialog-footer-actions"
+        data-testid={UPDATE_LOG_DIALOG_TEST_IDS.footerActions}
         className="flex flex-col gap-3 sm:flex-row sm:justify-end"
       >
         <Button
-          data-testid="update-log-dialog-close"
+          data-testid={UPDATE_LOG_DIALOG_TEST_IDS.closeButton}
           variant="outline"
           onClick={onClose}
           type="button"
@@ -129,7 +131,7 @@ export function UpdateLogDialog({
           {t("common:actions.close")}
         </Button>
         <Button
-          data-testid="update-log-dialog-open-full-changelog"
+          data-testid={UPDATE_LOG_DIALOG_TEST_IDS.openFullChangelogButton}
           onClick={() => void handleOpenFullChangelog()}
           type="button"
           className="h-auto min-h-9 w-full py-2 text-center whitespace-normal sm:w-auto sm:whitespace-nowrap"
@@ -149,7 +151,7 @@ export function UpdateLogDialog({
       size="lg"
       panelClassName="max-h-[95vh] max-w-5xl"
     >
-      <div data-testid="update-log-dialog" className="space-y-3">
+      <div data-testid={UPDATE_LOG_DIALOG_TEST_IDS.root} className="space-y-3">
         <div className="dark:border-dark-bg-tertiary overflow-hidden rounded-lg border border-gray-200">
           <div className="relative">
             {iframeStatus === "loading" && (

@@ -5,6 +5,12 @@ import { AppLayout } from "~/components/AppLayout"
 import { Spinner } from "~/components/ui"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
+import { useProductAnalyticsPageView } from "~/hooks/useProductAnalyticsPageView"
+import {
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_PAGE_IDS,
+  type ProductAnalyticsPageId,
+} from "~/services/productAnalytics/events"
 
 import Header from "./components/Header"
 import Sidebar from "./components/Sidebar"
@@ -15,11 +21,49 @@ import { hasOptionalPermissions } from "./search/basicSettingsMeta"
 import { OptionsSearchDialog } from "./search/OptionsSearchDialog"
 import { useOptionsSearchContext } from "./search/useOptionsSearch"
 import { useSearchHotkeys } from "./search/useSearchHotkeys"
+import { OPTIONS_TEST_IDS } from "./testIds"
 
 /**
- * Main Options page shell: renders header, sidebar, and routed content panes.
- * Handles hash navigation, mobile sidebar toggles, and collapse state.
+ * Maps options navigation state to the fixed analytics page id enum.
  */
+function mapOptionsMenuItemToAnalyticsPageId(
+  menuItem: string,
+): ProductAnalyticsPageId {
+  switch (menuItem) {
+    case MENU_ITEM_IDS.OVERVIEW:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsOverview
+    case MENU_ITEM_IDS.ACCOUNT:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsAccountManagement
+    case MENU_ITEM_IDS.BOOKMARK:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsBookmarkManagement
+    case MENU_ITEM_IDS.KEYS:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsKeyManagement
+    case MENU_ITEM_IDS.MANAGED_SITE_CHANNELS:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsManagedSiteChannels
+    case MENU_ITEM_IDS.MODELS:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsModelList
+    case MENU_ITEM_IDS.USAGE_ANALYTICS:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsUsageAnalytics
+    case MENU_ITEM_IDS.BALANCE_HISTORY:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsBalanceHistory
+    case MENU_ITEM_IDS.API_CREDENTIAL_PROFILES:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsApiCredentialProfiles
+    case MENU_ITEM_IDS.SITE_ANNOUNCEMENTS:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsSiteAnnouncements
+    case MENU_ITEM_IDS.IMPORT_EXPORT:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsImportExport
+    case MENU_ITEM_IDS.AUTO_CHECKIN:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsAutoCheckin
+    case MENU_ITEM_IDS.MANAGED_SITE_MODEL_SYNC:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsManagedSiteModelSync
+    case MENU_ITEM_IDS.ABOUT:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsAbout
+    case MENU_ITEM_IDS.BASIC:
+    default:
+      return PRODUCT_ANALYTICS_PAGE_IDS.OptionsBasicSettings
+  }
+}
+
 /**
  * Localized fallback used while a lazily loaded options page chunk is being fetched.
  */
@@ -35,6 +79,7 @@ function OptionsPageContentFallback() {
 
 /**
  * Options page shell with a local Suspense boundary for route-level lazy chunks.
+ * Handles hash navigation, mobile sidebar toggles, and collapse state.
  */
 function OptionsPage() {
   const { activeMenuItem, routeParams, handleMenuItemChange, refreshKey } =
@@ -45,6 +90,11 @@ function OptionsPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isSearchOpen, setIsSearchOpen] = useState(false)
 
+  useProductAnalyticsPageView({
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    pageId: mapOptionsMenuItemToAnalyticsPageId(activeMenuItem),
+  })
+
   // 获取当前活动的组件
   const ActiveComponent =
     menuItems.find((item) => item.id === activeMenuItem)?.component ||
@@ -54,7 +104,9 @@ function OptionsPage() {
     autoCheckinEnabled: Boolean(preferences?.autoCheckin?.globalEnabled),
     hasOptionalPermissions,
     managedSiteType,
+    modelRedirectEnabled: Boolean(preferences?.modelRedirect?.enabled),
     showTodayCashflow,
+    webdavAutoSyncEnabled: Boolean(preferences?.webdav?.autoSync),
   })
 
   useSearchHotkeys({
@@ -62,7 +114,7 @@ function OptionsPage() {
   })
 
   const handleTitleClick = () => {
-    handleMenuItemChange(MENU_ITEM_IDS.BASIC)
+    handleMenuItemChange(MENU_ITEM_IDS.OVERVIEW)
   }
 
   const handleMenuItemClick = (itemId: string) => {
@@ -73,7 +125,7 @@ function OptionsPage() {
   return (
     <div
       className="dark:bg-dark-bg-primary flex min-h-screen flex-col bg-gray-50"
-      data-testid="options-app"
+      data-testid={OPTIONS_TEST_IDS.app}
     >
       <Header
         onSearchOpen={() => setIsSearchOpen(true)}

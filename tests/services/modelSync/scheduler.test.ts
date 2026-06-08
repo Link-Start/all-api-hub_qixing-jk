@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { SITE_TYPES } from "~/constants/siteType"
 import { getManagedSiteServiceForType } from "~/services/managedSites/managedSiteService"
-import * as managedSiteUtils from "~/services/managedSites/utils/managedSite"
+import { ModelSyncService } from "~/services/models/modelSync/modelSyncService"
 import {
-  handleManagedSiteModelSyncMessage,
+  getModelSyncNextRun,
   modelSyncScheduler,
 } from "~/services/models/modelSync/scheduler"
 import {
@@ -19,8 +18,20 @@ import {
   hasAlarmsAPI,
 } from "~/utils/browser/browserApi"
 
+const { modelSyncListChannelsMock, modelSyncServiceConstructorMock } =
+  vi.hoisted(() => ({
+    modelSyncListChannelsMock: vi.fn(),
+    modelSyncServiceConstructorMock: vi.fn(),
+  }))
+
 vi.mock("~/services/preferences/userPreferences", () => ({
   DEFAULT_PREFERENCES: {
+    managedSiteType: "new-api",
+    newApi: {
+      baseUrl: "",
+      adminToken: "",
+      userId: "",
+    },
     managedSiteModelSync: {
       enabled: true,
       interval: 60_000,
@@ -54,6 +65,21 @@ vi.mock("~/services/managedSites/managedSiteService", () => ({
   getManagedSiteServiceForType: vi.fn(),
 }))
 
+vi.mock("~/services/models/modelSync/modelSyncService", () => ({
+  ModelSyncService: vi.fn(function (this: unknown, ...args: unknown[]) {
+    modelSyncServiceConstructorMock(...args)
+    return {
+      listChannels: modelSyncListChannelsMock,
+    }
+  }),
+}))
+
+vi.mock("~/services/managedSites/channelConfigStorage", () => ({
+  channelConfigStorage: {
+    getAllConfigs: vi.fn().mockResolvedValue({}),
+  },
+}))
+
 const mockedUserPreferences = userPreferences as unknown as {
   getPreferences: ReturnType<typeof vi.fn>
 }
@@ -67,6 +93,10 @@ const mockedBrowserApi = {
 
 const mockedGetManagedSiteServiceForType =
   getManagedSiteServiceForType as unknown as ReturnType<typeof vi.fn>
+
+const mockedModelSyncService = ModelSyncService as unknown as ReturnType<
+  typeof vi.fn
+>
 
 describe("modelSyncScheduler.setupAlarm", () => {
   beforeEach(() => {
@@ -133,10 +163,15 @@ describe("modelSyncScheduler.setupAlarm", () => {
   })
 })
 
-describe("handleManagedSiteModelSyncMessage", () => {
+describe("model sync operation helpers", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedBrowserApi.hasAlarmsAPI.mockReturnValue(true)
+    modelSyncListChannelsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      type_counts: {},
+    })
   })
 
   it("returns next scheduled time from the alarm", async () => {
@@ -147,13 +182,7 @@ describe("handleManagedSiteModelSyncMessage", () => {
       periodInMinutes: 1,
     })
 
-    const sendResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetNextRun },
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(getModelSyncNextRun()).resolves.toEqual({
       success: true,
       data: {
         nextScheduledAt: new Date(scheduledTime).toISOString(),
@@ -179,6 +208,25 @@ describe("handleManagedSiteModelSyncMessage", () => {
     )
   })
 
+  it("rejects model sync for AxonHub because model fetch and writeback are not supported", async () => {
+    mockedUserPreferences.getPreferences.mockResolvedValueOnce({
+      managedSiteType: SITE_TYPES.AXON_HUB,
+      axonHub: {
+        baseUrl: "https://axon.example.com",
+        email: "admin@example.com",
+        password: "admin-password",
+      },
+      managedSiteModelSync: {
+        ...(DEFAULT_PREFERENCES as any).managedSiteModelSync,
+      },
+    })
+
+    await expect(modelSyncScheduler.executeSync()).rejects.toThrow(
+      "messages:axonhub.unsupportedModelSync",
+    )
+    expect(mockedModelSyncService).not.toHaveBeenCalled()
+  })
+
   it("throws the config-missing message when Claude Code Hub admin config is unavailable", async () => {
     mockedUserPreferences.getPreferences.mockResolvedValueOnce({
       managedSiteType: SITE_TYPES.CLAUDE_CODE_HUB,
@@ -187,15 +235,10 @@ describe("handleManagedSiteModelSyncMessage", () => {
       },
     })
 
-    const getManagedSiteAdminConfigSpy = vi
-      .spyOn(managedSiteUtils, "getManagedSiteAdminConfig")
-      .mockReturnValue(null)
-
     await expect(modelSyncScheduler.listChannels()).rejects.toThrow(
       "messages:claudecodehub.configMissing",
     )
 
-    expect(getManagedSiteAdminConfigSpy).toHaveBeenCalled()
     expect(mockedGetManagedSiteServiceForType).not.toHaveBeenCalled()
   })
 
@@ -203,7 +246,6 @@ describe("handleManagedSiteModelSyncMessage", () => {
     const managedConfig = {
       baseUrl: "https://cch.example.com",
       adminToken: "admin-token",
-      userId: "admin",
     }
     const searchChannel = vi.fn().mockResolvedValue({
       items: [{ id: 42, name: "Claude Provider" }],
@@ -222,10 +264,6 @@ describe("handleManagedSiteModelSyncMessage", () => {
       },
     })
 
-    const getManagedSiteAdminConfigSpy = vi
-      .spyOn(managedSiteUtils, "getManagedSiteAdminConfig")
-      .mockReturnValue(managedConfig)
-
     mockedGetManagedSiteServiceForType.mockReturnValue({
       searchChannel,
     })
@@ -236,23 +274,16 @@ describe("handleManagedSiteModelSyncMessage", () => {
       type_counts: { codex: 1 },
     })
 
-    expect(getManagedSiteAdminConfigSpy).toHaveBeenCalled()
     expect(mockedGetManagedSiteServiceForType).toHaveBeenCalledWith(
       SITE_TYPES.CLAUDE_CODE_HUB,
     )
-    expect(searchChannel).toHaveBeenCalledWith(
-      managedConfig.baseUrl,
-      managedConfig.adminToken,
-      managedConfig.userId,
-      "",
-    )
+    expect(searchChannel).toHaveBeenCalledWith(managedConfig, "")
   })
 
   it("returns the Claude Code Hub empty fallback when the managed-site service has no channel list", async () => {
     const managedConfig = {
       baseUrl: "https://cch.example.com",
       adminToken: "admin-token",
-      userId: "admin",
     }
     const searchChannel = vi.fn().mockResolvedValue(null)
 
@@ -267,10 +298,6 @@ describe("handleManagedSiteModelSyncMessage", () => {
       },
     })
 
-    vi.spyOn(managedSiteUtils, "getManagedSiteAdminConfig").mockReturnValue(
-      managedConfig,
-    )
-
     mockedGetManagedSiteServiceForType.mockReturnValue({
       searchChannel,
     })
@@ -281,11 +308,36 @@ describe("handleManagedSiteModelSyncMessage", () => {
       type_counts: {},
     })
 
-    expect(searchChannel).toHaveBeenCalledWith(
-      managedConfig.baseUrl,
-      managedConfig.adminToken,
-      managedConfig.userId,
-      "",
+    expect(searchChannel).toHaveBeenCalledWith(managedConfig, "")
+  })
+
+  it("constructs model sync with the current runtime config object", async () => {
+    const managedConfig = {
+      baseUrl: "https://new-api.example.com",
+      adminToken: "admin-token",
+      userId: "42",
+    }
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      managedSiteType: SITE_TYPES.NEW_API,
+      newApi: managedConfig,
+      managedSiteModelSync: {
+        ...(DEFAULT_PREFERENCES as any).managedSiteModelSync,
+      },
+    })
+
+    await modelSyncScheduler.listChannels()
+
+    expect(mockedModelSyncService).toHaveBeenCalledTimes(1)
+    expect(modelSyncServiceConstructorMock).toHaveBeenCalledWith(
+      {
+        siteType: SITE_TYPES.NEW_API,
+        config: managedConfig,
+      },
+      expect.anything(),
+      expect.any(Array),
+      {},
+      [],
     )
+    expect(modelSyncListChannelsMock).toHaveBeenCalled()
   })
 })

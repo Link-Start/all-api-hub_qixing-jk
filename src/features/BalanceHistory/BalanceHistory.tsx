@@ -11,6 +11,7 @@ import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
 
 import { EChart } from "~/components/charts/EChart"
+import { OptionsPageSettingsTitleAction } from "~/components/OptionsPageSettingsTitleAction"
 import { PageHeader } from "~/components/PageHeader"
 import {
   Alert,
@@ -31,7 +32,6 @@ import {
 } from "~/components/ui/dropdown-menu"
 import { ANIMATIONS, COLORS } from "~/constants/designTokens"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { useTheme } from "~/contexts/ThemeContext"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { accountStorage } from "~/services/accounts/accountStorage"
@@ -45,6 +45,7 @@ import {
   listDayKeysInRange,
   subtractDaysFromDayKey,
 } from "~/services/history/dailyBalanceHistory/dayKeys"
+import { sendBalanceHistoryMessage } from "~/services/history/dailyBalanceHistory/messaging"
 import {
   buildAccountRangeSummaries,
   buildPerAccountDailyBalanceMoneySeries,
@@ -52,12 +53,21 @@ import {
 } from "~/services/history/dailyBalanceHistory/selectors"
 import { dailyBalanceHistoryStorage } from "~/services/history/dailyBalanceHistory/storage"
 import { clampBalanceHistoryRetentionDays } from "~/services/history/dailyBalanceHistory/utils"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { BalanceHistoryMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import { tagStorage } from "~/services/tags/tagStorage"
 import { listTagsSorted } from "~/services/tags/tagStoreUtils"
 import type { CurrencyType, SiteAccount, TagStore } from "~/types"
 import { DEFAULT_BALANCE_HISTORY_PREFERENCES } from "~/types/dailyBalanceHistory"
 import type { DailyBalanceHistoryStore } from "~/types/dailyBalanceHistory"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
 import { assertNever } from "~/utils/core/assert"
 import { getErrorMessage } from "~/utils/core/error"
 import { getCurrencySymbol } from "~/utils/core/formatters"
@@ -74,8 +84,12 @@ import {
   buildMultiSeriesTrendOption,
   type BalanceHistoryTrendChartType,
 } from "./echartsOptions"
+import { BALANCE_HISTORY_TEST_IDS } from "./testIds"
 
 const logger = createLogger("BalanceHistoryPage")
+const optionsEntrypoint = PRODUCT_ANALYTICS_ENTRYPOINTS.Options
+const balanceHistorySurface =
+  PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBalanceHistoryPage
 
 const QUICK_RANGES = [
   { id: "7d", days: 7 },
@@ -88,19 +102,22 @@ const QUICK_RANGES = [
 type BalanceHistoryBreakdownChartType = "pie" | "bar"
 type BalanceHistoryTrendSeriesScope = "accounts" | "total"
 type BalanceHistoryQuickRangeId = (typeof QUICK_RANGES)[number]["id"]
+type BalanceHistoryVisibleMetric = DailyBalanceHistoryMetric
 
 /**
  * Returns the localized label for a supported balance-history metric.
  */
 function getBalanceHistoryMetricLabel(
   t: TFunction,
-  metric: DailyBalanceHistoryMetric,
+  metric: BalanceHistoryVisibleMetric,
 ) {
   switch (metric) {
     case "balance":
       return t("balanceHistory:metrics.balance")
     case "income":
       return t("balanceHistory:metrics.income")
+    case "estimatedIncome":
+      return t("balanceHistory:metrics.estimatedIncome")
     case "outcome":
       return t("balanceHistory:metrics.outcome")
     case "net":
@@ -108,6 +125,18 @@ function getBalanceHistoryMetricLabel(
     default:
       return assertNever(metric, `Unexpected balance history metric: ${metric}`)
   }
+}
+
+/**
+ * Keeps a selected metric within the currently enabled Balance History surface.
+ */
+function resolveVisibleMetric(
+  metric: BalanceHistoryVisibleMetric,
+  estimatedTodayIncomeEnabled: boolean,
+): BalanceHistoryVisibleMetric {
+  return metric === "estimatedIncome" && !estimatedTodayIncomeEnabled
+    ? "income"
+    : metric
 }
 
 /**
@@ -167,6 +196,8 @@ export default function BalanceHistory() {
 
   const { preferences, currencyType, updateCurrencyType } =
     useUserPreferencesContext()
+  const estimatedTodayIncomeEnabled =
+    preferences.balanceHistory?.estimatedTodayIncome?.enabled === true
 
   const [accounts, setAccounts] = useState<SiteAccount[]>([])
   const [tagStore, setTagStore] = useState<TagStore | null>(null)
@@ -177,14 +208,14 @@ export default function BalanceHistory() {
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([])
 
   const [trendMetric, setTrendMetric] =
-    useState<DailyBalanceHistoryMetric>("balance")
+    useState<BalanceHistoryVisibleMetric>("balance")
   const [trendChartType, setTrendChartType] =
     useState<BalanceHistoryTrendChartType>("line")
   const [trendScope, setTrendScope] =
     useState<BalanceHistoryTrendSeriesScope>("accounts")
 
   const [breakdownMetric, setBreakdownMetric] =
-    useState<DailyBalanceHistoryMetric>("balance")
+    useState<BalanceHistoryVisibleMetric>("balance")
   const [breakdownChartType, setBreakdownChartType] =
     useState<BalanceHistoryBreakdownChartType>("pie")
   const [breakdownBalanceDayKey, setBreakdownBalanceDayKey] =
@@ -213,15 +244,21 @@ export default function BalanceHistory() {
   }, [loadData])
 
   const handleRefreshNow = useCallback(async () => {
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BalanceHistory,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshBalanceHistorySnapshots,
+      surfaceId: balanceHistorySurface,
+      entrypoint: optionsEntrypoint,
+    })
     let toastId: string | undefined
     try {
       toastId = toast.loading(t("messages.loading.refreshing"))
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.BalanceHistoryRefreshNow,
-        ...(selectedAccountIds.length
+      const response = await sendBalanceHistoryMessage(
+        BalanceHistoryMessageTypes.RefreshNow,
+        selectedAccountIds.length
           ? { accountIds: selectedAccountIds }
-          : {}),
-      })
+          : undefined,
+      )
 
       if (!response?.success) {
         throw new Error(response?.error || "Unknown error")
@@ -229,21 +266,31 @@ export default function BalanceHistory() {
 
       toast.success(t("messages.success.refreshCompleted"), { id: toastId })
       await loadData()
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
       toast.error(
         t("messages.error.refreshFailed", { error: getErrorMessage(error) }),
         { id: toastId },
       )
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
     }
   }, [loadData, selectedAccountIds, t])
 
   const handlePruneNow = useCallback(async () => {
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BalanceHistory,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.PruneBalanceHistorySnapshots,
+      surfaceId: balanceHistorySurface,
+      entrypoint: optionsEntrypoint,
+    })
     let toastId: string | undefined
     try {
       toastId = toast.loading(t("messages.loading.pruning"))
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.BalanceHistoryPrune,
-      })
+      const response = await sendBalanceHistoryMessage(
+        BalanceHistoryMessageTypes.Prune,
+      )
 
       if (!response?.success) {
         throw new Error(response?.error || "Unknown error")
@@ -251,11 +298,15 @@ export default function BalanceHistory() {
 
       toast.success(t("messages.success.pruneCompleted"), { id: toastId })
       await loadData()
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
       toast.error(
         t("messages.error.pruneFailed", { error: getErrorMessage(error) }),
         { id: toastId },
       )
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
     }
   }, [loadData, t])
 
@@ -298,6 +349,41 @@ export default function BalanceHistory() {
   const accountDisplayLabelById = useMemo(
     () => buildAccountDisplayNameMap(accounts),
     [accounts],
+  )
+
+  const manualBalanceAccountIds = useMemo(
+    () =>
+      new Set(
+        accounts
+          .filter(
+            (account) =>
+              typeof account.manualBalanceUsd === "string" &&
+              account.manualBalanceUsd.trim().length > 0,
+          )
+          .map((account) => account.id),
+      ),
+    [accounts],
+  )
+
+  useEffect(() => {
+    if (!estimatedTodayIncomeEnabled && trendMetric === "estimatedIncome") {
+      setTrendMetric("income")
+    }
+  }, [estimatedTodayIncomeEnabled, trendMetric])
+
+  useEffect(() => {
+    if (!estimatedTodayIncomeEnabled && breakdownMetric === "estimatedIncome") {
+      setBreakdownMetric("income")
+    }
+  }, [breakdownMetric, estimatedTodayIncomeEnabled])
+
+  const effectiveTrendMetric = resolveVisibleMetric(
+    trendMetric,
+    estimatedTodayIncomeEnabled,
+  )
+  const effectiveBreakdownMetric = resolveVisibleMetric(
+    breakdownMetric,
+    estimatedTodayIncomeEnabled,
   )
 
   const effectiveAccountIds = useMemo(() => {
@@ -515,13 +601,17 @@ export default function BalanceHistory() {
       endDayKey: effectiveRange.endDayKey,
       currencyType,
       exchangeRateByAccountId,
+      estimatedTodayIncomeEnabled,
+      manualBalanceAccountIds,
     })
   }, [
     currencyType,
     effectiveAccountIds,
     effectiveRange.endDayKey,
     effectiveRange.startDayKey,
+    estimatedTodayIncomeEnabled,
     exchangeRateByAccountId,
+    manualBalanceAccountIds,
     store,
   ])
 
@@ -538,7 +628,9 @@ export default function BalanceHistory() {
 
       for (const accountId of effectiveAccountIds) {
         const value =
-          perAccountSeries.seriesByAccountId[accountId]?.[trendMetric]?.[index]
+          perAccountSeries.seriesByAccountId[accountId]?.[
+            effectiveTrendMetric
+          ]?.[index]
 
         if (typeof value !== "number" || !Number.isFinite(value)) continue
         covered += 1
@@ -551,18 +643,20 @@ export default function BalanceHistory() {
     return totals
   }, [
     effectiveAccountIds,
+    effectiveTrendMetric,
     perAccountSeries.dayKeys,
     perAccountSeries.seriesByAccountId,
-    trendMetric,
   ])
 
   const totalTrendCoverageSummary = useMemo(() => {
     const totalAccounts = effectiveAccountIds.length
 
     const coverageCounts = perAccountSeries.coverageByDay.map((coverage) => {
-      return trendMetric === "balance"
+      return effectiveTrendMetric === "balance"
         ? coverage.snapshotAccounts
-        : coverage.cashflowAccounts
+        : effectiveTrendMetric === "estimatedIncome"
+          ? coverage.estimatedIncomeAccounts
+          : coverage.cashflowAccounts
     })
 
     const availableCoverage = coverageCounts.filter((count) => count > 0)
@@ -581,7 +675,11 @@ export default function BalanceHistory() {
       maxCovered,
       partialDays,
     }
-  }, [effectiveAccountIds.length, perAccountSeries.coverageByDay, trendMetric])
+  }, [
+    effectiveAccountIds.length,
+    effectiveTrendMetric,
+    perAccountSeries.coverageByDay,
+  ])
 
   const rangeSummaries = useMemo(() => {
     return buildAccountRangeSummaries({
@@ -591,13 +689,17 @@ export default function BalanceHistory() {
       endDayKey: effectiveRange.endDayKey,
       currencyType,
       exchangeRateByAccountId,
+      estimatedTodayIncomeEnabled,
+      manualBalanceAccountIds,
     })
   }, [
     currencyType,
     effectiveAccountIds,
     effectiveRange.endDayKey,
     effectiveRange.startDayKey,
+    estimatedTodayIncomeEnabled,
     exchangeRateByAccountId,
+    manualBalanceAccountIds,
     store,
   ])
 
@@ -621,7 +723,7 @@ export default function BalanceHistory() {
 
     for (const accountId of effectiveAccountIds) {
       const values =
-        perAccountSeries.seriesByAccountId[accountId]?.[trendMetric] ??
+        perAccountSeries.seriesByAccountId[accountId]?.[effectiveTrendMetric] ??
         perAccountSeries.dayKeys.map(() => null)
 
       const hasAnyData = values.some(
@@ -639,16 +741,16 @@ export default function BalanceHistory() {
   }, [
     accountDisplayLabelById,
     effectiveAccountIds,
+    effectiveTrendMetric,
     perAccountSeries.dayKeys,
     perAccountSeries.seriesByAccountId,
     t,
     totalTrendValues,
-    trendMetric,
     trendScope,
   ])
 
   const trendOption = useMemo(() => {
-    const metricLabel = getBalanceHistoryMetricLabel(t, trendMetric)
+    const metricLabel = getBalanceHistoryMetricLabel(t, effectiveTrendMetric)
     return buildMultiSeriesTrendOption({
       dayKeys: perAccountSeries.dayKeys,
       series: trendSeries,
@@ -665,15 +767,15 @@ export default function BalanceHistory() {
     isDark,
     perAccountSeries.dayKeys,
     t,
+    effectiveTrendMetric,
     trendChartType,
-    trendMetric,
     trendSeries,
   ])
 
   const breakdownData = useMemo(() => {
     const entries: Array<{ name: string; value: number }> = []
 
-    if (breakdownMetric === "balance") {
+    if (effectiveBreakdownMetric === "balance") {
       const referenceDayKey = breakdownBalanceDayKey || effectiveRange.endDayKey
       const referenceIndex = perAccountSeries.dayKeys.indexOf(referenceDayKey)
 
@@ -695,11 +797,13 @@ export default function BalanceHistory() {
     } else {
       for (const summary of rangeSummaries.summaries) {
         const value =
-          breakdownMetric === "income"
+          effectiveBreakdownMetric === "income"
             ? summary.incomeTotal
-            : breakdownMetric === "outcome"
+            : effectiveBreakdownMetric === "outcome"
               ? summary.outcomeTotal
-              : summary.netTotal
+              : effectiveBreakdownMetric === "estimatedIncome"
+                ? summary.estimatedIncomeTotal
+                : summary.netTotal
 
         if (typeof value !== "number" || !Number.isFinite(value)) continue
 
@@ -724,7 +828,7 @@ export default function BalanceHistory() {
   }, [
     accountDisplayLabelById,
     breakdownBalanceDayKey,
-    breakdownMetric,
+    effectiveBreakdownMetric,
     effectiveAccountIds,
     effectiveRange.endDayKey,
     perAccountSeries.dayKeys,
@@ -741,7 +845,7 @@ export default function BalanceHistory() {
   const breakdownOption = useMemo(() => {
     if (!breakdownData.values.length) return null
 
-    const valueLabel = `${getBalanceHistoryMetricLabel(t, breakdownMetric)} (${currencySymbol})`
+    const valueLabel = `${getBalanceHistoryMetricLabel(t, effectiveBreakdownMetric)} (${currencySymbol})`
 
     return breakdownChartType === "pie"
       ? buildAccountBreakdownPieOption({
@@ -768,7 +872,7 @@ export default function BalanceHistory() {
     formatTooltipMoneyValue,
     isDark,
     t,
-    breakdownMetric,
+    effectiveBreakdownMetric,
   ])
 
   const overviewTotals = useMemo(() => {
@@ -825,9 +929,11 @@ export default function BalanceHistory() {
       endBalance: summary.endBalance,
       netTotal: summary.netTotal,
       incomeTotal: summary.incomeTotal,
+      estimatedIncomeTotal: summary.estimatedIncomeTotal,
       outcomeTotal: summary.outcomeTotal,
       snapshotDays: summary.snapshotDays,
       cashflowDays: summary.cashflowDays,
+      estimatedIncomeDays: summary.estimatedIncomeDays,
       totalDays: summary.totalDays,
     }))
   }, [accountDisplayLabelById, rangeSummaries.summaries])
@@ -875,10 +981,19 @@ export default function BalanceHistory() {
     )
   }, [perAccountSeries.coverageByDay])
 
+  const estimatedIncomeAvailableDays = useMemo(() => {
+    return perAccountSeries.coverageByDay.reduce(
+      (acc, item) => acc + (item.estimatedIncomeAccounts > 0 ? 1 : 0),
+      0,
+    )
+  }, [perAccountSeries.coverageByDay])
+
   const hasAnyPerAccountTrendMetricData =
-    trendMetric === "balance"
+    effectiveTrendMetric === "balance"
       ? snapshotAvailableDays > 0
-      : cashflowAvailableDays > 0
+      : effectiveTrendMetric === "estimatedIncome"
+        ? estimatedIncomeAvailableDays > 0
+        : cashflowAvailableDays > 0
 
   const hasAnyTotalTrendMetricData = useMemo(() => {
     return totalTrendValues.some(
@@ -909,6 +1024,18 @@ export default function BalanceHistory() {
       <PageHeader
         icon={LineChart}
         title={t("title")}
+        titleActions={
+          <OptionsPageSettingsTitleAction
+            tabId="balanceHistory"
+            anchor="balance-history"
+            analyticsAction={{
+              featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BalanceHistory,
+              actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenBalanceHistorySettings,
+              surfaceId: balanceHistorySurface,
+              entrypoint: optionsEntrypoint,
+            }}
+          />
+        }
         description={t("description")}
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -928,14 +1055,6 @@ export default function BalanceHistory() {
             >
               {t("actions.prune")}
             </Button>
-            <WorkflowTransitionButton
-              size="sm"
-              variant="outline"
-              onClick={openBalanceHistorySettings}
-              leftIcon={<Settings className="h-4 w-4" />}
-            >
-              {t("common:labels.settings")}
-            </WorkflowTransitionButton>
           </div>
         }
       />
@@ -960,6 +1079,13 @@ export default function BalanceHistory() {
               variant="outline"
               onClick={openBalanceHistorySettings}
               leftIcon={<Settings className="h-4 w-4" />}
+              analyticsAction={{
+                featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BalanceHistory,
+                actionId:
+                  PRODUCT_ANALYTICS_ACTION_IDS.OpenBalanceHistorySettings,
+                surfaceId: balanceHistorySurface,
+                entrypoint: optionsEntrypoint,
+              }}
             >
               {t("hints.disabled.actions.openSettings")}
             </WorkflowTransitionButton>
@@ -1135,7 +1261,10 @@ export default function BalanceHistory() {
             </Card>
           ) : (
             <div className="space-y-6">
-              <Card padding="md">
+              <Card
+                padding="md"
+                data-testid={BALANCE_HISTORY_TEST_IDS.overview}
+              >
                 <div className="space-y-4">
                   <div className="text-sm font-medium">
                     {t("overview.title")}
@@ -1227,7 +1356,7 @@ export default function BalanceHistory() {
                                 {t("breakdown.title")}:{" "}
                                 {getBalanceHistoryMetricLabel(
                                   t,
-                                  breakdownMetric,
+                                  effectiveBreakdownMetric,
                                 )}
                               </span>
                               <ChevronDown className="h-4 w-4 shrink-0 opacity-70" />
@@ -1235,10 +1364,10 @@ export default function BalanceHistory() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start" className="w-44">
                             <DropdownMenuRadioGroup
-                              value={breakdownMetric}
+                              value={effectiveBreakdownMetric}
                               onValueChange={(value) =>
                                 setBreakdownMetric(
-                                  value as DailyBalanceHistoryMetric,
+                                  value as BalanceHistoryVisibleMetric,
                                 )
                               }
                             >
@@ -1248,6 +1377,11 @@ export default function BalanceHistory() {
                               <DropdownMenuRadioItem value="income">
                                 {t("metrics.income")}
                               </DropdownMenuRadioItem>
+                              {estimatedTodayIncomeEnabled && (
+                                <DropdownMenuRadioItem value="estimatedIncome">
+                                  {t("metrics.estimatedIncome")}
+                                </DropdownMenuRadioItem>
+                              )}
                               <DropdownMenuRadioItem value="outcome">
                                 {t("metrics.outcome")}
                               </DropdownMenuRadioItem>
@@ -1292,7 +1426,7 @@ export default function BalanceHistory() {
                       </div>
                     </div>
 
-                    {breakdownMetric === "balance" && (
+                    {effectiveBreakdownMetric === "balance" && (
                       <div className="flex flex-wrap items-center gap-2">
                         <Label className="dark:text-dark-text-tertiary text-xs text-gray-500">
                           {t("breakdown.controls.reference")}
@@ -1345,17 +1479,20 @@ export default function BalanceHistory() {
                               >
                                 <span className="min-w-0 truncate">
                                   {t("trend.title")}:{" "}
-                                  {getBalanceHistoryMetricLabel(t, trendMetric)}
+                                  {getBalanceHistoryMetricLabel(
+                                    t,
+                                    effectiveTrendMetric,
+                                  )}
                                 </span>
                                 <ChevronDown className="h-4 w-4 shrink-0 opacity-70" />
                               </button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="start" className="w-44">
                               <DropdownMenuRadioGroup
-                                value={trendMetric}
+                                value={effectiveTrendMetric}
                                 onValueChange={(value) =>
                                   setTrendMetric(
-                                    value as DailyBalanceHistoryMetric,
+                                    value as BalanceHistoryVisibleMetric,
                                   )
                                 }
                               >
@@ -1365,6 +1502,11 @@ export default function BalanceHistory() {
                                 <DropdownMenuRadioItem value="income">
                                   {t("metrics.income")}
                                 </DropdownMenuRadioItem>
+                                {estimatedTodayIncomeEnabled && (
+                                  <DropdownMenuRadioItem value="estimatedIncome">
+                                    {t("metrics.estimatedIncome")}
+                                  </DropdownMenuRadioItem>
+                                )}
                                 <DropdownMenuRadioItem value="outcome">
                                   {t("metrics.outcome")}
                                 </DropdownMenuRadioItem>
@@ -1468,7 +1610,10 @@ export default function BalanceHistory() {
                     ) : (
                       <div className="dark:text-dark-text-secondary text-sm text-gray-600">
                         {t("trend.emptyMetric", {
-                          metric: getBalanceHistoryMetricLabel(t, trendMetric),
+                          metric: getBalanceHistoryMetricLabel(
+                            t,
+                            effectiveTrendMetric,
+                          ),
                         })}
                       </div>
                     )}
@@ -1476,13 +1621,17 @@ export default function BalanceHistory() {
                 </Card>
               </div>
 
-              <Card padding="md">
+              <Card
+                padding="md"
+                data-testid={BALANCE_HISTORY_TEST_IDS.accountSummary}
+              >
                 <div className="space-y-3">
                   <div className="text-sm font-medium">{t("table.title")}</div>
                   <BalanceHistoryAccountSummaryTable
                     rows={tableRows}
                     isLoading={isLoading}
                     currencySymbol={currencySymbol}
+                    showEstimatedIncome={estimatedTodayIncomeEnabled}
                   />
                 </div>
               </Card>

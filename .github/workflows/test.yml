@@ -2,7 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main, develop, test/**]
+    branches:
+      - main
+      - develop
     paths:
       - "src/**"
       - "public/**"
@@ -18,7 +20,6 @@ on:
       - "wxt.config.ts"
       - ".github/workflows/test.yml"
   pull_request:
-    branches: [main, develop]
     paths:
       - "src/**"
       - "public/**"
@@ -33,6 +34,7 @@ on:
       - "vitest.config.ts"
       - "wxt.config.ts"
       - ".github/workflows/test.yml"
+  workflow_dispatch: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -74,6 +76,9 @@ jobs:
       - name: Run i18n extract check
         run: pnpm run i18n:extract:ci
 
+      - name: Run i18n status check
+        run: pnpm run i18n:status
+
   unit-tests:
     runs-on: ubuntu-latest
 
@@ -101,13 +106,13 @@ jobs:
         run: pnpm exec vitest --run --coverage --reporter=default --reporter=junit --outputFile=test-report.junit.xml
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           report_type: test_results

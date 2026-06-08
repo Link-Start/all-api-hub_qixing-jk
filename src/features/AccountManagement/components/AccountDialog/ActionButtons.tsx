@@ -10,6 +10,10 @@ import { Button } from "~/components/ui"
 import { DIALOG_MODES, type DialogMode } from "~/constants/dialogModes"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
+import {
+  ACCOUNT_POST_SAVE_WORKFLOW_STEPS,
+  type AccountPostSaveWorkflowStep,
+} from "~/services/accounts/accountPostSaveWorkflow"
 import { getManagedSiteLabel } from "~/services/managedSites/utils/managedSite"
 
 import {
@@ -32,6 +36,7 @@ interface ActionButtonsProps {
   onClose: () => void
   onAutoConfig: () => Promise<void>
   isAutoConfiguring: boolean
+  accountPostSaveWorkflowStep: AccountPostSaveWorkflowStep
   formId?: string
 }
 
@@ -52,21 +57,53 @@ export default function ActionButtons({
   onClose,
   onAutoConfig,
   isAutoConfiguring,
+  accountPostSaveWorkflowStep,
   formId,
 }: ActionButtonsProps) {
   const { t } = useTranslation(["accountDialog", "common", "settings"])
   const { managedSiteType } = useUserPreferencesContext()
   const isAddMode = mode === DIALOG_MODES.ADD
-  const isPreForm = isAddMode && phase === ACCOUNT_DIALOG_PHASES.SITE_INPUT
   const isDetected = formSource === ACCOUNT_DIALOG_FORM_SOURCES.DETECTED
+  const shouldShowAddDetectionActions =
+    isAddMode &&
+    (phase === ACCOUNT_DIALOG_PHASES.SITE_INPUT ||
+      (!isDetected && !isFormValid))
   const managedSiteLabel = getManagedSiteLabel(t, managedSiteType)
   const autoConfigTitle = isFormValid
     ? t("accountDialog:actions.autoConfigTitle", {
         managedSite: managedSiteLabel,
       })
     : t("accountDialog:actions.autoConfigRequiresValidAccount")
+  const autoConfigLoadingLabelByStep: Partial<
+    Record<AccountPostSaveWorkflowStep, string>
+  > = {
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.SavingAccount]: t(
+      "accountDialog:actions.workflow.savingAccount",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.LoadingSavedAccount]: t(
+      "accountDialog:actions.workflow.loadingSavedAccount",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.CheckingToken]: t(
+      "accountDialog:actions.workflow.checkingToken",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.CreatingToken]: t(
+      "accountDialog:actions.workflow.creatingToken",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.WaitingForOneTimeKeyAcknowledgement]: t(
+      "accountDialog:actions.workflow.waitingForOneTimeKey",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.WaitingForSub2ApiGroupSelection]: t(
+      "accountDialog:actions.workflow.waitingForSub2ApiGroup",
+    ),
+    [ACCOUNT_POST_SAVE_WORKFLOW_STEPS.OpeningManagedSiteDialog]: t(
+      "accountDialog:actions.workflow.openingManagedSiteDialog",
+    ),
+  }
+  const autoConfigLoadingLabel =
+    autoConfigLoadingLabelByStep[accountPostSaveWorkflowStep] ??
+    t("accountDialog:actions.configuring")
 
-  if (isPreForm) {
+  if (shouldShowAddDetectionActions) {
     return (
       <div className="flex flex-wrap gap-2">
         <Button
@@ -135,6 +172,7 @@ export default function ActionButtons({
           loading={isAutoConfiguring}
           bleed
           className="flex-1"
+          data-testid={ACCOUNT_MANAGEMENT_TEST_IDS.autoConfigButton}
           aria-label={t("accountDialog:actions.autoConfigAriaLabel", {
             managedSite: managedSiteLabel,
           })}
@@ -145,7 +183,7 @@ export default function ActionButtons({
           }
         >
           {isAutoConfiguring
-            ? t("accountDialog:actions.configuring")
+            ? autoConfigLoadingLabel
             : t("accountDialog:actions.configToManagedSite", {
                 managedSite: managedSiteLabel,
               })}

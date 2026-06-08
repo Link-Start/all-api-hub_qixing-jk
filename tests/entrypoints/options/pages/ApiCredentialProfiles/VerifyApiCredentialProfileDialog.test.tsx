@@ -1,7 +1,20 @@
 import userEvent from "@testing-library/user-event"
+import { useState } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { VerifyApiCredentialProfileDialog } from "~/features/ApiCredentialProfiles/components/VerifyApiCredentialProfileDialog"
+import {
+  API_CREDENTIAL_PROFILES_TEST_IDS,
+  getApiCredentialProfileVerifyProbeTestId,
+} from "~/features/ApiCredentialProfiles/testIds"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { API_TYPES } from "~/services/verification/aiApiVerification"
 import {
   createProfileModelVerificationHistoryTarget,
@@ -12,9 +25,18 @@ import {
 import { requireHistoryTarget } from "~~/tests/test-utils/history"
 import { render, screen, waitFor, within } from "~~/tests/test-utils/render"
 
-const { loggerErrorMock, mockRunApiVerificationProbe } = vi.hoisted(() => ({
+const {
+  loggerErrorMock,
+  mockGetApiVerificationProbeDefinitions,
+  mockRunApiVerificationProbe,
+  mockStartProductAnalyticsAction,
+  mockCompleteProductAnalyticsAction,
+} = vi.hoisted(() => ({
   loggerErrorMock: vi.fn(),
+  mockGetApiVerificationProbeDefinitions: vi.fn(),
   mockRunApiVerificationProbe: vi.fn(),
+  mockStartProductAnalyticsAction: vi.fn(),
+  mockCompleteProductAnalyticsAction: vi.fn(),
 }))
 
 /**
@@ -35,6 +57,22 @@ function createDeferred<T>() {
   }
 }
 
+async function selectApiTypeOption(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(getApiTypeSelect(), API_TYPES.ANTHROPIC)
+}
+
+function getApiTypeSelect() {
+  return screen.getByRole("combobox", {
+    name: "aiApiVerification:verifyDialog.meta.apiType",
+  })
+}
+
+async function selectOpenAICompatibleApiTypeOption(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  await user.selectOptions(getApiTypeSelect(), API_TYPES.OPENAI_COMPATIBLE)
+}
+
 vi.mock("~/services/verification/aiApiVerification", async (importOriginal) => {
   const original =
     await importOriginal<
@@ -42,26 +80,44 @@ vi.mock("~/services/verification/aiApiVerification", async (importOriginal) => {
     >()
   return {
     ...original,
+    getApiVerificationProbeDefinitions: (...args: unknown[]) =>
+      mockGetApiVerificationProbeDefinitions(...args) ??
+      original.getApiVerificationProbeDefinitions(
+        ...(args as Parameters<
+          typeof original.getApiVerificationProbeDefinitions
+        >),
+      ),
     runApiVerificationProbe: (...args: unknown[]) =>
       mockRunApiVerificationProbe(...args),
   }
 })
 
+vi.mock("~/services/productAnalytics/actions", () => ({
+  resolveProductAnalyticsErrorCategoryFromError: (error: unknown) =>
+    error &&
+    typeof error === "object" &&
+    (error as { statusCode?: unknown }).statusCode === 401
+      ? PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth
+      : PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+  startProductAnalyticsAction: (...args: unknown[]) =>
+    mockStartProductAnalyticsAction(...args),
+}))
+
 const mockFetchOpenAICompatibleModelIds = vi.fn()
 const mockFetchAnthropicModelIds = vi.fn()
 const mockFetchGoogleModelIds = vi.fn()
 
-vi.mock("~/services/apiService/openaiCompatible", () => ({
+vi.mock("~/services/aiApi/openaiCompatible", () => ({
   fetchOpenAICompatibleModelIds: (...args: unknown[]) =>
     mockFetchOpenAICompatibleModelIds(...args),
 }))
 
-vi.mock("~/services/apiService/anthropic", () => ({
+vi.mock("~/services/aiApi/anthropic", () => ({
   fetchAnthropicModelIds: (...args: unknown[]) =>
     mockFetchAnthropicModelIds(...args),
 }))
 
-vi.mock("~/services/apiService/google", () => ({
+vi.mock("~/services/aiApi/google", () => ({
   fetchGoogleModelIds: (...args: unknown[]) => mockFetchGoogleModelIds(...args),
 }))
 
@@ -79,11 +135,99 @@ vi.mock("~/utils/core/logger", async (importOriginal) => {
   }
 })
 
+vi.mock("~/components/ui", async (importOriginal) => {
+  const original = await importOriginal<typeof import("~/components/ui")>()
+
+  return {
+    ...original,
+    SearchableSelect: ({
+      "aria-label": ariaLabel,
+      "data-testid": testId,
+      disabled,
+      onChange,
+      options,
+      placeholder,
+      value,
+    }: {
+      "aria-label"?: string
+      "data-testid"?: string
+      disabled?: boolean
+      onChange: (value: string) => void
+      options: Array<{ value: string; label: string }>
+      placeholder?: string
+      value: string
+    }) => {
+      const [isOpen, setIsOpen] = useState(false)
+      const selectedOption = options.find((option) => option.value === value)
+      if (ariaLabel === "aiApiVerification:verifyDialog.meta.apiType") {
+        return (
+          <select
+            aria-label={ariaLabel}
+            data-testid={testId}
+            disabled={disabled}
+            value={value}
+            onChange={(event) => onChange(event.currentTarget.value)}
+          >
+            {placeholder && !value ? (
+              <option value="">{placeholder}</option>
+            ) : null}
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        )
+      }
+
+      return (
+        <div>
+          <button
+            aria-label={ariaLabel}
+            data-testid={testId}
+            disabled={disabled}
+            type="button"
+            role="combobox"
+            aria-expanded={isOpen}
+            onClick={() => setIsOpen((current) => !current)}
+          >
+            {selectedOption?.label || value || placeholder}
+          </button>
+          {isOpen ? (
+            <div role="listbox">
+              {options.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={option.value === value}
+                  onClick={() => {
+                    onChange(option.value)
+                    setIsOpen(false)
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )
+    },
+  }
+})
+
 describe("VerifyApiCredentialProfileDialog", () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
     loggerErrorMock.mockReset()
+    mockGetApiVerificationProbeDefinitions.mockClear()
     mockRunApiVerificationProbe.mockReset()
+    mockStartProductAnalyticsAction.mockReset()
+    mockCompleteProductAnalyticsAction.mockReset()
+    mockStartProductAnalyticsAction.mockReturnValue({
+      complete: mockCompleteProductAnalyticsAction,
+    })
     mockFetchOpenAICompatibleModelIds.mockReset()
     mockFetchAnthropicModelIds.mockReset()
     mockFetchGoogleModelIds.mockReset()
@@ -160,9 +304,9 @@ describe("VerifyApiCredentialProfileDialog", () => {
     expect(mockFetchOpenAICompatibleModelIds).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
-      expect(screen.getByTestId("profile-verify-model-id")).toHaveTextContent(
-        "gpt-4o-mini",
-      )
+      expect(
+        screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+      ).toHaveTextContent("gpt-4o-mini")
     })
   })
 
@@ -231,7 +375,9 @@ describe("VerifyApiCredentialProfileDialog", () => {
       />,
     )
 
-    const probeCard = await screen.findByTestId("profile-verify-probe-models")
+    const probeCard = await screen.findByTestId(
+      getApiCredentialProfileVerifyProbeTestId("models"),
+    )
     await user.click(
       within(probeCard).getByRole("button", {
         name: "aiApiVerification:verifyDialog.actions.runOne",
@@ -245,6 +391,16 @@ describe("VerifyApiCredentialProfileDialog", () => {
     expect(
       await within(probeCard).findByText("Fetched models"),
     ).toBeInTheDocument()
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ApiCredentialProfiles,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbe,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsApiCredentialProfilesDialog,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
 
     await user.click(
       within(probeCard).getByRole("button", {
@@ -290,7 +446,9 @@ describe("VerifyApiCredentialProfileDialog", () => {
       />,
     )
 
-    const probeCard = await screen.findByTestId("profile-verify-probe-models")
+    const probeCard = await screen.findByTestId(
+      getApiCredentialProfileVerifyProbeTestId("models"),
+    )
     await user.click(
       within(probeCard).getByRole("button", {
         name: "aiApiVerification:verifyDialog.actions.runOne",
@@ -302,6 +460,12 @@ describe("VerifyApiCredentialProfileDialog", () => {
         probeId: "models",
         message: "[REDACTED] [REDACTED] probe failed",
       }),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
     )
   })
 
@@ -339,7 +503,7 @@ describe("VerifyApiCredentialProfileDialog", () => {
     )
 
     const modelsProbeCard = await screen.findByTestId(
-      "profile-verify-probe-models",
+      getApiCredentialProfileVerifyProbeTestId("models"),
     )
     await user.click(
       within(modelsProbeCard).getByRole("button", {
@@ -352,9 +516,9 @@ describe("VerifyApiCredentialProfileDialog", () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId("profile-verify-model-id")).toHaveTextContent(
-        "m2",
-      )
+      expect(
+        screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+      ).toHaveTextContent("m2")
     })
   })
 
@@ -400,16 +564,13 @@ describe("VerifyApiCredentialProfileDialog", () => {
       }),
     )
 
-    const apiTypeSelect = screen.getAllByRole("combobox")[0]
-    await user.click(apiTypeSelect)
-    await user.click(
-      await screen.findByText(
-        "aiApiVerification:verifyDialog.apiTypes.anthropic",
-      ),
-    )
+    await selectApiTypeOption(user)
 
+    await waitFor(() => {
+      expect(getApiTypeSelect()).toHaveValue(API_TYPES.ANTHROPIC)
+    })
     expect(
-      screen.getByText("apiCredentialProfiles:verify.override.badge"),
+      await screen.findByText("apiCredentialProfiles:verify.override.badge"),
     ).toBeInTheDocument()
     expect(
       screen.getByText("apiCredentialProfiles:verify.override.title"),
@@ -426,7 +587,7 @@ describe("VerifyApiCredentialProfileDialog", () => {
     )
 
     const modelsProbeCard = await screen.findByTestId(
-      "profile-verify-probe-models",
+      getApiCredentialProfileVerifyProbeTestId("models"),
     )
     await user.click(
       within(modelsProbeCard).getByRole("button", {
@@ -519,6 +680,327 @@ describe("VerifyApiCredentialProfileDialog", () => {
         probeId: "text-generation",
         modelId: "m1",
       }),
+    )
+  })
+
+  it("tracks API credential verification suite success", async () => {
+    const user = userEvent.setup()
+
+    mockRunApiVerificationProbe.mockImplementation(async (params: any) => ({
+      id: params.probeId,
+      status: "pass",
+      latencyMs: 1,
+      summary: "OK",
+      output:
+        params.probeId === "models"
+          ? {
+              suggestedModelId: "m1",
+              modelIdsPreview: ["m1"],
+            }
+          : undefined,
+    }))
+
+    render(
+      <VerifyApiCredentialProfileDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p-1",
+          name: "Profile",
+          apiType: API_TYPES.OPENAI_COMPATIBLE,
+          baseUrl: "https://example.com",
+          apiKey: "sk-test",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+      />,
+    )
+
+    const closeButton = await screen.findByText(
+      "aiApiVerification:verifyDialog.actions.close",
+      { selector: "button" },
+    )
+    const footer = closeButton.parentElement
+    if (!footer) throw new Error("Missing modal footer")
+
+    await user.click(
+      within(footer).getByRole("button", {
+        name: "aiApiVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() =>
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights: {
+            itemCount: 5,
+            successCount: 5,
+            failureCount: 0,
+          },
+        },
+      ),
+    )
+
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ApiCredentialProfiles,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbeSuite,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsApiCredentialProfilesDialog,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+  })
+
+  it("tracks API credential verification suite failures with an error category", async () => {
+    const user = userEvent.setup()
+
+    mockRunApiVerificationProbe.mockResolvedValueOnce({
+      id: "models",
+      status: "fail",
+      latencyMs: 1,
+      summary: "Unauthorized",
+      output: { inferredHttpStatus: 401 },
+    })
+
+    render(
+      <VerifyApiCredentialProfileDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p-1",
+          name: "Profile",
+          apiType: API_TYPES.OPENAI_COMPATIBLE,
+          baseUrl: "https://example.com",
+          apiKey: "sk-test",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+      />,
+    )
+
+    const closeButton = await screen.findByText(
+      "aiApiVerification:verifyDialog.actions.close",
+      { selector: "button" },
+    )
+    const footer = closeButton.parentElement
+    if (!footer) throw new Error("Missing modal footer")
+
+    await user.click(
+      within(footer).getByRole("button", {
+        name: "aiApiVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() =>
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+          insights: {
+            itemCount: 1,
+            successCount: 0,
+            failureCount: 1,
+          },
+        },
+      ),
+    )
+  })
+
+  it("uses the first known failed probe category for suite analytics", async () => {
+    const user = userEvent.setup()
+
+    mockGetApiVerificationProbeDefinitions.mockReturnValueOnce([
+      { id: "models", requiresModelId: false },
+      { id: "text-generation", requiresModelId: false },
+    ])
+    mockRunApiVerificationProbe
+      .mockResolvedValueOnce({
+        id: "models",
+        status: "fail",
+        latencyMs: 1,
+        summary: "Unknown failure",
+      })
+      .mockResolvedValueOnce({
+        id: "text-generation",
+        status: "fail",
+        latencyMs: 2,
+        summary: "Unauthorized",
+        output: { inferredHttpStatus: 401 },
+      })
+      .mockResolvedValueOnce({
+        id: "tool-calling",
+        status: "pass",
+        latencyMs: 3,
+        summary: "OK",
+      })
+      .mockResolvedValueOnce({
+        id: "structured-output",
+        status: "pass",
+        latencyMs: 4,
+        summary: "OK",
+      })
+      .mockResolvedValueOnce({
+        id: "web-search",
+        status: "pass",
+        latencyMs: 5,
+        summary: "OK",
+      })
+
+    render(
+      <VerifyApiCredentialProfileDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p-1",
+          name: "Profile",
+          apiType: API_TYPES.OPENAI_COMPATIBLE,
+          baseUrl: "https://example.com",
+          apiKey: "sk-test",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+        initialModelId="gpt-test"
+      />,
+    )
+
+    const closeButton = await screen.findByText(
+      "aiApiVerification:verifyDialog.actions.close",
+      { selector: "button" },
+    )
+    const footer = closeButton.parentElement
+    if (!footer) throw new Error("Missing modal footer")
+
+    await user.click(
+      within(footer).getByRole("button", {
+        name: "aiApiVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() =>
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+          insights: {
+            itemCount: 5,
+            successCount: 3,
+            failureCount: 2,
+          },
+        },
+      ),
+    )
+  })
+
+  it("tracks API credential verification suite probe exceptions with safe structured diagnostics", async () => {
+    const user = userEvent.setup()
+    const structuredError = Object.assign(
+      new Error("https://example.com sk-test unauthorized"),
+      { statusCode: 401 },
+    )
+
+    mockRunApiVerificationProbe.mockRejectedValueOnce(structuredError)
+
+    render(
+      <VerifyApiCredentialProfileDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p-1",
+          name: "Profile",
+          apiType: API_TYPES.OPENAI_COMPATIBLE,
+          baseUrl: "https://example.com",
+          apiKey: "sk-test",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+      />,
+    )
+
+    const closeButton = await screen.findByText(
+      "aiApiVerification:verifyDialog.actions.close",
+      { selector: "button" },
+    )
+    const footer = closeButton.parentElement
+    if (!footer) throw new Error("Missing modal footer")
+
+    await user.click(
+      within(footer).getByRole("button", {
+        name: "aiApiVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() =>
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+          insights: {
+            itemCount: 1,
+            successCount: 0,
+            failureCount: 1,
+          },
+        },
+      ),
+    )
+    expect(loggerErrorMock).toHaveBeenCalledWith("Probe failed", {
+      probeId: "models",
+      message: "[REDACTED] [REDACTED] unauthorized",
+    })
+  })
+
+  it("tracks API credential verification suite-level exceptions with an error category", async () => {
+    const user = userEvent.setup()
+
+    render(
+      <VerifyApiCredentialProfileDialog
+        isOpen={true}
+        onClose={() => {}}
+        profile={{
+          id: "p-1",
+          name: "Profile",
+          apiType: API_TYPES.OPENAI_COMPATIBLE,
+          baseUrl: "https://example.com",
+          apiKey: "sk-test",
+          tagIds: [],
+          notes: "",
+          createdAt: 1,
+          updatedAt: 1,
+        }}
+      />,
+    )
+
+    const closeButton = await screen.findByText(
+      "aiApiVerification:verifyDialog.actions.close",
+      { selector: "button" },
+    )
+    const footer = closeButton.parentElement
+    if (!footer) throw new Error("Missing modal footer")
+
+    mockGetApiVerificationProbeDefinitions.mockImplementationOnce(() => {
+      throw new Error("definitions failed")
+    })
+
+    await user.click(
+      within(footer).getByRole("button", {
+        name: "aiApiVerification:verifyDialog.actions.run",
+      }),
+    )
+
+    await waitFor(() =>
+      expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      ),
     )
   })
 
@@ -656,38 +1138,29 @@ describe("VerifyApiCredentialProfileDialog", () => {
 
     expect(await screen.findByText("Stored m0 history")).toBeInTheDocument()
 
-    await user.click(screen.getByTestId("profile-verify-model-id"))
+    await user.click(
+      screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+    )
     await user.click(await screen.findByText("m1"))
 
     await waitFor(() => {
-      expect(screen.getByTestId("profile-verify-model-id")).toHaveTextContent(
-        "m1",
-      )
+      expect(
+        screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+      ).toHaveTextContent("m1")
     })
     expect(await screen.findByText("Stored m1 history")).toBeInTheDocument()
     expect(screen.queryByText("Stored m0 history")).not.toBeInTheDocument()
 
-    const apiTypeSelect = screen.getAllByRole("combobox")[0]
-    await user.click(apiTypeSelect)
-    await user.click(
-      await screen.findByText(
-        "aiApiVerification:verifyDialog.apiTypes.anthropic",
-      ),
-    )
+    await selectApiTypeOption(user)
 
-    await waitFor(() => {
+    await waitFor(() =>
       expect(
-        screen.getByText("aiApiVerification:verifyDialog.status.unverified"),
-      ).toBeInTheDocument()
-    })
+        screen.getAllByText("aiApiVerification:verifyDialog.status.pending"),
+      ).not.toHaveLength(0),
+    )
     expect(screen.queryByText("Stored m1 history")).not.toBeInTheDocument()
 
-    await user.click(screen.getAllByRole("combobox")[0])
-    await user.click(
-      await screen.findByText(
-        "aiApiVerification:verifyDialog.apiTypes.openaiCompatible",
-      ),
-    )
+    await selectOpenAICompatibleApiTypeOption(user)
 
     expect(await screen.findByText("Stored m1 history")).toBeInTheDocument()
   })
@@ -729,17 +1202,19 @@ describe("VerifyApiCredentialProfileDialog", () => {
       }),
     )
 
-    await user.click(screen.getByTestId("profile-verify-model-id"))
+    await user.click(
+      screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+    )
     await user.click(await screen.findByText("m1"))
 
     await waitFor(() => {
-      expect(screen.getByTestId("profile-verify-model-id")).toHaveTextContent(
-        "m1",
-      )
+      expect(
+        screen.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.verifyModelId),
+      ).toHaveTextContent("m1")
     })
 
     const probeCard = await screen.findByTestId(
-      "profile-verify-probe-text-generation",
+      getApiCredentialProfileVerifyProbeTestId("text-generation"),
     )
     await user.click(
       within(probeCard).getByRole("button", {
@@ -832,7 +1307,9 @@ describe("VerifyApiCredentialProfileDialog", () => {
     const clearButton = screen.getByRole("button", {
       name: "aiApiVerification:verifyDialog.history.clear",
     })
-    const probeCard = await screen.findByTestId("profile-verify-probe-models")
+    const probeCard = await screen.findByTestId(
+      getApiCredentialProfileVerifyProbeTestId("models"),
+    )
 
     await user.click(
       within(probeCard).getByRole("button", {

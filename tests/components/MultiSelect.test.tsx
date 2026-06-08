@@ -15,6 +15,10 @@ vi.mock("react-hot-toast", () => ({
   default: toastMocks,
 }))
 
+const TEST_IDS = {
+  selectedValues: "selected-values",
+} as const
+
 function Harness(props: {
   initialSelected?: string[]
   allowCustom?: boolean
@@ -45,7 +49,7 @@ function Harness(props: {
         placeholder="Pick values"
         selected={selected}
       />
-      <div data-testid="selected-values">{selected.join(",")}</div>
+      <div data-testid={TEST_IDS.selectedValues}>{selected.join(",")}</div>
     </>
   )
 }
@@ -100,7 +104,7 @@ describe("MultiSelect", () => {
     await user.type(input, "alpha, beta, gamma")
     fireEvent.keyDown(input, { key: "Enter" })
 
-    expect(screen.getByTestId("selected-values")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.selectedValues)).toHaveTextContent(
       "beta,alpha,gamma",
     )
   })
@@ -129,7 +133,9 @@ describe("MultiSelect", () => {
     ])
 
     await user.click(options[0])
-    expect(screen.getByTestId("selected-values")).toHaveTextContent("alpha")
+    expect(screen.getByTestId(TEST_IDS.selectedValues)).toHaveTextContent(
+      "alpha",
+    )
   })
 
   it("supports collapsing selected previews, removing values, clearing all, and copy success", async () => {
@@ -175,14 +181,16 @@ describe("MultiSelect", () => {
       name: "ui:multiSelect.removeValue",
     })
     await user.click(removeButtons[0])
-    expect(screen.getByTestId("selected-values")).toHaveTextContent("b,c,d,e,f")
+    expect(screen.getByTestId(TEST_IDS.selectedValues)).toHaveTextContent(
+      "b,c,d,e,f",
+    )
 
     await user.click(
       await screen.findByRole("button", {
         name: "ui:multiSelect.clearSelected",
       }),
     )
-    expect(screen.getByTestId("selected-values")).toHaveTextContent("")
+    expect(screen.getByTestId(TEST_IDS.selectedValues)).toHaveTextContent("")
   })
 
   it("shows an error toast when copying selected values fails", async () => {

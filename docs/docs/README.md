@@ -28,8 +28,8 @@ actions:
 features:
   - title: "📦 资产统一看板"
     details: "把多个站点与账号集中在一个面板里，余额、用量与健康状态一眼看清，支持智能识别地址自动添加。"
-  - title: "🏷️ 独立 API 凭证"
-    details: "无需账号，直接保存 Base URL + Key，支持标签分类，完美复用模型查看与接口验证功能。"
+  - title: "🏷️ API 凭据库"
+    details: "无需账号，直接保存 Base URL + API Key，用于快速复制、验证接口、查看模型与余额/用量。"
   - title: "💰 模型价格比对"
     details: "跨站对比各模型实际折合单价，自动锁定当前最优分组，助你寻找最实惠的调用路径。"
   - title: "✅ 深度接口验证"
@@ -62,7 +62,7 @@ footer: "AGPL-3.0 Licensed | Copyright 2025-present All API Hub"
 - **我想更省事**：[资产变动一眼看清](./balance-history.md) -> [同步账号到其它 AI 工具](./get-started.md#quick-export-sites)
 
 ### 🛠️ 我是进阶玩家 (Key 收藏家)
-- **密钥管理**：[将独立 URL+Key 保存为凭证](./api-credential-profiles.md)
+- **密钥管理**：[将独立 URL+Key 保存到 API 凭据库](./api-credential-profiles.md)
 - **可用性测试**：[批量验证接口与 CLI 兼容性](./web-ai-api-check.md)
 - **跨端同步**：[配置 WebDAV 加密备份](./webdav-sync.md)
 
@@ -73,9 +73,10 @@ footer: "AGPL-3.0 Licensed | Copyright 2025-present All API Hub"
 
 ## 🧩 支持的系统架构
 
-All API Hub 深度兼容以下开源及闭源系统：
-- **开源架构**：One API, New API, Sub2API, Veloera, AxonHub, One-Hub, Done-Hub 等。
-- **特色架构**：AnyRouter, Neo-API, Super-API, VoAPI 等。
+不论你用的是哪种架构，我们基本都支持：
+- **账号站点兼容架构**：One API, New API, Veloera, One-Hub, Done-Hub, Sub2API 等。
+- **特色账号平台与兼容实现**：AIHubMix, AnyRouter, Neo-API, Super-API, v-api 等。
+- **自建管理后台**：New API, Veloera, Done-Hub, Octopus, AxonHub, Claude Code Hub 等，用于渠道管理、迁移和部分模型同步。
 
 > 如果你在 macOS 上使用 Safari，请先查看 [Safari 安装指南](./safari-install.md)。
 > 如果你使用 QQ/360/Brave 等浏览器，请查看 [手动安装指南](./other-browser-install.md)。
@@ -95,3 +96,62 @@ All API Hub 深度兼容以下开源及闭源系统：
   alt="All API Hub 微信群二维码"
   style="width: min(280px, 100%);"
 />
+
+<a id="sponsors"></a>
+## ❤️ 赞助商
+
+<div class="readme-sponsor">
+  <div class="readme-sponsor-logo">
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">
+      <img src="../../resources/partners/packycode.png" alt="PackyCode">
+    </a>
+  </div>
+  <p class="readme-sponsor-copy">
+    感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode
+    为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=all-api-hub">此链接</a>注册并在充值时填写"all-api-hub"优惠码，首次充值可以享受9折优惠！
+  </p>
+</div>
+
+<style>
+.readme-sponsor {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.readme-sponsor-logo {
+  flex: 0 0 180px;
+  text-align: center;
+}
+
+.readme-sponsor-logo img {
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+
+.readme-sponsor-copy {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .readme-sponsor {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .readme-sponsor-logo {
+    flex-basis: auto;
+    width: 100%;
+    text-align: left;
+  }
+
+  .readme-sponsor-logo img {
+    width: 128px;
+  }
+}
+</style>

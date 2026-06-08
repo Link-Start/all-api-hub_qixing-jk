@@ -3,11 +3,10 @@
 </h4>
 
 <div align="center">
-  <img src="src/assets/icon.png" alt="All API Hub Logo" width="128" height="128">
 
 # All API Hub – Your All-in-One AI Asset Manager
 
-**One-stop management for New API-compatible relay accounts: balance/usage dashboards, model price comparison, automatic check-in, site keys and standalone API credential management, in-page API availability testing, and channel/model sync & redirect**
+**One-stop management for New API-compatible relay accounts: balances, usage, model prices, check-ins, API credentials, in-page testing, and channel/model sync & redirects**
 
 <p align="center">
 <a href="https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo">
@@ -19,29 +18,22 @@
 <a href="https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}">
   <img alt="Firefox Add-on" src="https://img.shields.io/amo/v/{bc73541a-133d-4b50-b261-36ea20df0d24}?label=Firefox&logo=firefoxbrowser&style=flat">
 </a>
-<a href="https://github.com/qixing-jk/all-api-hub/releases">
-  <img alt="GitHub version" src="https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat">
-</a>
 </p>
 
-**[⚡ Quick Start](https://all-api-hub.qixing1217.top/en/get-started.html) | [📚 Docs](https://all-api-hub.qixing1217.top/en/) | [💬 Community](https://all-api-hub.qixing1217.top/#community) | [🔌 Integrations](https://all-api-hub.qixing1217.top/en/supported-export-tools.html) | [🌐 Supported Sites](https://all-api-hub.qixing1217.top/en/supported-sites.html) | [❓ FAQ](https://all-api-hub.qixing1217.top/en/faq.html) | [📜 Changelog](https://all-api-hub.qixing1217.top/en/changelog.html)**
+**[⚡ Quick Start](https://all-api-hub.qixing1217.top/en/get-started.html) | [🌐 Supported Sites](https://all-api-hub.qixing1217.top/en/supported-sites.html) | [🔌 Integrations](https://all-api-hub.qixing1217.top/en/supported-export-tools.html) | [📜 Changelog](https://all-api-hub.qixing1217.top/en/changelog.html)**
 
 <p align="center">
-  <strong>📢 Discussion:</strong>
-  <a href="https://linux.do/t/topic/1001042">All API Hub Thread on Linux.do</a>
-</p>
-
-<a id="community"></a>
-<p align="center">
-  <strong>💬 Community:</strong> 
+  <a href="https://linux.do/t/topic/1001042">
+    <img alt="Linux.do discussion thread" src="https://img.shields.io/badge/Discussion-Linux.do-faa511?logo=linux&logoColor=white" />
+  </a>
   <a href="./resources/wechat_group.png">
-    <img alt="WeChat-Chinese Group" src="https://img.shields.io/badge/WeChat-Chinese%20Group-green" />
+    <img alt="WeChat Chinese group" src="https://img.shields.io/badge/WeChat-Chinese%20Group-green?logo=wechat&logoColor=white" />
   </a>
   <a href="https://discord.gg/RmFXZ577ZQ">
-    <img alt="Discord-Multilingual Community" src="https://img.shields.io/badge/Discord-Multilingual%20Community-5865F2?logo=discord&logoColor=white">
+    <img alt="Discord multilingual community" src="https://img.shields.io/badge/Discord-Multilingual%20Community-5865F2?logo=discord&logoColor=white">
   </a>
   <a href="https://t.me/qixing_chat">
-    <img alt="Telegram-Multilingual Group" src="https://img.shields.io/badge/Telegram-Multilingual%20Group-blue?logo=telegram">
+    <img alt="Telegram multilingual group" src="https://img.shields.io/badge/Telegram-Multilingual%20Group-blue?logo=telegram&logoColor=white">
   </a>
 </p>
 
@@ -50,68 +42,64 @@
 <a id="introduction"></a>
 ## ❓ Why All API Hub?
 
-**In simple terms**: AI relay sites are like a marketplace for AI credits, letting you access top-tier models such as ChatGPT, Claude, and Midjourney in one place at very low prices, sometimes even for free.
+**In simple terms**: AI relay sites are like a marketplace for AI credits, giving you low-cost or even free access to models such as ChatGPT, Claude, and GPT Image.
 
 But once you have multiple accounts, management quickly becomes painful:
 
-- 📂 **Scattered assets**: To check balances and spending, you have to sign in to each site one by one.
-- 💲 **Messy pricing**: Every site uses different billing ratios, so it is hard to tell which one is actually the best deal.
-- ✅ **Missed daily perks**: Many sites offer free daily check-in credits, but manual check-ins are tedious and easy to forget.
-- 🔌 **Annoying setup work**: Pasting API credentials into different AI tools such as Immersive Translate or Cherry Studio gets old fast.
+- 📂 **Scattered assets**: Balances and usage are spread across separate sites.
+- 💲 **Messy pricing**: Different billing ratios make the best deal hard to spot.
+- ✅ **Missed daily perks**: Manual daily check-ins are easy to forget.
+- 🔌 **Annoying setup work**: API details must be copied into tools such as cc-switch and Cherry Studio again and again.
 
-**All API Hub is your all-purpose AI asset manager.** Just add your site URLs and let the extension handle the rest.
+**All API Hub is your AI asset manager**: add your site URLs and let the extension handle the rest.
 
 <a id="features"></a>
 ## ✨ What Can It Do for You?
 
 ### 📊 Unified Dashboard for Multiple Sites
-- **Multi-account asset overview**: See balances, total usage, and health status for all your sites in one panel.
-- **Smart site detection**: Paste a URL and the extension automatically detects the architecture type, billing ratio, and setup details.
-- **Standalone credential profiles**: Manage `URL + Key` pairs directly, with tags for organization, as easily as managing bookmarks.
+- **Multi-account asset overview**: See balances, usage, and health status in one panel.
+- **Smart site detection**: Paste a URL to detect the architecture, billing ratio, and setup details.
+- **API credential library**: Save common `Base URL + API Key` pairs for copying, API verification, model lookup, and balance/usage checks.
 
 ### 💰 Smarter Savings and Automated Gains
-- **Model price comparison**: Automatically calculate the effective per-model price across sites so you can find the best-value group and endpoint.
-- **Fully automated check-in flow**: Run check-ins for all supported sites with one click or on a schedule, so your stored quota keeps growing.
+- **Model price comparison**: Calculate effective model prices across sites to find better-value groups and endpoints.
+- **Fully automated check-in flow**: Run supported site check-ins with one click or on a schedule.
 - **Deep usage analytics**: Generate reports by site, account, model, and date, including heatmaps and slow-request analysis.
 
 ### 🚀 Fast Ecosystem Integration
-- **One-click quick export**: Deep integration with **CherryStudio, CC Switch, CLIProxyAPI, Claude Code Router, Kilo Code**, and more.
-- **Admin workflow tools**: Built-in productivity tools for self-hosted site admins, including channel management, model redirection, and channel sync.
+- **One-click quick export**: Sync to **CherryStudio, CC Switch, CLIProxyAPI, Claude Code Router, Kilo Code**, and more. See [Supported Tools](https://all-api-hub.qixing1217.top/en/supported-export-tools.html).
+- **Admin workflow tools**: Import accounts/keys as self-hosted site channels, with tools for channel management, model redirection, and channel sync.
 - **Web sniffing and quick capture**: Select a Base URL or API Key on a webpage to instantly open the test popup and save it. See [Web AI API Sniffing & Verification](https://all-api-hub.qixing1217.top/en/web-ai-api-check.html).
-- **Supported integrations**: 👉 [Supported Tools](https://all-api-hub.qixing1217.top/en/supported-export-tools.html)
 
 ### 🧪 Reliability Safeguards
 - **Multi-dimensional API verification**: Batch test model availability, token compatibility, and CLI proxy availability.
 - **Cloudflare challenge assistant**: Automatically helps you get through Cloudflare challenges so data refreshes and API calls stay uninterrupted.
 
 ### 🔒 Privacy and Security
-- **Local-first data storage**: Your keys and account data stay on your own device and are never uploaded to a server.
-- **Encrypted sync**: Supports encrypted WebDAV backup so you can restore everything instantly on another machine.
-
-
-> [!NOTE]
-> Loved the original [One API Hub](https://github.com/fxaxg/one-api-hub)? You will probably like All API Hub even more. It has been heavily refactored while keeping data compatibility, so you can import with one click.
+- **Local by default**: Keys and account data stay on your device unless you enable WebDAV backup or sync.
+- **Encrypted sync**: Supports encrypted WebDAV backup so you can restore data on another machine.
 
 <a id="installation"></a>
 ## 🚀 Quick Installation
 
 > [!IMPORTANT]
-> **For 90% of users, the store build is the right choice.** It is the easiest to install, supports automatic updates, and is the most hassle-free option.
+> **For most users, the store build is recommended.** It is easy to install and supports automatic updates.
 
 | Channel | Install Link | Current Version | Users |
 |------|----------|----------|-------|
 | Chrome Web Store | [Chrome Web Store](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome version](https://img.shields.io/chrome-web-store/v/lapnciffpekdengooeolaienkeoilfeo?label=Chrome&logo=googlechrome&style=flat)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome Web Store Users](https://img.shields.io/chrome-web-store/users/lapnciffpekdengooeolaienkeoilfeo?label=Chrome%20Users)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
 | Edge Add-ons | [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge version](https://img.shields.io/badge/dynamic/json?label=Edge&prefix=v&query=%24.version&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fpcokpjaffghgipcgjhapgdpeddlhblaa&logo=microsoftedge&style=flat)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge Add-ons Users](https://img.shields.io/badge/dynamic/json?label=Edge%20Users&query=$.activeInstallCount&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/pcokpjaffghgipcgjhapgdpeddlhblaa)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | Firefox Add-ons | [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Firefox version](https://img.shields.io/amo/v/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox&logo=firefoxbrowser&style=flat)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Mozilla Add-on Users](https://img.shields.io/amo/users/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox%20Users)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
-| GitHub Releases | [Browse All Releases](https://github.com/qixing-jk/all-api-hub/releases) | [![GitHub version](https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat)](https://github.com/qixing-jk/all-api-hub/releases/latest) | [![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/qixing-jk/all-api-hub/total?label=Total%20Downloads)](https://github.com/qixing-jk/all-api-hub/releases) |
 
 <details>
 <summary>📦 Need manual installation or Nightly builds? (Click to expand)</summary>
 
 | Channel | Download Link | Best For |
 |------|----------|----------|
-| Stable release | [Download Stable](https://github.com/qixing-jk/all-api-hub/releases/latest) | When you cannot access the store or want to manage versions manually |
-| Nightly pre-release | [Download Nightly](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) | When you want early access to new features and are willing to help test |
+| GitHub Stable | [Download Stable](https://github.com/qixing-jk/all-api-hub/releases/latest) | When you cannot install the store build or need to temporarily install a published fix manually |
+| Nightly pre-release | [Download Nightly](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) | When you want early access and are willing to help test; it may be less stable than the store build |
+
+GitHub Stable and Nightly are manual installation channels and do not auto-update. Star / Watch the repository to receive new version notifications.
 
 **Other environments:**
 - **Mobile browsers**: Supports mobile Edge, Firefox for Android, Kiwi, and more. See the [mobile browser guide](https://all-api-hub.qixing1217.top/en/faq.html#mobile-browser-support).
@@ -119,6 +107,26 @@ But once you have multiple accounts, management quickly becomes painful:
 - **Safari (Mac)**: Requires Xcode for compilation. See the [Safari installation guide](https://all-api-hub.qixing1217.top/en/safari-install.html).
 
 </details>
+
+<a id="sponsors"></a>
+## ❤️ Sponsors
+
+> [Want to appear here?](mailto:street-anime-olive@duck.com)
+
+<div>
+  <a href="https://www.packyapi.com/register?aff=all-api-hub">
+    <img src="resources/partners/packycode.png" alt="PackyCode" width="128" align="left" hspace="12" vspace="4">
+  </a>
+  <p>
+    Thanks to PackyCode for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex,
+    Gemini, and more. PackyCode provides special discounts for our software users: register using
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">this link</a> and enter the "all-api-hub" promo code during first recharge to get 10% off.
+  </p>
+</div>
+<br clear="left">
+
+> [!NOTE]
+> If you previously used [One API Hub](https://github.com/fxaxg/one-api-hub), All API Hub has been heavily refactored while preserving data compatibility, so you can import your existing data with one click.
 
 <a id="quick-start"></a>
 ## 🧑‍🚀 30-Second Quick Start
@@ -133,8 +141,9 @@ But once you have multiple accounts, management quickly becomes painful:
 <a id="introduction-tech"></a>
 ### 🧩 Strong Compatibility
 No matter which architecture you use, there is a good chance we support it:
-- **Mainstream open source**: [one-api](https://github.com/songquanpeng/one-api), [new-api](https://github.com/QuantumNous/new-api), [Sub2API](https://github.com/Wei-Shaw/sub2api), [one-hub](https://github.com/MartialBE/one-hub), [done-hub](https://github.com/deanxv/done-hub), [Veloera](https://github.com/Veloera/Veloera)
-- **Specialized architectures**: [AnyRouter](https://anyrouter.top), Neo-API, Super-API, and more
+- **Account-site compatible architectures**: [one-api](https://github.com/songquanpeng/one-api), [new-api](https://github.com/QuantumNous/new-api), [Veloera](https://github.com/Veloera/Veloera), [one-hub](https://github.com/MartialBE/one-hub), [done-hub](https://github.com/deanxv/done-hub), [Sub2API](https://github.com/Wei-Shaw/sub2api), and more
+- **Specialized account platforms and compatible implementations**: [AIHubMix](https://aihubmix.com/?aff=W3DN), [AnyRouter](https://anyrouter.top), Neo-API, Super-API, v-api, and more
+- **Self-hosted admin backends**: [new-api](https://github.com/QuantumNous/new-api), [Veloera](https://github.com/Veloera/Veloera), [done-hub](https://github.com/deanxv/done-hub), [Octopus](https://github.com/bestruirui/octopus), [AxonHub](https://github.com/looplj/axonhub), [Claude Code Hub](https://github.com/ding113/claude-code-hub), and more, for channel management, migration, and partial model sync
 - **Full list**: 👉 [Supported Sites](https://all-api-hub.qixing1217.top/en/supported-sites.html)
 
 <a id="ui-preview"></a>
@@ -187,6 +196,17 @@ No matter which architecture you use, there is a good chance we support it:
 ## 🛠️ Development Guide
 
 Please refer to the [CONTRIBUTING](CONTRIBUTING.md) for more information.
+
+<a id="license"></a>
+## 📜 License and Commercial Licensing
+
+All API Hub is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+Commercial licenses are available for organizations or individuals who need terms not provided by AGPL-3.0, including proprietary distribution, closed-source modifications, white-label redistribution, or other private commercial integration use cases.
+
+For commercial licensing, contact: <street-anime-olive@duck.com>
+
+Commercial licenses apply only to code and assets for which the All API Hub maintainers have the right to grant commercial terms. Third-party dependencies and historical MIT-licensed portions derived from [One API Hub](https://github.com/fxaxg/one-api-hub) remain subject to their own copyright and license notices. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 <a id="tech-stack"></a>
 ## 🏗️ Tech Stack

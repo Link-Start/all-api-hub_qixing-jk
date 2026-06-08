@@ -299,12 +299,17 @@ describe("UsageAnalytics charts", () => {
     render(<UsageAnalytics />)
     await screen.findByText("usageAnalytics:charts.dailyOverview.title")
 
-    const dailyInstance = echartsInstances[0]
-    const legendSelectHandler = dailyInstance?.on.mock.calls.find(
-      ([eventName]) => eventName === "legendselectchanged",
-    )?.[1]
+    let dailyInstance: (typeof echartsInstances)[number] | undefined
+    let legendSelectHandler: ((event: unknown) => void) | undefined
 
-    expect(legendSelectHandler).toBeTypeOf("function")
+    await waitFor(() => {
+      dailyInstance = echartsInstances[0]
+      legendSelectHandler = dailyInstance?.on.mock.calls.find(
+        ([eventName]) => eventName === "legendselectchanged",
+      )?.[1] as ((event: unknown) => void) | undefined
+
+      expect(legendSelectHandler).toBeTypeOf("function")
+    })
 
     await act(async () => {
       legendSelectHandler?.({

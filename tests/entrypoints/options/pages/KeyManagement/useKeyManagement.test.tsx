@@ -11,6 +11,16 @@ import { buildTokenIdentityKey } from "~/features/KeyManagement/utils"
 import { useAccountData } from "~/hooks/useAccountData"
 import { getApiService } from "~/services/apiService"
 import { API_ERROR_CODES, ApiError } from "~/services/apiService/common/errors"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_STATUS_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { AuthTypeEnum, SiteHealthStatus, type DisplaySiteData } from "~/types"
 import { testI18n } from "~~/tests/test-utils/i18n"
 import { createToken } from "~~/tests/utils/keyManagementFactories"
@@ -19,6 +29,8 @@ const {
   getManagedSiteTokenChannelStatusMock,
   managedSiteTokenChannelStatuses,
   mockedUseUserPreferencesContext,
+  startProductAnalyticsActionMock,
+  trackerCompleteMock,
 } = vi.hoisted(() => ({
   getManagedSiteTokenChannelStatusMock: vi.fn(),
   managedSiteTokenChannelStatuses: {
@@ -27,6 +39,8 @@ const {
     UNKNOWN: "unknown",
   },
   mockedUseUserPreferencesContext: vi.fn(),
+  startProductAnalyticsActionMock: vi.fn(),
+  trackerCompleteMock: vi.fn(),
 }))
 
 vi.mock("~/hooks/useAccountData", () => ({
@@ -46,6 +60,17 @@ vi.mock("~/services/managedSites/tokenChannelStatus", () => ({
 vi.mock("~/contexts/UserPreferencesContext", () => ({
   useUserPreferencesContext: () => mockedUseUserPreferencesContext(),
 }))
+
+vi.mock("~/services/productAnalytics/actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/actions")>()
+
+  return {
+    ...actual,
+    startProductAnalyticsAction: (...args: unknown[]) =>
+      startProductAnalyticsActionMock(...args),
+  }
+})
 
 vi.mock("react-hot-toast", () => ({
   default: {
@@ -68,7 +93,7 @@ const createDisplayAccount = (
   siteType: SITE_TYPES.UNKNOWN,
   baseUrl: "https://example.com",
   token: "token",
-  userId: 1,
+  userId: "1",
   authType: AuthTypeEnum.AccessToken,
   checkIn: { enableDetection: false },
   ...overrides,
@@ -106,6 +131,11 @@ describe("useKeyManagement enabled account filtering", () => {
     getManagedSiteTokenChannelStatusMock.mockReset()
     getManagedSiteTokenChannelStatusMock.mockResolvedValue({
       status: managedSiteTokenChannelStatuses.NOT_ADDED,
+    })
+    startProductAnalyticsActionMock.mockReset()
+    trackerCompleteMock.mockReset()
+    startProductAnalyticsActionMock.mockReturnValue({
+      complete: trackerCompleteMock,
     })
     mockedUseUserPreferencesContext.mockReset()
     mockedUseUserPreferencesContext.mockReturnValue({
@@ -441,6 +471,443 @@ describe("useKeyManagement enabled account filtering", () => {
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
+  it("tracks all-account token refresh with sanitized aggregate buckets", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+
+    const accountA = createDisplayAccount({
+      id: "analytics-refresh-a",
+      name: "Secret Account A",
+      baseUrl: "https://secret-a.example/v1",
+    })
+    const accountB = createDisplayAccount({
+      id: "analytics-refresh-b",
+      name: "Secret Account B",
+      baseUrl: "https://secret-b.example/v1",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [accountA, accountB],
+    } as any)
+
+    const fetchAccountTokens = vi.fn(async (request: any) => {
+      if (request?.accountId === accountA.id) {
+        return [
+          createToken({
+            id: 301,
+            key: "sk-raw-refresh-secret-a",
+            name: "Sensitive Token A",
+            expired_time: 0,
+          }),
+        ]
+      }
+
+      throw new Error(`raw failure for ${request?.accountId}`)
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() =>
+      expect(trackerCompleteMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+            itemCount: 2,
+            successCount: 1,
+            failureCount: 1,
+          },
+        },
+      ),
+    )
+
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccountTokens,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "sk-raw-refresh-secret-a",
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "Secret Account",
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "raw failure",
+    )
+  })
+
+  it("maps structured all-account token refresh failures to safe analytics categories", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+
+    const account = createDisplayAccount({
+      id: "analytics-refresh-auth",
+      name: "Secret Auth Account",
+      baseUrl: "https://secret-auth.example/v1",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn(async () => {
+      throw new ApiError("private unauthorized", 401, "/api/token")
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() =>
+      expect(trackerCompleteMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+            itemCount: 1,
+            successCount: 0,
+            failureCount: 1,
+          },
+        },
+      ),
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "private unauthorized",
+    )
+  })
+
+  it("maps structured single-account token refresh failures to safe analytics categories", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+
+    const account = createDisplayAccount({
+      id: "analytics-single-refresh-auth",
+      name: "Secret Single Auth Account",
+      baseUrl: "https://secret-single-auth.example/v1",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn(async () => {
+      throw new ApiError("private unauthorized", 401, "/api/token")
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(trackerCompleteMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          },
+        },
+      ),
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "private unauthorized",
+    )
+  })
+
+  it("marks superseded all-account token refresh analytics as skipped", async () => {
+    const account = createDisplayAccount({
+      id: "superseded-refresh-acc",
+      name: "Superseded Refresh Account",
+      baseUrl: "https://superseded.example/v1",
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    let resolveInitialLoad!: (tokens: any[]) => void
+    const fetchAccountTokens = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialLoad = resolve
+          }),
+      )
+      .mockResolvedValue([])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const allAccountsComplete = vi.fn().mockResolvedValue(undefined)
+    const singleAccountComplete = vi.fn().mockResolvedValue(undefined)
+    startProductAnalyticsActionMock
+      .mockReturnValueOnce({ complete: allAccountsComplete })
+      .mockReturnValueOnce({ complete: singleAccountComplete })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() => expect(fetchAccountTokens).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(startProductAnalyticsActionMock).toHaveBeenCalledTimes(2),
+    )
+
+    await act(async () => {
+      resolveInitialLoad([
+        createToken({
+          id: 309,
+          key: "sk-superseded",
+          name: "Superseded Token",
+          accountId: account.id,
+          accountName: account.name,
+          expired_time: 0,
+        }),
+      ])
+    })
+
+    await waitFor(() =>
+      expect(allAccountsComplete).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Skipped,
+        {
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+            itemCount: 1,
+          },
+        },
+      ),
+    )
+    expect(allAccountsComplete).not.toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: expect.objectContaining({
+          successCount: expect.any(Number),
+          failureCount: expect.any(Number),
+        }),
+      }),
+    )
+  })
+
+  it("tracks retry-failed token refresh with retry_failed mode and aggregate counts", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+
+    const accountA = createDisplayAccount({
+      id: "analytics-retry-a",
+      name: "Retry Account A",
+      baseUrl: "https://retry-a.example/v1",
+    })
+    const accountB = createDisplayAccount({
+      id: "analytics-retry-b",
+      name: "Retry Account B",
+      baseUrl: "https://retry-b.example/v1",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [accountA, accountB],
+    } as any)
+
+    let accountBCalls = 0
+    const fetchAccountTokens = vi.fn(async (request: any) => {
+      if (request?.accountId === accountA.id) return []
+      if (request?.accountId === accountB.id) {
+        accountBCalls += 1
+        if (accountBCalls === 1) {
+          throw new Error("first raw retry failure")
+        }
+        return []
+      }
+      return []
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() => expect(result.current.failedAccounts).toHaveLength(1))
+    trackerCompleteMock.mockClear()
+    startProductAnalyticsActionMock.mockClear()
+
+    await act(async () => {
+      await result.current.retryFailedAccounts()
+    })
+
+    await waitFor(() =>
+      expect(trackerCompleteMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+            itemCount: 1,
+            successCount: 1,
+            failureCount: 0,
+          },
+        },
+      ),
+    )
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccountTokens,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "first raw retry failure",
+    )
+  })
+
+  it("maps structured retry-failed token refresh failures to safe analytics categories", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+
+    const account = createDisplayAccount({
+      id: "analytics-retry-rate-limit",
+      name: "Retry Rate Limit Account",
+      baseUrl: "https://retry-rate-limit.example/v1",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    let calls = 0
+    const fetchAccountTokens = vi.fn(async () => {
+      calls += 1
+      throw new ApiError(
+        calls === 1 ? "initial private failure" : "retry private failure",
+        429,
+        "/api/token",
+      )
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() => expect(result.current.failedAccounts).toHaveLength(1))
+    trackerCompleteMock.mockClear()
+
+    await act(async () => {
+      await result.current.retryFailedAccounts()
+    })
+
+    await waitFor(() =>
+      expect(trackerCompleteMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.RateLimit,
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+            itemCount: 1,
+            successCount: 0,
+            failureCount: 1,
+          },
+        },
+      ),
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "retry private failure",
+    )
+  })
+
+  it("keeps retry-failed refresh successful when analytics completion rejects", async () => {
+    const accountA = createDisplayAccount({
+      id: "best-effort-retry-a",
+      name: "Best Effort Retry A",
+      baseUrl: "https://retry-a.example/v1",
+    })
+    const accountB = createDisplayAccount({
+      id: "best-effort-retry-b",
+      name: "Best Effort Retry B",
+      baseUrl: "https://retry-b.example/v1",
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [accountA, accountB],
+    } as any)
+
+    let accountBCalls = 0
+    const fetchAccountTokens = vi.fn(async (request: any) => {
+      if (request?.accountId === accountB.id) {
+        accountBCalls += 1
+        if (accountBCalls === 1) {
+          throw new Error("initial retry target failure")
+        }
+      }
+
+      return []
+    })
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const initialRefreshComplete = vi.fn().mockResolvedValue(undefined)
+    const retryComplete = vi.fn().mockRejectedValue(new Error("analytics down"))
+    startProductAnalyticsActionMock
+      .mockReturnValueOnce({ complete: initialRefreshComplete })
+      .mockReturnValueOnce({ complete: retryComplete })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE)
+    })
+
+    await waitFor(() => expect(result.current.failedAccounts).toHaveLength(1))
+
+    await expect(
+      act(async () => {
+        await result.current.retryFailedAccounts()
+      }),
+    ).resolves.toBeUndefined()
+
+    await waitFor(() => expect(result.current.failedAccounts).toHaveLength(0))
+    expect(retryComplete).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+        },
+      },
+    )
+  })
+
   it("supports account filtering in all mode while keeping per-account summary counts", async () => {
     const mockedUseAccountData = vi.mocked(useAccountData)
 
@@ -675,11 +1142,25 @@ describe("useKeyManagement enabled account filtering", () => {
     )
     expect(resolveApiTokenKey).toHaveBeenCalledTimes(1)
     expect(result.current.getVisibleTokenKey(token)).toBe(resolvedKey)
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RevealAccountTokenKey,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      resolvedKey,
+    )
 
+    trackerCompleteMock.mockClear()
     await act(async () => {
       await result.current.toggleKeyVisibility(account, token)
     })
     expect(result.current.visibleKeys.has(tokenIdentityKey)).toBe(false)
+    expect(trackerCompleteMock).not.toHaveBeenCalled()
 
     await act(async () => {
       await result.current.toggleKeyVisibility(account, token)
@@ -753,6 +1234,203 @@ describe("useKeyManagement enabled account filtering", () => {
         name: "Managed Channel 55",
       },
     })
+  })
+
+  it("tracks manual managed-site status refresh with sanitized aggregate counts", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+    const account = createDisplayAccount({
+      id: "manual-status-analytics-acc",
+      name: "Manual Status Analytics Account",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    getManagedSiteTokenChannelStatusMock
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.ADDED,
+        matchedChannel: {
+          id: 77,
+          name: "Private Managed Channel",
+        },
+      })
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 204,
+        key: "sk-manual-refresh-secret",
+        name: "Manual Refresh Secret Token",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+    startProductAnalyticsActionMock.mockClear()
+    trackerCompleteMock.mockClear()
+
+    await act(async () => {
+      await result.current.refreshManagedSiteTokenStatuses()
+    })
+
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteTokenStatus,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+          statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Healthy,
+        },
+      },
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "sk-manual-refresh-secret",
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "Manual Refresh Secret Token",
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "Private Managed Channel",
+    )
+  })
+
+  it("keeps manual managed-site status refresh successful when analytics completion rejects", async () => {
+    const account = createDisplayAccount({
+      id: "manual-status-best-effort-acc",
+      name: "Manual Status Best Effort Account",
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    getManagedSiteTokenChannelStatusMock
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.ADDED,
+      })
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 206,
+        key: "token-206",
+        name: "Token 206",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const initialLoadComplete = vi.fn().mockResolvedValue(undefined)
+    const manualRefreshComplete = vi
+      .fn()
+      .mockRejectedValue(new Error("analytics down"))
+    startProductAnalyticsActionMock
+      .mockReturnValueOnce({ complete: initialLoadComplete })
+      .mockReturnValueOnce({ complete: manualRefreshComplete })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+
+    await expect(
+      act(async () => {
+        await result.current.refreshManagedSiteTokenStatuses()
+      }),
+    ).resolves.toBeUndefined()
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(2),
+    )
+    expect(manualRefreshComplete).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+          statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Healthy,
+        },
+      },
+    )
+    expect(result.current.isManagedSiteStatusRefreshing).toBe(false)
+  })
+
+  it("does not track automatic managed-site status checks as manual refresh", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+    const account = createDisplayAccount({
+      id: "auto-status-analytics-acc",
+      name: "Auto Status Analytics Account",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 205,
+        key: "token-205",
+        name: "Token 205",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+
+    expect(result.current.managedSiteTokenStatuses).toMatchObject({
+      "auto-status-analytics-acc:205": {
+        result: {
+          status: managedSiteTokenChannelStatuses.NOT_ADDED,
+        },
+      },
+    })
+    expect(startProductAnalyticsActionMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteTokenStatus,
+      }),
+    )
   })
 
   it("skips automatic and manual managed-site status checks when Veloera is selected", async () => {
@@ -1122,6 +1800,247 @@ describe("useKeyManagement enabled account filtering", () => {
         resolvedChannelKeysById: {
           55: "resolved-channel-key",
         },
+      }),
+    )
+  })
+
+  it("does not return stale managed-site status results from superseded forced refreshes", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+    const account = createDisplayAccount({
+      id: "stale-result-acc",
+      name: "Stale Result Account",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    let resolveFirstRefreshStatus: (
+      value: Awaited<ReturnType<typeof getManagedSiteTokenChannelStatusMock>>,
+    ) => void = () => {}
+    const firstRefreshStatus = new Promise<
+      Awaited<ReturnType<typeof getManagedSiteTokenChannelStatusMock>>
+    >((resolve) => {
+      resolveFirstRefreshStatus = resolve
+    })
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 606,
+        key: "token-606",
+        name: "Token 606",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+    getManagedSiteTokenChannelStatusMock
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+      .mockReturnValueOnce(firstRefreshStatus)
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+
+    let firstRefreshPromise: ReturnType<
+      typeof result.current.refreshManagedSiteTokenStatusForToken
+    > = Promise.resolve(undefined)
+    act(() => {
+      firstRefreshPromise =
+        result.current.refreshManagedSiteTokenStatusForToken(
+          result.current.tokens[0]!,
+        )
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(2),
+    )
+
+    await act(async () => {
+      await result.current.refreshManagedSiteTokenStatusForToken(
+        result.current.tokens[0]!,
+      )
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(3),
+    )
+
+    let firstRefreshResult:
+      | Awaited<
+          ReturnType<
+            typeof result.current.refreshManagedSiteTokenStatusForToken
+          >
+        >
+      | undefined
+    await act(async () => {
+      resolveFirstRefreshStatus({
+        status: managedSiteTokenChannelStatuses.ADDED,
+        matchedChannel: {
+          id: 91,
+          name: "Stale Managed Channel 91",
+        },
+      })
+      firstRefreshResult = await firstRefreshPromise
+    })
+
+    expect(firstRefreshResult).toBeUndefined()
+  })
+
+  it("reuses resolved channel keys from previous managed-site status checks", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+    const account = createDisplayAccount({
+      id: "resolved-cache-acc",
+      name: "Resolved Cache Account",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 604,
+        key: "token-604",
+        name: "Token 604",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+    getManagedSiteTokenChannelStatusMock
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.ADDED,
+        matchedChannel: { id: 56, name: "Managed Channel 56" },
+        resolvedChannelKeysById: {
+          56: "resolved-channel-key",
+        },
+      })
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.ADDED,
+        matchedChannel: { id: 56, name: "Managed Channel 56" },
+      })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+
+    await act(async () => {
+      await result.current.refreshManagedSiteTokenStatusForToken(
+        result.current.tokens[0]!,
+      )
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(2),
+    )
+    expect(getManagedSiteTokenChannelStatusMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        resolvedChannelKeysById: {
+          56: "resolved-channel-key",
+        },
+      }),
+    )
+  })
+
+  it("does not cache resolved channel keys from stale managed-site status checks", async () => {
+    const mockedUseAccountData = vi.mocked(useAccountData)
+    const account = createDisplayAccount({
+      id: "stale-resolved-cache-acc",
+      name: "Stale Resolved Cache Account",
+    })
+
+    mockedUseAccountData.mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    let resolveInitialStatus: (
+      value: Awaited<ReturnType<typeof getManagedSiteTokenChannelStatusMock>>,
+    ) => void = () => {}
+    const initialStatus = new Promise<
+      Awaited<ReturnType<typeof getManagedSiteTokenChannelStatusMock>>
+    >((resolve) => {
+      resolveInitialStatus = resolve
+    })
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([
+      createToken({
+        id: 605,
+        key: "token-605",
+        name: "Token 605",
+        expired_time: 0,
+      }),
+    ])
+    vi.mocked(getApiService).mockReturnValue({ fetchAccountTokens } as any)
+    getManagedSiteTokenChannelStatusMock
+      .mockReturnValueOnce(initialStatus)
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+      .mockResolvedValueOnce({
+        status: managedSiteTokenChannelStatuses.NOT_ADDED,
+      })
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(1),
+    )
+
+    await act(async () => {
+      await result.current.refreshManagedSiteTokenStatusForToken(
+        result.current.tokens[0]!,
+      )
+    })
+
+    await act(async () => {
+      resolveInitialStatus({
+        status: managedSiteTokenChannelStatuses.ADDED,
+        matchedChannel: { id: 57, name: "Managed Channel 57" },
+        resolvedChannelKeysById: {
+          57: "stale-resolved-channel-key",
+        },
+      })
+      await initialStatus
+    })
+
+    await act(async () => {
+      await result.current.refreshManagedSiteTokenStatusForToken(
+        result.current.tokens[0]!,
+      )
+    })
+
+    await waitFor(() =>
+      expect(getManagedSiteTokenChannelStatusMock).toHaveBeenCalledTimes(3),
+    )
+    expect(getManagedSiteTokenChannelStatusMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        resolvedChannelKeysById: undefined,
       }),
     )
   })
@@ -1651,6 +2570,15 @@ describe("useKeyManagement enabled account filtering", () => {
       )
     })
     expect(result.current.tokens).toEqual([])
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+        insights: {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        },
+      },
+    )
   })
 
   it("copies a resolved token secret to the clipboard and shows success feedback", async () => {
@@ -1688,6 +2616,18 @@ describe("useKeyManagement enabled account filtering", () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
       "keyManagement:messages.keyCopied",
     )
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.CopyAccountTokenKey,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "resolved-token-secret",
+    )
   })
 
   it("shows the clipboard error message when writing to the clipboard fails", async () => {
@@ -1723,6 +2663,15 @@ describe("useKeyManagement enabled account filtering", () => {
 
     expect(writeText).toHaveBeenCalledWith("resolved-token-secret")
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith("denied")
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Permission,
+      },
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "resolved-token-secret",
+    )
   })
 
   it("shows the resolver error message when a saved masked key cannot be copied", async () => {
@@ -1768,6 +2717,12 @@ describe("useKeyManagement enabled account filtering", () => {
     expect(writeText).not.toHaveBeenCalled()
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
       "messages:errors.tokenSecretUnavailable",
+    )
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+      },
     )
   })
 
@@ -1900,6 +2855,65 @@ describe("useKeyManagement enabled account filtering", () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
       "messages:errors.tokenSecretUnavailable",
     )
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RevealAccountTokenKey,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
+  })
+
+  it("does not show reveal failure feedback when analytics completion rejects after a successful reveal", async () => {
+    const account = createDisplayAccount({
+      id: "reveal-analytics-fail-acc",
+      name: "Reveal Analytics Failure Account",
+    })
+    const token = createToken({
+      id: 915,
+      key: "sk-reveal************mask",
+      name: "Reveal Analytics Failure Token",
+      accountId: account.id,
+      accountName: account.name,
+      expired_time: 0,
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const resolveApiTokenKey = vi.fn().mockResolvedValue("resolved-token-key")
+    vi.mocked(getApiService).mockReturnValue({
+      fetchAccountTokens: vi.fn().mockResolvedValue([token]),
+      resolveApiTokenKey,
+    } as any)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() => expect(result.current.tokens).toHaveLength(1))
+    trackerCompleteMock.mockRejectedValueOnce(new Error("analytics down"))
+
+    await act(async () => {
+      await result.current.toggleKeyVisibility(account, token)
+    })
+
+    expect(resolveApiTokenKey).toHaveBeenCalledTimes(1)
+    expect(result.current.getVisibleTokenKey(token)).toBe("resolved-token-key")
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
   })
 
   it("opens add-token state, edits a token, and reloads the current inventory on close", async () => {
@@ -2017,7 +3031,7 @@ describe("useKeyManagement enabled account filtering", () => {
     confirmSpy.mockRestore()
   })
 
-  it("does not delete a token when the confirmation dialog is cancelled", async () => {
+  it("deletes a token without using native browser confirmation", async () => {
     const account = createDisplayAccount({
       id: "cancel-delete-acc",
       name: "Cancel Delete Account",
@@ -2042,7 +3056,7 @@ describe("useKeyManagement enabled account filtering", () => {
       deleteApiToken,
     } as any)
 
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false)
+    const confirmSpy = vi.spyOn(window, "confirm")
 
     const { result } = renderHook(() => useKeyManagement(), {
       wrapper: createWrapper(),
@@ -2058,8 +3072,11 @@ describe("useKeyManagement enabled account filtering", () => {
       await result.current.handleDeleteToken(token)
     })
 
-    expect(deleteApiToken).not.toHaveBeenCalled()
-    expect(vi.mocked(toast.success)).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(deleteApiToken).toHaveBeenCalledWith(expect.anything(), token.id)
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      "keyManagement:messages.deleteSuccess",
+    )
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
 
     confirmSpy.mockRestore()
@@ -2108,6 +3125,135 @@ describe("useKeyManagement enabled account filtering", () => {
     })
 
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith("delete boom")
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccountToken,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
+
+    confirmSpy.mockRestore()
+  })
+
+  it("tracks confirmed token deletion without raw token metadata", async () => {
+    const account = createDisplayAccount({
+      id: "delete-analytics-acc",
+      name: "Raw Delete Account",
+    })
+    const token = createToken({
+      id: 909,
+      key: "sk-delete-secret",
+      name: "Raw Delete Token",
+      accountId: account.id,
+      accountName: account.name,
+      expired_time: 0,
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([token])
+    const deleteApiToken = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(getApiService).mockReturnValue({
+      fetchAccountTokens,
+      deleteApiToken,
+    } as any)
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() => expect(result.current.tokens).toHaveLength(1))
+    trackerCompleteMock.mockClear()
+    startProductAnalyticsActionMock.mockClear()
+
+    await act(async () => {
+      await result.current.handleDeleteToken(token)
+    })
+
+    expect(deleteApiToken).toHaveBeenCalledWith(expect.anything(), token.id)
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccountToken,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "sk-delete-secret",
+    )
+    expect(JSON.stringify(trackerCompleteMock.mock.calls)).not.toContain(
+      "Raw Delete",
+    )
+
+    confirmSpy.mockRestore()
+  })
+
+  it("does not show delete failure feedback when analytics completion rejects after a successful delete", async () => {
+    const account = createDisplayAccount({
+      id: "delete-analytics-fail-acc",
+      name: "Delete Analytics Failure Account",
+    })
+    const token = createToken({
+      id: 910,
+      key: "sk-delete-analytics-failure",
+      name: "Delete Analytics Failure Token",
+      accountId: account.id,
+      accountName: account.name,
+      expired_time: 0,
+    })
+
+    vi.mocked(useAccountData).mockReturnValue({
+      enabledDisplayData: [account],
+    } as any)
+
+    const fetchAccountTokens = vi.fn().mockResolvedValue([token])
+    const deleteApiToken = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(getApiService).mockReturnValue({
+      fetchAccountTokens,
+      deleteApiToken,
+    } as any)
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true)
+
+    const { result } = renderHook(() => useKeyManagement(), {
+      wrapper: createWrapper(),
+    })
+
+    act(() => {
+      result.current.setSelectedAccount(account.id)
+    })
+
+    await waitFor(() => expect(result.current.tokens).toHaveLength(1))
+    trackerCompleteMock.mockRejectedValueOnce(new Error("analytics down"))
+
+    await act(async () => {
+      await result.current.handleDeleteToken(token)
+    })
+
+    expect(deleteApiToken).toHaveBeenCalledWith(expect.anything(), token.id)
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      "keyManagement:messages.deleteSuccess",
+    )
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    expect(trackerCompleteMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
 
     confirmSpy.mockRestore()
   })

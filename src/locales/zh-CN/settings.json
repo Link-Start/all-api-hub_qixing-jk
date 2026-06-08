@@ -33,6 +33,10 @@
           "label": "日文",
           "name": "日语"
         },
+        "vi": {
+          "label": "越南",
+          "name": "越南语"
+        },
         "zh-CN": {
           "label": "简中",
           "name": "简体中文"
@@ -108,7 +112,7 @@
     },
     "title": "Claude Code Hub 集成设置",
     "unsupported": {
-      "description": "当前版本暂不支持 Claude Code Hub 的渠道迁移、模型同步、模型重定向和完整密钥查看。",
+      "description": "当前版本暂不支持 Claude Code Hub 的模型同步和模型重定向。",
       "title": "不支持的渠道操作"
     },
     "validation": {
@@ -356,6 +360,7 @@
       "allowAll": "授予推荐权限",
       "maybeLater": "稍后再说"
     },
+    "analyticsDisclosure": "扩展包含可关闭的匿名产品统计，帮助我们优先修复常见问题、优化常用功能和兼容性，并减少不必要的干扰；不会收集 API Key、Cookie、账号 URL、余额、请求内容或用户输入。",
     "intro": "权限只用于完成过盾必要的 Cookie/请求头操作，而且可以随时关闭。",
     "openSourceBadge": "开源 · 社区共建",
     "permissionListDescription": "绕过防火墙防护等功能的必要权限，让数据获取能在存在防火墙的网站上正常工作。",
@@ -374,6 +379,12 @@
       "error": "权限请求被取消",
       "success": "已授予全部推荐权限"
     }
+  },
+  "productAnalytics": {
+    "description": "帮助我们更快发现常见问题、改进常用流程并提升兼容性的匿名统计。我们不会收集 API Key、Cookie、账号 URL、余额、请求内容或用户输入。",
+    "enableDescription": "允许发送有限的功能使用情况、错误类别和粗略站点类型统计，用于优先改进最影响你体验的部分。",
+    "enableLabel": "启用匿名产品统计",
+    "title": "匿名产品统计"
   },
   "refresh": {
     "autoRefresh": "自动刷新",
@@ -454,13 +465,15 @@
   "siteAnnouncementNotifications": {
     "description": "控制是否在后台定时抓取已启用账号所属站点的网站公告。",
     "page": {
-      "description": "默认每 {{intervalMinutes}} 分钟后台检查一次，也可以手动立即检查。",
+      "description": "当前每 {{intervalMinutes}} 分钟后台检查一次，也可以手动立即检查。",
       "open": "查看公告",
       "title": "公告页面"
     },
     "polling": {
       "enable": "启用网站公告抓取",
-      "enableDesc": "关闭后会停止后台定时抓取，已保存的本地公告记录仍会保留，公告页面仍可手动检查。"
+      "enableDesc": "关闭后会停止后台定时抓取，已保存的本地公告记录仍会保留，公告页面仍可手动检查。",
+      "interval": "抓取间隔",
+      "intervalDesc": "设置后台抓取网站公告的分钟间隔，支持 15 到 1440 分钟。"
     },
     "title": "网站公告"
   },

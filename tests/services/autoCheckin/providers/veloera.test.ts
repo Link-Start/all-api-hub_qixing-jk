@@ -19,10 +19,11 @@ const mockAccount: SiteAccount = {
   tagIds: [],
   disabled: false,
   excludeFromTotalBalance: false,
+  excludeFromTodayIncome: false,
   checkIn: { enableDetection: true },
   health: { status: SiteHealthStatus.Healthy },
   account_info: {
-    id: 123,
+    id: "123",
     access_token: "test-token",
     username: "test",
     quota: 1000,
@@ -35,6 +36,7 @@ const mockAccount: SiteAccount = {
   last_sync_time: Date.now(),
   created_at: Date.now(),
   updated_at: Date.now(),
+  user_updated_at: Date.now(),
 }
 
 describe("veloeraProvider", () => {

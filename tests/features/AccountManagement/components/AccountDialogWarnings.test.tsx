@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { SITE_TYPES } from "~/constants/siteType"
 import AutoDetectErrorAlert from "~/features/AccountManagement/components/AccountDialog/AutoDetectErrorAlert"
 import { DuplicateAccountWarningDialog } from "~/features/AccountManagement/components/AccountDialog/DuplicateAccountWarningDialog"
 import { ManagedSiteConfigPromptDialog } from "~/features/AccountManagement/components/AccountDialog/ManagedSiteConfigPromptDialog"
@@ -9,6 +10,10 @@ import { AutoDetectErrorType } from "~/services/accounts/utils/autoDetectUtils"
 const { openLoginTabMock, reloadCurrentTabMock } = vi.hoisted(() => ({
   openLoginTabMock: vi.fn(),
   reloadCurrentTabMock: vi.fn(),
+}))
+
+const { openSiteSupportRequestPageMock } = vi.hoisted(() => ({
+  openSiteSupportRequestPageMock: vi.fn(),
 }))
 
 vi.mock("~/services/accounts/utils/autoDetectUtils", async () => {
@@ -35,10 +40,20 @@ vi.mock("react-i18next", async (importOriginal) => {
   }
 })
 
+vi.mock("~/utils/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/navigation")>()
+
+  return {
+    ...actual,
+    openSiteSupportRequestPage: openSiteSupportRequestPageMock,
+  }
+})
+
 describe("AccountDialog warnings", () => {
   beforeEach(() => {
     openLoginTabMock.mockReset()
     reloadCurrentTabMock.mockReset()
+    openSiteSupportRequestPageMock.mockReset()
     ;(browser.tabs as any).create = vi.fn()
   })
 
@@ -102,8 +117,32 @@ describe("AccountDialog warnings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Retry login" }))
 
-    expect(openLoginTabMock).toHaveBeenCalledWith("https://site.example.com")
+    expect(openLoginTabMock).toHaveBeenCalledWith(
+      "https://site.example.com",
+      undefined,
+    )
     expect(reloadCurrentTabMock).not.toHaveBeenCalled()
+  })
+
+  it("passes the current site type hint to the default login redirect", () => {
+    render(
+      <AutoDetectErrorAlert
+        error={{
+          type: AutoDetectErrorType.UNAUTHORIZED,
+          message: "Please log in",
+          actionText: "Retry login",
+        }}
+        siteUrl="https://site.example.com"
+        siteType={SITE_TYPES.NEW_API}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry login" }))
+
+    expect(openLoginTabMock).toHaveBeenCalledWith(
+      "https://site.example.com",
+      SITE_TYPES.NEW_API,
+    )
   })
 
   it("does nothing for unauthorized recovery when the site URL is missing", () => {
@@ -163,9 +202,34 @@ describe("AccountDialog warnings", () => {
     })
   })
 
+  it("opens a prefilled site-support request from auto-detect failures", () => {
+    render(
+      <AutoDetectErrorAlert
+        error={{
+          type: AutoDetectErrorType.NOT_FOUND,
+          message: "Site was not recognized",
+        }}
+        siteUrl="https://relay.example.com/console"
+      />,
+    )
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "actions.reportUnsupportedSite",
+      }),
+    )
+
+    expect(openSiteSupportRequestPageMock).toHaveBeenCalledWith({
+      siteUrl: "https://relay.example.com/console",
+      errorType: AutoDetectErrorType.NOT_FOUND,
+      errorMessage: "Site was not recognized",
+    })
+  })
+
   it("renders the exact-match duplicate warning for numeric user ids and stringifies missing usernames", () => {
     const onCancel = vi.fn()
     const onContinue = vi.fn()
+    const onDisableWarningAndContinue = vi.fn()
 
     render(
       <DuplicateAccountWarningDialog
@@ -176,6 +240,7 @@ describe("AccountDialog warnings", () => {
         existingUsername={null}
         onCancel={onCancel}
         onContinue={onContinue}
+        onDisableWarningAndContinue={onDisableWarningAndContinue}
       />,
     )
 
@@ -205,6 +270,30 @@ describe("AccountDialog warnings", () => {
 
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(onContinue).toHaveBeenCalledTimes(1)
+    expect(onDisableWarningAndContinue).not.toHaveBeenCalled()
+  })
+
+  it("offers a secondary action that disables future duplicate warnings and continues", () => {
+    const onDisableWarningAndContinue = vi.fn()
+
+    render(
+      <DuplicateAccountWarningDialog
+        isOpen
+        siteUrl="https://site.example.com"
+        existingAccountsCount={2}
+        onCancel={vi.fn()}
+        onContinue={vi.fn()}
+        onDisableWarningAndContinue={onDisableWarningAndContinue}
+      />,
+    )
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "accountDialog:warnings.duplicateAccount.actions.disableAndContinue",
+      }),
+    )
+
+    expect(onDisableWarningAndContinue).toHaveBeenCalledTimes(1)
   })
 
   it("renders managed-site setup guidance and wires both actions", () => {
@@ -267,6 +356,7 @@ describe("AccountDialog warnings", () => {
         existingUsername="alice"
         onCancel={vi.fn()}
         onContinue={vi.fn()}
+        onDisableWarningAndContinue={vi.fn()}
       />,
     )
 
@@ -294,6 +384,7 @@ describe("AccountDialog warnings", () => {
         existingUsername="alice"
         onCancel={vi.fn()}
         onContinue={vi.fn()}
+        onDisableWarningAndContinue={vi.fn()}
       />,
     )
 

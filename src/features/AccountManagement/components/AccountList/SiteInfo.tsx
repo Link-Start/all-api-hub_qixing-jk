@@ -33,6 +33,7 @@ import type {
   HighlightFragment,
   SearchResultWithHighlight,
 } from "~/features/AccountManagement/hooks/useAccountSearch"
+import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
 import {
   getHealthStatusDisplay,
   getStatusIndicatorColor,
@@ -506,6 +507,7 @@ export default function SiteInfo({
               className="h-auto min-w-0 flex-1 shrink justify-start p-0 text-left"
               title={site.name}
               onClick={handleOpenAccountSite}
+              data-testid={ACCOUNT_MANAGEMENT_TEST_IDS.rowOpenButton}
             >
               <BodySmall weight="medium" className="truncate">
                 {renderHighlightedFragments(highlights?.name, site.name)}

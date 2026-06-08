@@ -7,9 +7,8 @@ import type {
   ApiVerificationProbeResult,
 } from "../types"
 import {
-  inferHttpStatus,
+  buildSafeProbeFailureDiagnostics,
   isAbortError,
-  summaryKeyFromHttpStatus,
   toSanitizedErrorSummary,
 } from "../utils"
 
@@ -127,17 +126,14 @@ export async function runToolCallingProbe(
     }
 
     const summary = toSanitizedErrorSummary(error, secretsToRedact)
-    const inferredStatus = inferHttpStatus(error, summary)
+    const diagnostics = buildSafeProbeFailureDiagnostics(error, summary)
     return {
       id: "tool-calling",
       status: "fail",
       latencyMs: okLatency(startedAt),
       summary: summary || "Request failed",
-      summaryKey: summaryKeyFromHttpStatus(inferredStatus),
-      summaryParams:
-        typeof inferredStatus === "number"
-          ? { status: inferredStatus }
-          : undefined,
+      summaryKey: diagnostics.summaryKey,
+      summaryParams: diagnostics.summaryParams,
       input: {
         apiType: params.apiType,
         baseUrl: params.baseUrl,
@@ -150,6 +146,7 @@ export async function runToolCallingProbe(
         },
         toolChoice: "required",
       },
+      output: diagnostics.output,
     }
   }
 }

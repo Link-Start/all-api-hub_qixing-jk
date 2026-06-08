@@ -51,6 +51,10 @@ interface DeleteConfirmModalProps {
    * Optional modal size; defaults to a compact dialog.
    */
   size?: "sm" | "md" | "lg"
+  /**
+   * Optional stable selector for the destructive confirmation action.
+   */
+  confirmButtonTestId?: string
 }
 
 /**
@@ -71,6 +75,7 @@ export function DestructiveConfirmDialog({
   details,
   isWorking = false,
   size = "sm",
+  confirmButtonTestId,
 }: DeleteConfirmModalProps) {
   return (
     <Modal
@@ -108,6 +113,7 @@ export function DestructiveConfirmDialog({
             className="flex-1"
             loading={isWorking}
             disabled={isWorking}
+            data-testid={confirmButtonTestId}
           >
             {confirmLabel}
           </Button>

@@ -150,7 +150,7 @@ vi.mock("~/services/managedSites/managedSiteService", () => ({
     messagesKey: "newapi",
     getConfig: vi.fn(async () => ({
       baseUrl: "https://managed.example.com",
-      token: "admin-token",
+      adminToken: "admin-token",
       userId: "1",
     })),
     searchChannel: vi.fn(async () => ({
@@ -198,7 +198,9 @@ vi.mock("~/services/managedSites/managedSiteService", () => ({
       type_counts: {},
     })),
     fetchChannelSecretKey: fetchChannelSecretKeyMock,
-    findMatchingChannel: vi.fn(),
+    hydrateComparableChannelKeys: vi.fn(
+      async (_baseUrl, _token, _userId, candidates) => candidates,
+    ),
   })),
 }))
 
@@ -289,9 +291,11 @@ describe("ChannelDialog advisory verification action", () => {
     })
 
     expect(fetchChannelSecretKeyMock).toHaveBeenCalledWith(
-      "https://managed.example.com",
-      "admin-token",
-      "1",
+      {
+        baseUrl: "https://managed.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      },
       7,
     )
 

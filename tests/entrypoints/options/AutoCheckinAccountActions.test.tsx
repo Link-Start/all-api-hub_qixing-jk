@@ -1,9 +1,19 @@
 import userEvent from "@testing-library/user-event"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import AutoCheckin from "~/entrypoints/options/pages/AutoCheckin"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+} from "~/services/productAnalytics/events"
+import { AutoCheckinMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import { CHECKIN_RESULT_STATUS } from "~/types/autoCheckin"
+import { openSettingsTab } from "~/utils/navigation"
 import { render, screen, waitFor, within } from "~~/tests/test-utils/render"
 
 const { toast } = vi.hoisted(() => ({
@@ -50,6 +60,18 @@ const { setAccountDisabledMock, deleteAccountMock } = vi.hoisted(() => ({
   deleteAccountMock: vi.fn(),
 }))
 
+const {
+  startProductAnalyticsActionMock,
+  completeProductAnalyticsActionMock,
+  trackProductAnalyticsActionCompletedMock,
+  trackProductAnalyticsActionStartedMock,
+} = vi.hoisted(() => ({
+  startProductAnalyticsActionMock: vi.fn(),
+  completeProductAnalyticsActionMock: vi.fn(),
+  trackProductAnalyticsActionCompletedMock: vi.fn(),
+  trackProductAnalyticsActionStartedMock: vi.fn(),
+}))
+
 vi.mock("~/services/accounts/accountStorage", () => ({
   accountStorage: {
     setAccountDisabled: (...args: any[]) => setAccountDisabledMock(...args),
@@ -57,12 +79,83 @@ vi.mock("~/services/accounts/accountStorage", () => ({
   },
 }))
 
+vi.mock("~/services/productAnalytics/actions", () => ({
+  startProductAnalyticsAction: startProductAnalyticsActionMock,
+  trackProductAnalyticsActionCompleted:
+    trackProductAnalyticsActionCompletedMock,
+  trackProductAnalyticsActionStarted: trackProductAnalyticsActionStartedMock,
+}))
+
+vi.mock("~/utils/navigation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/navigation")>()
+
+  return {
+    ...actual,
+    openSettingsTab: vi.fn(),
+  }
+})
+
+vi.mock("~/services/checkin/autoCheckin/messaging", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("~/services/checkin/autoCheckin/messaging")
+    >()
+
+  return {
+    ...actual,
+    sendAutoCheckinMessage: async (
+      type: string,
+      data?: Record<string, unknown>,
+    ) => {
+      const { sendRuntimeMessage } = await import("~/utils/browser/browserApi")
+      return sendRuntimeMessage(type, data)
+    },
+  }
+})
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.clearAllMocks()
 })
 
 describe("AutoCheckin account actions", () => {
+  beforeEach(() => {
+    startProductAnalyticsActionMock.mockReturnValue({
+      complete: completeProductAnalyticsActionMock,
+    })
+    trackProductAnalyticsActionCompletedMock.mockReset()
+  })
+
+  it("opens auto check-in settings from the title shortcut", async () => {
+    const user = userEvent.setup()
+    const browserApi = await import("~/utils/browser/browserApi")
+
+    vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
+      async (message: any) => {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
+          return {
+            success: true,
+            data: { perAccount: {} },
+          }
+        }
+
+        return { success: true }
+      },
+    )
+
+    render(<AutoCheckin routeParams={{}} />)
+
+    await screen.findByText("autoCheckin:execution.title")
+    await user.click(
+      screen.getByRole("button", { name: "common:labels.settings" }),
+    )
+
+    expect(openSettingsTab).toHaveBeenCalledWith("checkinRedeem", {
+      anchor: "auto-checkin",
+      preserveHistory: true,
+    })
+  })
+
   it("retries a failed account, reloads status, and hides row actions after success", async () => {
     const user = userEvent.setup()
     const browserApi = await import("~/utils/browser/browserApi")
@@ -71,7 +164,7 @@ describe("AutoCheckin account actions", () => {
     const sendRuntimeMessageSpy = vi
       .spyOn(browserApi, "sendRuntimeMessage")
       .mockImplementation(async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           statusCalls += 1
 
           return {
@@ -93,7 +186,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinRetryAccount) {
+        if (message === AutoCheckinMessageTypes.RetryAccount) {
           return { success: true }
         }
 
@@ -109,10 +202,10 @@ describe("AutoCheckin account actions", () => {
     )
 
     await waitFor(() => {
-      expect(sendRuntimeMessageSpy).toHaveBeenCalledWith({
-        action: RuntimeActionIds.AutoCheckinRetryAccount,
-        accountId: "alpha",
-      })
+      expect(sendRuntimeMessageSpy).toHaveBeenCalledWith(
+        AutoCheckinMessageTypes.RetryAccount,
+        { accountId: "alpha" },
+      )
     })
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith(
@@ -128,6 +221,23 @@ describe("AutoCheckin account actions", () => {
     })
 
     expect(statusCalls).toBeGreaterThanOrEqual(2)
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RetryAutoCheckinAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+          skippedCount: 0,
+        },
+      },
+    )
   })
 
   it("shows a retry failure toast and restores the retry button after the request settles", async () => {
@@ -137,9 +247,10 @@ describe("AutoCheckin account actions", () => {
     let resolveRetry:
       | ((value: { success: boolean; error?: string }) => void)
       | undefined
-    vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
-      async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+    const sendRuntimeMessageSpy = vi
+      .spyOn(browserApi, "sendRuntimeMessage")
+      .mockImplementation(async (message: unknown, data?: unknown) => {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -156,7 +267,8 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinRetryAccount) {
+        if (message === AutoCheckinMessageTypes.RetryAccount) {
+          expect(data).toEqual({ accountId: "alpha" })
           return await new Promise<{ success: boolean; error?: string }>(
             (resolve) => {
               resolveRetry = resolve
@@ -165,8 +277,7 @@ describe("AutoCheckin account actions", () => {
         }
 
         return { success: true }
-      },
-    )
+      })
 
     render(<AutoCheckin routeParams={{}} />)
 
@@ -178,8 +289,18 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(retryButton).toBeDisabled()
     })
+    await waitFor(() => {
+      expect(sendRuntimeMessageSpy).toHaveBeenCalledWith(
+        AutoCheckinMessageTypes.RetryAccount,
+        { accountId: "alpha" },
+      )
+    })
 
-    resolveRetry?.({ success: false, error: "backend rejected retry" })
+    if (!resolveRetry) {
+      throw new Error("Retry request resolver was not assigned")
+    }
+
+    resolveRetry({ success: false, error: "backend rejected retry" })
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -189,6 +310,12 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(retryButton).not.toBeDisabled()
     })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
   })
 
   it("shows an error when manual sign-in page opening fails and restores the button state", async () => {
@@ -199,7 +326,7 @@ describe("AutoCheckin account actions", () => {
     let rejectOpen: ((reason?: unknown) => void) | undefined
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -216,7 +343,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return { success: true, data: { id: "alpha", name: "Alpha" } }
         }
 
@@ -250,6 +377,23 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(openButton).not.toBeDisabled()
     })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinManualSignIn,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      insights: {
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ManualSignIn,
+      },
+    })
+    expect(startProductAnalyticsActionMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinManualSignIn,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
   })
 
   it("opens the provider site from the row action", async () => {
@@ -260,8 +404,8 @@ describe("AutoCheckin account actions", () => {
 
     const sendRuntimeMessageSpy = vi
       .spyOn(browserApi, "sendRuntimeMessage")
-      .mockImplementation(async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+      .mockImplementation(async (message: any, data?: any) => {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -285,8 +429,8 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
-          if (message.accountId === "beta") {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
+          if (data?.accountId === "beta") {
             return {
               success: true,
               data: {
@@ -365,24 +509,19 @@ describe("AutoCheckin account actions", () => {
       )
     })
 
-    const accountInfoRequests = sendRuntimeMessageSpy.mock.calls
-      .map(([message]) => message as any)
-      .filter(
-        (message) =>
-          message.action === RuntimeActionIds.AutoCheckinGetAccountInfo,
-      )
+    const accountInfoRequests = sendRuntimeMessageSpy.mock.calls.filter(
+      ([message]) => message === AutoCheckinMessageTypes.GetAccountInfo,
+    )
 
     expect(accountInfoRequests).toEqual([
-      {
-        action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-        accountId: "alpha",
-        includeDisabled: true,
-      },
-      {
-        action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-        accountId: "beta",
-        includeDisabled: true,
-      },
+      [
+        AutoCheckinMessageTypes.GetAccountInfo,
+        { accountId: "alpha", includeDisabled: true },
+      ],
+      [
+        AutoCheckinMessageTypes.GetAccountInfo,
+        { accountId: "beta", includeDisabled: true },
+      ],
     ])
     expect(openAccountBaseUrlSpy).toHaveBeenCalledTimes(2)
     expect(
@@ -403,6 +542,22 @@ describe("AutoCheckin account actions", () => {
       expect(alphaButton).not.toBeDisabled()
       expect(betaButton).not.toBeDisabled()
     })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinAccountSite,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ExternalSite,
+      },
+    })
+    expect(startProductAnalyticsActionMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinAccountSite,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
   })
 
   it("shows an error when site opening fails and restores the button state", async () => {
@@ -413,7 +568,7 @@ describe("AutoCheckin account actions", () => {
     let rejectOpen: ((reason?: unknown) => void) | undefined
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -430,7 +585,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return {
             success: true,
             data: {
@@ -471,6 +626,23 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(openButton).not.toBeDisabled()
     })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinAccountSite,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      insights: {
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ExternalSite,
+      },
+    })
+    expect(startProductAnalyticsActionMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenAutoCheckinAccountSite,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
   })
 
   it("disables a failed account, converts it to a disabled skip, and reloads the page data", async () => {
@@ -482,7 +654,7 @@ describe("AutoCheckin account actions", () => {
 
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           statusCalls += 1
 
           return {
@@ -514,7 +686,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return {
             success: true,
             data: {
@@ -551,6 +723,15 @@ describe("AutoCheckin account actions", () => {
       }),
     ).not.toBeInTheDocument()
     expect(statusCalls).toBeGreaterThanOrEqual(2)
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DisableAutoCheckinAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
   })
 
   it("shows a generic error when disabling a failed account does not persist", async () => {
@@ -561,7 +742,7 @@ describe("AutoCheckin account actions", () => {
 
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -578,7 +759,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return {
             success: true,
             data: {
@@ -606,6 +787,18 @@ describe("AutoCheckin account actions", () => {
         "messages:toast.error.operationFailedGeneric",
       )
     })
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DisableAutoCheckinAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
   })
 
   it("deletes a failed account from the row action and reloads status after confirmation", async () => {
@@ -617,7 +810,7 @@ describe("AutoCheckin account actions", () => {
 
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           statusCalls += 1
 
           return {
@@ -641,7 +834,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return {
             success: true,
             data: {
@@ -677,6 +870,29 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(deleteAccountMock).toHaveBeenCalledWith("alpha")
     })
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackProductAnalyticsActionStartedMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAutoCheckinAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinResultsTable,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackProductAnalyticsActionStartedMock).not.toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(statusCalls).toBeGreaterThanOrEqual(2)
   })
 
@@ -689,7 +905,7 @@ describe("AutoCheckin account actions", () => {
 
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           statusCalls += 1
           return {
             success: true,
@@ -707,7 +923,7 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
           return {
             success: true,
             data: {
@@ -739,6 +955,17 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(deleteAccountMock).toHaveBeenCalledWith("alpha")
     })
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      { errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown },
+    )
     expect(screen.getByText("ui:dialog.delete.title")).toBeInTheDocument()
     expect(statusCalls).toBe(1)
   })
@@ -749,8 +976,8 @@ describe("AutoCheckin account actions", () => {
     const navigation = await import("~/utils/navigation")
     const sendRuntimeMessageSpy = vi
       .spyOn(browserApi, "sendRuntimeMessage")
-      .mockImplementation(async (message: any) => {
-        if (message.action === RuntimeActionIds.AutoCheckinGetStatus) {
+      .mockImplementation(async (message: any, data?: any) => {
+        if (message === AutoCheckinMessageTypes.GetStatus) {
           return {
             success: true,
             data: {
@@ -774,8 +1001,8 @@ describe("AutoCheckin account actions", () => {
           }
         }
 
-        if (message.action === RuntimeActionIds.AutoCheckinGetAccountInfo) {
-          return { success: false, error: `missing-${message.accountId}` }
+        if (message === AutoCheckinMessageTypes.GetAccountInfo) {
+          return { success: false, error: `missing-${data?.accountId}` }
         }
 
         return { success: true }
@@ -797,14 +1024,14 @@ describe("AutoCheckin account actions", () => {
     })
 
     expect(openCheckInPagesSpy).not.toHaveBeenCalled()
-    expect(sendRuntimeMessageSpy).toHaveBeenCalledWith({
-      action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-      accountId: "alpha",
-    })
-    expect(sendRuntimeMessageSpy).toHaveBeenCalledWith({
-      action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-      accountId: "beta",
-    })
+    expect(sendRuntimeMessageSpy).toHaveBeenCalledWith(
+      AutoCheckinMessageTypes.GetAccountInfo,
+      { accountId: "alpha" },
+    )
+    expect(sendRuntimeMessageSpy).toHaveBeenCalledWith(
+      AutoCheckinMessageTypes.GetAccountInfo,
+      { accountId: "beta" },
+    )
   })
 
   it("filters already-checked results as success, searches translated message keys, and renders snapshots", async () => {
@@ -906,7 +1133,7 @@ describe("AutoCheckin account actions", () => {
 
     vi.spyOn(browserApi, "sendRuntimeMessage").mockImplementation(
       async (message: any) => {
-        if (message.action !== RuntimeActionIds.AutoCheckinGetStatus) {
+        if (message !== AutoCheckinMessageTypes.GetStatus) {
           return { success: true }
         }
 
@@ -969,5 +1196,22 @@ describe("AutoCheckin account actions", () => {
     await waitFor(() => {
       expect(screen.getByText("Alpha")).toBeInTheDocument()
     })
+    expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAutoCheckinStatus,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinActionBar,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        insights: {
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+          skippedCount: 0,
+        },
+      },
+    )
   })
 })

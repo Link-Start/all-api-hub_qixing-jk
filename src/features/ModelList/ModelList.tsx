@@ -9,6 +9,7 @@ import { VerifyCliSupportDialog } from "~/components/dialogs/VerifyCliSupportDia
 import { PageHeader } from "~/components/PageHeader"
 import { Alert, Button, EmptyState } from "~/components/ui"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
 import { VerifyApiCredentialProfileDialog } from "~/features/ApiCredentialProfiles/components/VerifyApiCredentialProfileDialog"
 import {
   createBatchVerifyModelItems,
@@ -19,6 +20,13 @@ import {
   type ModelManagementItemSource,
 } from "~/features/ModelList/modelManagementSources"
 import { getAllProviders } from "~/services/models/utils/modelProviders"
+import { trackProductAnalyticsActionStarted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import {
   createAccountModelVerificationHistoryTarget,
   createProfileModelVerificationHistoryTarget,
@@ -41,6 +49,7 @@ import { ProviderTabs } from "./components/ProviderTabs"
 import { StatusIndicator } from "./components/StatusIndicator"
 import { MODEL_LIST_GROUP_SELECTION_SCOPES } from "./groupSelectionScopes"
 import { useModelListData } from "./hooks/useModelListData"
+import { MODEL_LIST_TEST_IDS } from "./testIds"
 
 /**
  * Model list page showing pricing details with filtering by account, provider, and group.
@@ -97,10 +106,12 @@ export default function ModelList(props: {
     loadErrorMessage,
     accountFallback,
     isFallbackCatalogActive,
+    isAihubmixCatalogFallbackActive,
 
     filteredModels,
     accountSummaryCountsByAccountId,
     allProvidersFilteredCount,
+    getFilteredResultCount,
     availableGroups,
     availableAccountGroupsByAccountId,
     availableAccountGroupOptionsByAccountId,
@@ -151,6 +162,12 @@ export default function ModelList(props: {
         ? currentAccountIds.filter((id) => id !== accountId)
         : [...currentAccountIds, accountId],
     )
+    void trackProductAnalyticsActionStarted({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.FilterModelList,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
   }
 
   const hasModelData =
@@ -171,12 +188,16 @@ export default function ModelList(props: {
       if (!state) {
         return []
       }
+      const count = accountSummaryCountsByAccountId.get(state.account.id)
+      if (count === undefined && !state.isLoading && !state.errorType) {
+        return []
+      }
 
       return [
         {
           accountId: state.account.id,
           name: state.account.name,
-          count: accountSummaryCountsByAccountId.get(state.account.id) ?? 0,
+          count: count ?? 0,
           isLoading: state.isLoading,
           errorType: state.errorType,
         },
@@ -266,14 +287,20 @@ export default function ModelList(props: {
     modelEnableGroups: string[],
   ) => setModelKeyContext({ account, modelId, modelEnableGroups })
 
+  const batchVerifyItems = useMemo(
+    () => createBatchVerifyModelItems(filteredModels),
+    [filteredModels],
+  )
+
   const handleOpenBatchVerify = () => {
-    const items = createBatchVerifyModelItems(filteredModels)
-    if (items.length === 0) return
-    setBatchVerifyContext({ items })
+    if (batchVerifyItems.length === 0) return
+    setBatchVerifyContext({ items: batchVerifyItems })
   }
 
   const canBatchVerifyModels =
-    !!selectedSource && sourceCapabilities.supportsBatchCredentialVerification
+    !!selectedSource &&
+    sourceCapabilities.supportsBatchCredentialVerification &&
+    batchVerifyItems.length > 0
 
   const handleOpenAccountManagement = useCallback(() => {
     pushWithinOptionsPage(`#${MENU_ITEM_IDS.ACCOUNT}`)
@@ -309,22 +336,31 @@ export default function ModelList(props: {
   }, [pricingContexts, pricingData, selectedSource?.kind])
 
   return (
-    <div className="p-6">
+    <div className="p-6" data-testid={MODEL_LIST_TEST_IDS.page}>
       <PageHeader
         icon={Cpu}
         title={t("title")}
         description={t("description")}
         actions={
           selectedSource && hasModelData ? (
-            <Button
-              onClick={loadPricingData}
-              variant="secondary"
-              leftIcon={!isLoading && <ArrowPathIcon className="h-4 w-4" />}
-              loading={isLoading}
-              disabled={isLoading}
+            <ProductAnalyticsScope
+              entrypoint={PRODUCT_ANALYTICS_ENTRYPOINTS.Options}
+              featureId={PRODUCT_ANALYTICS_FEATURE_IDS.ModelList}
+              surfaceId={PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListPage}
             >
-              {t("refreshData")}
-            </Button>
+              <Button
+                onClick={loadPricingData}
+                variant="secondary"
+                leftIcon={!isLoading && <ArrowPathIcon className="h-4 w-4" />}
+                loading={isLoading}
+                disabled={isLoading}
+                analyticsAction={
+                  PRODUCT_ANALYTICS_ACTION_IDS.RefreshModelPricingData
+                }
+              >
+                {t("refreshData")}
+              </Button>
+            </ProductAnalyticsScope>
           ) : undefined
         }
       />
@@ -359,11 +395,13 @@ export default function ModelList(props: {
               label: t("account:addFirstAccount"),
               onClick: handleOpenAccountManagement,
               variant: "default",
+              testId: MODEL_LIST_TEST_IDS.addFirstAccountButton,
             },
             {
               label: t("apiCredentialProfiles:actions.add"),
               onClick: handleOpenApiCredentialProfiles,
               variant: "outline",
+              testId: MODEL_LIST_TEST_IDS.addApiCredentialProfileButton,
             },
           ]}
         />
@@ -402,6 +440,15 @@ export default function ModelList(props: {
               className="mb-6"
               title={t("fallbackSourceNotice.title")}
               description={t("fallbackSourceNotice.description")}
+            />
+          )}
+
+          {isAihubmixCatalogFallbackActive && (
+            <Alert
+              variant="warning"
+              className="mb-6"
+              title={t("aihubmixCatalogFallbackNotice.title")}
+              description={t("aihubmixCatalogFallbackNotice.description")}
             />
           )}
 
@@ -493,6 +540,7 @@ export default function ModelList(props: {
             setShowEndpointTypes={setShowEndpointTypes}
             totalModels={totalModels}
             filteredModels={filteredModels}
+            getFilteredResultCount={getFilteredResultCount}
             onBatchVerifyModels={
               canBatchVerifyModels ? handleOpenBatchVerify : undefined
             }

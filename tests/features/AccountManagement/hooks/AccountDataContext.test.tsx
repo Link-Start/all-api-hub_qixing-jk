@@ -9,12 +9,14 @@ import {
   DATA_TYPE_CREATED_AT,
 } from "~/constants"
 import { RuntimeActionIds } from "~/constants/runtimeActions"
+import { UI_CONSTANTS } from "~/constants/ui"
 import {
   AccountDataProvider,
   useAccountDataContext,
 } from "~/features/AccountManagement/hooks/AccountDataContext"
 import type { SearchResult } from "~/services/search/accountSearch"
 import type { DisplaySiteData } from "~/types"
+import { DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION } from "~/types/dailyBalanceHistory"
 import { SortingCriteriaType } from "~/types/sorting"
 import { testI18n } from "~~/tests/test-utils/i18n"
 
@@ -47,6 +49,7 @@ const {
   mockSetPinnedListSubset,
   mockSetOrderedListSubset,
   mockGetTagStore,
+  mockGetDailyBalanceHistoryStore,
   mockCreateTag,
   mockRenameTag,
   mockDeleteTag,
@@ -57,6 +60,7 @@ const {
   mockToastPromise,
   mockGetActiveTabs,
   mockGetAllTabs,
+  mockSendTabMessage,
   mockOnRuntimeMessage,
   mockOnTabActivated,
   mockOnTabRemoved,
@@ -84,6 +88,7 @@ const {
   mockSetPinnedListSubset: vi.fn(),
   mockSetOrderedListSubset: vi.fn(),
   mockGetTagStore: vi.fn(),
+  mockGetDailyBalanceHistoryStore: vi.fn(),
   mockCreateTag: vi.fn(),
   mockRenameTag: vi.fn(),
   mockDeleteTag: vi.fn(),
@@ -94,6 +99,16 @@ const {
   mockToastPromise: vi.fn(),
   mockGetActiveTabs: vi.fn<() => Promise<browser.tabs.Tab[]>>(async () => []),
   mockGetAllTabs: vi.fn<() => Promise<browser.tabs.Tab[]>>(async () => []),
+  mockSendTabMessage: vi.fn(
+    (
+      tabId: number,
+      message: unknown,
+      options?: browser.tabs._SendMessageOptions,
+    ) =>
+      typeof options === "undefined"
+        ? globalThis.browser.tabs.sendMessage(tabId, message)
+        : globalThis.browser.tabs.sendMessage(tabId, message, options),
+  ),
   mockOnRuntimeMessage: vi.fn<
     (
       listener: (
@@ -154,6 +169,11 @@ const mockUserPreferencesContext = vi.hoisted(() => ({
         { id: "manual_order", enabled: true, priority: 1 },
       ],
     },
+    preferences: {
+      balanceHistory: {
+        estimatedTodayIncome: { enabled: false },
+      },
+    },
     showTodayCashflow: true,
   },
 }))
@@ -195,6 +215,12 @@ vi.mock("~/services/tags/tagStorage", () => ({
   },
 }))
 
+vi.mock("~/services/history/dailyBalanceHistory/storage", () => ({
+  dailyBalanceHistoryStorage: {
+    getStore: mockGetDailyBalanceHistoryStore,
+  },
+}))
+
 vi.mock("~/contexts/UserPreferencesContext", () => ({
   useUserPreferencesContext: () => mockUserPreferencesContext.current,
 }))
@@ -206,6 +232,7 @@ vi.mock("~/utils/core/logger", () => ({
 vi.mock("~/utils/browser/browserApi", () => ({
   getActiveTabs: mockGetActiveTabs,
   getAllTabs: mockGetAllTabs,
+  sendTabMessage: mockSendTabMessage,
   onRuntimeMessage: mockOnRuntimeMessage,
   onTabActivated: mockOnTabActivated,
   onTabRemoved: mockOnTabRemoved,
@@ -244,11 +271,20 @@ beforeEach(() => {
         { id: "manual_order", enabled: true, priority: 1 },
       ],
     },
+    preferences: {
+      balanceHistory: {
+        estimatedTodayIncome: { enabled: false },
+      },
+    },
     showTodayCashflow: true,
   }
 
   mockResetExpiredCheckIns.mockResolvedValue(undefined)
   mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+  mockGetDailyBalanceHistoryStore.mockResolvedValue({
+    schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+    snapshotsByAccountId: {},
+  })
   mockGetAllAccounts.mockResolvedValue([])
   mockGetAllBookmarks.mockResolvedValue([])
   mockGetOrderedList.mockResolvedValue([])
@@ -313,6 +349,15 @@ function createEmptyStats() {
     today_total_completion_tokens: 0,
     today_total_income: 0,
   }
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+
+  return { promise, resolve }
 }
 
 function createBrowserTab(
@@ -710,6 +755,173 @@ describe("AccountDataContext handleReorder", () => {
 })
 
 describe("AccountDataContext initial load orchestration", () => {
+  it("excludes today-income opt-outs from estimated income totals", async () => {
+    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
+
+    mockUserPreferencesContext.current = {
+      ...mockUserPreferencesContext.current,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    }
+    mockGetAllAccounts.mockResolvedValue([
+      {
+        id: "included",
+        disabled: false,
+        excludeFromTodayIncome: false,
+        exchange_rate: 7,
+        account_info: { id: 1 },
+        last_sync_time: 0,
+      },
+      {
+        id: "excluded",
+        disabled: false,
+        excludeFromTodayIncome: true,
+        exchange_rate: 7,
+        account_info: { id: 2 },
+        last_sync_time: 0,
+      },
+    ])
+    mockGetDailyBalanceHistoryStore.mockResolvedValue({
+      schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+      snapshotsByAccountId: {
+        included: {
+          "2026-05-22": {
+            quota: 10 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 12 * factor,
+            today_income: 0.5 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+        excluded: {
+          "2026-05-22": {
+            quota: 20 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 30 * factor,
+            today_income: 9 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+      },
+    })
+    vi.setSystemTime(new Date("2026-05-23T08:00:00.000Z"))
+
+    const getLatestCtx = await renderAccountDataProvider()
+
+    await waitFor(() => {
+      expect(getLatestCtx().todayIncomeEstimateTotals).toMatchObject({
+        trusted: { USD: 0.5, CNY: 3.5 },
+        estimated: { USD: 3, CNY: 21 },
+        availableAccounts: 1,
+        totalAccounts: 1,
+      })
+    })
+  })
+
+  it("projects available estimated income onto display account rows", async () => {
+    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
+
+    mockUserPreferencesContext.current = {
+      ...mockUserPreferencesContext.current,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    }
+    mockGetAllAccounts.mockResolvedValue([
+      {
+        id: "included",
+        disabled: false,
+        excludeFromTodayIncome: false,
+        exchange_rate: 7,
+        account_info: { id: 1 },
+        last_sync_time: 0,
+      },
+      {
+        id: "manual",
+        disabled: false,
+        excludeFromTodayIncome: false,
+        manualBalanceUsd: "12.34",
+        exchange_rate: 7,
+        account_info: { id: 2 },
+        last_sync_time: 0,
+      },
+    ])
+    mockGetDailyBalanceHistoryStore.mockResolvedValue({
+      schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+      snapshotsByAccountId: {
+        included: {
+          "2026-05-22": {
+            quota: 10 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 12 * factor,
+            today_income: 0.5 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+        manual: {
+          "2026-05-22": {
+            quota: 10 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 12 * factor,
+            today_income: 0.5 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+      },
+    })
+    vi.setSystemTime(new Date("2026-05-23T08:00:00.000Z"))
+
+    const getLatestCtx = await renderAccountDataProvider()
+
+    await waitFor(() => {
+      expect(getLatestCtx().displayData).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "included",
+            estimatedTodayIncome: { USD: 3, CNY: 21 },
+          }),
+          expect.objectContaining({
+            id: "manual",
+            estimatedTodayIncome: null,
+          }),
+        ]),
+      )
+    })
+  })
+
   it("keeps initial load active until current-tab and open-tab checks complete", async () => {
     let resolveActiveTabs: ((tabs: browser.tabs.Tab[]) => void) | undefined
     let resolveAllTabs: ((tabs: browser.tabs.Tab[]) => void) | undefined
@@ -1285,18 +1497,21 @@ describe("AccountDataContext current tab detection", () => {
     const matchingAccount = {
       id: "acc-2",
       site_url: "https://api.example.com/v1",
+      site_type: "new-api",
       account_info: { id: 42 },
       last_sync_time: 0,
     }
     const sameSiteDifferentUser = {
       id: "acc-1",
       site_url: "https://api.example.com/dashboard",
-      account_info: { id: 7 },
+      site_type: "new-api",
+      account_info: { id: "7" },
       last_sync_time: 0,
     }
     const otherSite = {
       id: "acc-3",
       site_url: "https://other.example.com",
+      site_type: "new-api",
       account_info: { id: 99 },
       last_sync_time: 0,
     }
@@ -1311,7 +1526,7 @@ describe("AccountDataContext current tab detection", () => {
     ])
     vi.mocked(globalThis.browser.tabs.sendMessage).mockResolvedValue({
       success: true,
-      data: { userId: 42 },
+      data: { userId: "42" },
     } as any)
 
     const getLatestCtx = await renderAccountDataProvider()
@@ -1326,6 +1541,7 @@ describe("AccountDataContext current tab detection", () => {
     expect(globalThis.browser.tabs.sendMessage).toHaveBeenCalledWith(7, {
       action: RuntimeActionIds.ContentGetUserFromLocalStorage,
       url: "https://api.example.com",
+      siteType: "new-api",
     })
   })
 
@@ -1333,6 +1549,7 @@ describe("AccountDataContext current tab detection", () => {
     const sameSiteAccount = {
       id: "acc-1",
       site_url: "https://api.example.com/v1",
+      site_type: "new-api",
       account_info: { id: 7 },
       last_sync_time: 0,
     }
@@ -1406,7 +1623,7 @@ describe("AccountDataContext current tab detection", () => {
     })
     vi.mocked(globalThis.browser.tabs.sendMessage).mockResolvedValue({
       success: true,
-      data: { userId: 7 },
+      data: { userId: "7" },
     } as any)
 
     const getLatestCtx = await renderAccountDataProvider()
@@ -1461,7 +1678,7 @@ describe("AccountDataContext current tab detection", () => {
     })
     vi.mocked(globalThis.browser.tabs.sendMessage).mockResolvedValue({
       success: true,
-      data: { userId: 7 },
+      data: { userId: "7" },
     } as any)
 
     const getLatestCtx = await renderAccountDataProvider()
@@ -2035,6 +2252,137 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
     expect(mockGetAccountById).toHaveBeenCalledWith("a")
   })
 
+  it("preserves estimated today income on targeted reload display rows", async () => {
+    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
+
+    mockUserPreferencesContext.current = {
+      ...mockUserPreferencesContext.current,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    }
+    vi.setSystemTime(new Date("2026-05-23T08:00:00.000Z"))
+    mockResetExpiredCheckIns.mockResolvedValue(undefined)
+    mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+
+    const accountA: any = {
+      id: "a",
+      disabled: false,
+      excludeFromTodayIncome: false,
+      exchange_rate: 7,
+      checkIn: { siteStatus: { isCheckedInToday: false } },
+      account_info: { id: 1 },
+    }
+    const accountB: any = {
+      id: "b",
+      disabled: false,
+      excludeFromTodayIncome: false,
+      exchange_rate: 7,
+      checkIn: { siteStatus: { isCheckedInToday: false } },
+      account_info: { id: 2 },
+    }
+
+    mockGetAllAccounts.mockResolvedValue([accountA, accountB])
+    mockGetAllBookmarks.mockResolvedValue([])
+    mockGetOrderedList.mockResolvedValue(["a", "b"])
+    mockGetPinnedList.mockResolvedValue([])
+    mockGetAccountStats.mockResolvedValue(createEmptyStats())
+    mockConvertToDisplayData.mockImplementation((input: any) => {
+      const accounts = Array.isArray(input) ? input : [input]
+      const display = accounts.map((account: any) => ({
+        id: account.id,
+        name: account.id,
+        checkIn: account.checkIn,
+      }))
+      return Array.isArray(input) ? display : display[0]
+    })
+    mockGetDailyBalanceHistoryStore.mockResolvedValue({
+      schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+      snapshotsByAccountId: {
+        a: {
+          "2026-05-22": {
+            quota: 10 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 12 * factor,
+            today_income: 0.5 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+        b: {
+          "2026-05-22": {
+            quota: 20 * factor,
+            today_income: 0,
+            today_quota_consumption: 0,
+            capturedAt: 1,
+            source: "alarm",
+          },
+          "2026-05-23": {
+            quota: 21 * factor,
+            today_income: 0.5 * factor,
+            today_quota_consumption: 1 * factor,
+            capturedAt: 2,
+            source: "refresh",
+          },
+        },
+      },
+    })
+    mockGetAccountById.mockResolvedValue({
+      ...accountA,
+      checkIn: { siteStatus: { isCheckedInToday: true } },
+    })
+
+    const getLatestCtx = await renderAccountDataProvider()
+
+    await waitFor(() => {
+      expect(getLatestCtx().displayData).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "a",
+            estimatedTodayIncome: { USD: 3, CNY: 21 },
+          }),
+        ]),
+      )
+    })
+
+    const listener = (globalThis as any).__accountDataContextRuntimeListener as
+      | ((message: any) => void)
+      | undefined
+    expect(listener).toBeTypeOf("function")
+
+    await act(async () => {
+      listener!({
+        action: RuntimeActionIds.AutoCheckinRunCompleted,
+        updatedAccountIds: ["a"],
+      })
+    })
+
+    await waitFor(() => {
+      const byId = Object.fromEntries(
+        getLatestCtx().displayData.map((item: any) => [item.id, item]),
+      )
+      expect(byId.a?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
+      expect(byId.a?.estimatedTodayIncome).toEqual({ USD: 3, CNY: 21 })
+      expect(byId.b?.estimatedTodayIncome).toEqual({ USD: 2, CNY: 14 })
+      expect(getLatestCtx().todayIncomeEstimateTotals).toMatchObject({
+        trusted: { USD: 1, CNY: 7 },
+        estimated: { USD: 5, CNY: 35 },
+        availableAccounts: 2,
+        totalAccounts: 2,
+      })
+    })
+
+    expect(mockGetDailyBalanceHistoryStore).toHaveBeenCalledTimes(2)
+  })
+
   it("skips reload work when auto-checkin completion does not include any valid account ids", async () => {
     mockGetAllAccounts.mockResolvedValue([{ id: "a" }])
 
@@ -2169,6 +2517,10 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
   it("merges concurrent targeted reloads against the latest account snapshot", async () => {
     mockResetExpiredCheckIns.mockResolvedValue(undefined)
     mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+    const emptyStore = {
+      schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+      snapshotsByAccountId: {},
+    }
 
     const accountA: any = {
       id: "a",
@@ -2220,6 +2572,7 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
       }
       return Promise.resolve(null)
     })
+    mockGetDailyBalanceHistoryStore.mockResolvedValue(emptyStore)
 
     let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
 
@@ -2239,6 +2592,13 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
       | ((message: any) => void)
       | undefined
     expect(listener).toBeTypeOf("function")
+
+    mockGetDailyBalanceHistoryStore.mockReset()
+    const reloadAStore = createDeferred<typeof emptyStore>()
+    const reloadBStore = createDeferred<typeof emptyStore>()
+    mockGetDailyBalanceHistoryStore
+      .mockReturnValueOnce(reloadAStore.promise)
+      .mockReturnValueOnce(reloadBStore.promise)
 
     await act(async () => {
       listener!({
@@ -2260,11 +2620,7 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
     })
 
     await waitFor(() => {
-      const byId = Object.fromEntries(
-        (latestCtx?.displayData ?? []).map((item: any) => [item.id, item]),
-      )
-      expect(byId.a?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
-      expect(byId.b?.checkIn?.siteStatus?.isCheckedInToday).toBe(false)
+      expect(mockGetDailyBalanceHistoryStore).toHaveBeenCalledTimes(1)
     })
 
     await act(async () => {
@@ -2276,11 +2632,127 @@ describe("AccountDataContext auto-checkin runCompleted handling", () => {
     })
 
     await waitFor(() => {
+      expect(mockGetDailyBalanceHistoryStore).toHaveBeenCalledTimes(2)
+    })
+
+    await act(async () => {
+      reloadBStore.resolve(emptyStore)
+      await reloadBStore.promise
+    })
+
+    await waitFor(() => {
       const byId = Object.fromEntries(
         (latestCtx?.displayData ?? []).map((item: any) => [item.id, item]),
       )
       expect(byId.a?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
       expect(byId.b?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
     })
+
+    await act(async () => {
+      reloadAStore.resolve(emptyStore)
+      await reloadAStore.promise
+    })
+
+    await waitFor(() => {
+      const byId = Object.fromEntries(
+        (latestCtx?.displayData ?? []).map((item: any) => [item.id, item]),
+      )
+      expect(byId.a?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
+      expect(byId.b?.checkIn?.siteStatus?.isCheckedInToday).toBe(true)
+    })
+  })
+
+  it("ignores older targeted reloads for the same account after a newer reload completes", async () => {
+    mockResetExpiredCheckIns.mockResolvedValue(undefined)
+    mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+    const emptyStore = {
+      schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
+      snapshotsByAccountId: {},
+    }
+
+    mockGetAllAccounts.mockResolvedValue([
+      {
+        id: "a",
+        checkIn: { siteStatus: { isCheckedInToday: false } },
+      },
+    ])
+    mockGetAllBookmarks.mockResolvedValue([])
+    mockGetOrderedList.mockResolvedValue(["a"])
+    mockGetPinnedList.mockResolvedValue([])
+    mockGetAccountStats.mockResolvedValue(createEmptyStats())
+    mockConvertToDisplayData.mockImplementation((input: any) => {
+      const accounts = Array.isArray(input) ? input : [input]
+      const display = accounts.map((account: any) => ({
+        id: account.id,
+        name: account.id,
+        checkIn: account.checkIn,
+      }))
+      return Array.isArray(input) ? display : display[0]
+    })
+    mockGetDailyBalanceHistoryStore.mockResolvedValue(emptyStore)
+
+    const olderReload = createDeferred<any>()
+    const newerReload = createDeferred<any>()
+    mockGetAccountById
+      .mockReturnValueOnce(olderReload.promise)
+      .mockReturnValueOnce(newerReload.promise)
+
+    const getLatestCtx = await renderAccountDataProvider()
+
+    await waitFor(() => {
+      expect(getLatestCtx().displayData).toEqual([
+        expect.objectContaining({
+          id: "a",
+          checkIn: { siteStatus: { isCheckedInToday: false } },
+        }),
+      ])
+    })
+
+    const listener = (globalThis as any).__accountDataContextRuntimeListener as
+      | ((message: any) => void)
+      | undefined
+    expect(listener).toBeTypeOf("function")
+
+    mockGetDailyBalanceHistoryStore.mockClear()
+
+    await act(async () => {
+      listener!({
+        action: RuntimeActionIds.AutoCheckinRunCompleted,
+        updatedAccountIds: ["a"],
+      })
+      listener!({
+        action: RuntimeActionIds.AutoCheckinRunCompleted,
+        updatedAccountIds: ["a"],
+      })
+    })
+
+    await act(async () => {
+      newerReload.resolve({
+        id: "a",
+        checkIn: { siteStatus: { isCheckedInToday: true } },
+      })
+      await newerReload.promise
+    })
+
+    await waitFor(() => {
+      expect(getLatestCtx().displayData[0]?.checkIn).toEqual({
+        siteStatus: { isCheckedInToday: true },
+      })
+    })
+
+    await act(async () => {
+      olderReload.resolve({
+        id: "a",
+        checkIn: { siteStatus: { isCheckedInToday: false } },
+      })
+      await olderReload.promise
+    })
+
+    await waitFor(() => {
+      expect(getLatestCtx().displayData[0]?.checkIn).toEqual({
+        siteStatus: { isCheckedInToday: true },
+      })
+    })
+    expect(mockGetDailyBalanceHistoryStore).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,17 +1,17 @@
-# API Credentials
+# API Credential Library
 
-> Suitable for scenarios where you only have `Base URL + API Key` without a site account. You can manage, verify, and export independent interface credentials as reusable configuration profiles without first creating a full site account.
+> Suitable for scenarios where you only have `Base URL + API Key` without a site account. Save common API keys in one place for quick copying, API verification, model lookup, and balance/usage checks without first creating a full site account.
 
 ## Suitable Scenarios
 
 - You only have the `Base URL` and `API Key` provided by a third-party platform, but no corresponding site console account.
 - You want to centrally store frequently used interface configurations to avoid repeatedly copying them between multiple clients or CLI tools.
 - You need to verify if a key is valid and compatible with the CLI before deciding to import it into downstream tools.
-- You want to directly reuse the same interface configuration across model viewing, interface verification, or export processes.
+- You want to use the same interface configuration directly for model viewing, interface verification, or export flows.
 
 ## Feature Overview
 
-- **Independent Profile Management**: Store name, `Base URL`, key, tags, and notes without relying on a site account.
+- **Credential Library Management**: Store name, `Base URL`, API key, tags, and notes without relying on a site account.
 - **Search and Filter**: Supports filtering by name, `Base URL`, tags, notes, and API type.
 - **Health and Usage Overview**: View balance, today's usage, today's requests, available models, last refresh time, and health status.
 - **Interface Verification**: Supports verifying API availability and separately testing CLI compatibility.
@@ -21,10 +21,14 @@
 ## Access Method
 
 1. Open the plugin settings page.
-2. Navigate to **`API Credentials`** in the left-hand menu.
-3. Click **`Add Credential`** in the upper right corner.
+2. Navigate to **`API Credential Library`** in the left-hand menu.
+3. Click **`Save API key`** in the upper right corner.
 
-If you have already obtained a key for an upstream site in `Key Management`, you can also verify or organize it there before saving it to `API Credentials` for easier subsequent reuse.
+If you have already obtained a key for an upstream site in `Key Management`, you can also verify or organize it before saving it to the `API Credential Library` for easier later use.
+
+::: tip Looking for High-Quality API Interfaces?
+If you need stable and CLI-supported API interfaces to fill your credential library, try our partner [PackyCode](https://www.packyapi.com/register?aff=all-api-hub) (enter the `all-api-hub` promo code during recharge to get 10% off).
+:::
 
 ## How to Add Credentials
 
@@ -137,7 +141,7 @@ Supports direct export from a single credential to:
 - Claude Code Router
 - Current self-hosted sites
 
-If your primary goal is to "manage a batch of upstream interface configurations and then distribute them to multiple downstream tools," `API Credentials` will be more direct than full account management.
+If your primary goal is to "manage a batch of upstream interface configurations and then distribute them to multiple downstream tools," the `API Credential Library` will be more direct than full account management.
 
 ## Usage Recommendations
 
@@ -152,8 +156,8 @@ If your primary goal is to "manage a batch of upstream interface configurations 
 |------|------|
 | I only saved the credential, why is there no balance data? | The current query method may not be compatible with the site, or the site does not provide a corresponding read-only interface; try switching the query method or using a custom read-only query. |
 | Why does the model-related verification require a model ID? | Some CLI compatibility checks and model call verifications require a specific model. The interface will try to automatically suggest a model, or you can manually enter one. |
-| Can it replace account management? | Not entirely. `API Credentials` are more suitable for interface reuse, verification, and export; account management is still responsible for site identification, balance refresh, check-ins, usage synchronization, and other account-level capabilities. |
-| Will API Credentials be included in backups? | Yes. They are part of the shared data and can be migrated along with data import/export and selective synchronization via WebDAV. |
+| Can it replace account management? | Not entirely. The `API Credential Library` is better for saving and using standalone API keys for API verification, model lookup, and export; account management is still responsible for site identification, balance refresh, check-ins, usage synchronization, and other account-level capabilities. |
+| Will the API Credential Library be included in backups? | Yes. It is part of the shared data and can be migrated along with data import/export and selective synchronization via WebDAV. |
 
 ## Related Documents
 

@@ -11,7 +11,9 @@ import {
   type ContentFeaturePreferences,
   type ContentFeaturePreferenceSource,
 } from "~/services/preferences/contentScriptFeatureDefaults"
+import { getRuntimeId, onStorageChanged } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
+import { ensureContentI18nReady } from "~/utils/i18n/content"
 
 import { setupContentMessageHandlers } from "./messageHandlers"
 import { setContentScriptContext } from "./shared/uiRoot"
@@ -37,6 +39,8 @@ function areContentFeaturePreferencesEqual(
       right.redemptionAssistContextMenuEnabled &&
     left.webAiApiCheckDetectionEnabled ===
       right.webAiApiCheckDetectionEnabled &&
+    left.webAiApiCheckEnhancedDetectionEnabled ===
+      right.webAiApiCheckEnhancedDetectionEnabled &&
     left.webAiApiCheckContextMenuEnabled ===
       right.webAiApiCheckContextMenuEnabled
   )
@@ -73,10 +77,19 @@ export default defineContentScript({
  * Bootstraps content-script side features: sanitizeUrlForLog, message handlers, and redemption assist UI.
  */
 function mainLogic() {
-  logger.debug("Hello content script", { id: browser.runtime.id })
+  logger.debug("Hello content script", { id: getRuntimeId() })
 
-  setupContentMessageHandlers()
-  return setupContentFeatureControllers()
+  void ensureContentI18nReady().catch((error) => {
+    logger.warn("Content i18n initialization failed", error)
+  })
+
+  const cleanupMessageHandlers = setupContentMessageHandlers()
+  const cleanupFeatureControllers = setupContentFeatureControllers()
+
+  return () => {
+    cleanupMessageHandlers()
+    cleanupFeatureControllers()
+  }
 }
 
 /**
@@ -132,12 +145,12 @@ function setupContentFeatureControllers() {
     void applyPreferences()
   }
 
-  browser.storage.onChanged.addListener(handleStorageChanged)
+  const cleanupStorageChanged = onStorageChanged(handleStorageChanged)
   void applyPreferences()
 
   return () => {
     disposed = true
-    browser.storage.onChanged.removeListener(handleStorageChanged)
+    cleanupStorageChanged()
     cleanupRedemptionAssist()
     cleanupWebAiApiCheck()
   }

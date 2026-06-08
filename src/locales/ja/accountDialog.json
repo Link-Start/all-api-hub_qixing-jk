@@ -8,8 +8,28 @@
     "confirmAdd": "追加を確認",
     "helpDocument": "ヘルプドキュメント",
     "reloadCurrentPage": "現在のページを再読み込み",
+    "reloadExtensionAndRetry": "拡張機能を再読み込みして再試行",
+    "reportUnsupportedSite": "未対応サイトを報告",
     "saveAccount": "アカウントを保存",
-    "saveChanges": "変更を保存"
+    "saveChanges": "変更を保存",
+    "workflow": {
+      "checkingToken": "API キーを確認しています...",
+      "creatingToken": "デフォルトキーを作成しています...",
+      "loadingSavedAccount": "保存済みアカウントを読み込んでいます...",
+      "openingManagedSiteDialog": "チャンネル設定を開いています...",
+      "savingAccount": "アカウントを保存しています...",
+      "waitingForOneTimeKey": "ワンタイムキーを先に保存してください...",
+      "waitingForSub2ApiGroup": "Sub2API グループを選択してください..."
+    }
+  },
+  "aihubmixDefaultKeyPrompt": {
+    "cancel": "あとで作成",
+    "cancelHint": "キャンセルしても保存済みアカウントには影響しません。あとでキー管理から AIHubMix API キーを手動作成できます。",
+    "confirm": "今すぐ作成して表示",
+    "creating": "作成中...",
+    "description": "{{accountName}} は保存されました。AIHubMix API キーは作成直後に一度だけ表示されるため、今すぐ完全なキーをコピーして保存できることを確認してください。",
+    "title": "AIHubMix の既定キーを作成しますか？",
+    "warningTitle": "完全なキーは一度だけ表示されます"
   },
   "form": {
     "accessToken": "Access Token",
@@ -19,7 +39,9 @@
     "cookieAuthSessionCookie": "セッション Cookie",
     "cookieAuthSessionCookieDesc": "ログイン済みブラウザタブからこのアカウントのセッション Cookie を取り込みます（複数アカウントは個別に取り込み）",
     "cookieAuthSessionCookiePlaceholder": "Cookie ヘッダーの値を貼り付け",
+    "cookiePermissionEnableCookieAuth": "Cookie 複数アカウントに必要な権限を許可",
     "cookiePermissionHelpAction": "権限設定を開く",
+    "cookiePermissionRecommendationDesc": "現在のログインページから Cookie を読み取り、更新やチェックインなどのリクエストでアカウントごとに対応する Cookie を付け、同一サイトの複数アカウントを安定して利用するために使います。",
     "customCheckInDesc": "残高取得や引き換えコード取得に使う外部チェックイン / 福利サイトの URL",
     "customCheckInUrl": "外部チェックインサイト URL（任意）",
     "customRedeemUrl": "カスタムチャージ / 引き換えページ URL（任意）",
@@ -27,6 +49,8 @@
     "exchangeRate": "チャージ金額レート（CNY/USD）",
     "exchangeRateDesc": "1 USD をチャージするのに必要な人民元額を表します。システムが自動取得を試みますが、取得できない場合は手動入力してください",
     "exchangeRatePlaceholder": "レートを入力してください",
+    "excludeFromTodayIncome": "今日の収入から除外",
+    "excludeFromTodayIncomeDesc": "更新、チェックイン、アカウント表示を無効にせず、今日の収入合計から除外します",
     "excludeFromTotalBalance": "総残高から除外",
     "excludeFromTotalBalanceDesc": "更新やチェックインを無効にせず、このアカウントを総残高集計から除外します",
     "hideAccessToken": "Access Token を非表示",
@@ -88,9 +112,12 @@
   },
   "messages": {
     "addSuccess": "アカウント {{name}} を正常に追加しました",
+    "autoDetectCookiePermissionReloadHint": "Cookie 複数アカウント権限を許可した直後の初回検出が進まない場合は、拡張機能を再読み込みしてから再試行できます。",
     "autoDetectFailed": "自動検出に失敗しました: {{error}}",
     "autoDetectSuccess": "自動検出に成功しました",
     "autoDetectTakingTooLong": "自動検出に想定より時間がかかっています。トラブルシューティングガイドを開いてください。",
+    "cookiePermissionGranted": "権限を許可しました",
+    "cookiePermissionGrantFailed": "権限が許可されませんでした",
     "importCookiesEmpty": "このサイトのブラウザ Cookie が見つかりません。先にこのサイトへログインしてから再試行してください。",
     "importCookiesFailed": "Cookie の取り込みに失敗しました: {{error}}",
     "importCookiesFailedUnknown": "Cookie の取り込みに失敗しました。不明なエラーです。",
@@ -102,6 +129,7 @@
     "loadFailed": "アカウントデータの読み込みに失敗しました",
     "newApiConfigFailed": "New API への自動設定に失敗しました: {{error}}",
     "operationFailed": "操作に失敗しました: {{error}}",
+    "reloadExtensionConfirm": "拡張機能を再読み込みすると現在の拡張機能ページが閉じます。必要な情報を保存済みであることを確認してください。",
     "saveAccountFailed": "アカウントの保存に失敗しました",
     "saveFailed": "保存に失敗しました",
     "updateSuccess": "アカウント {{name}} を正常に更新しました",
@@ -156,7 +184,8 @@
   "warnings": {
     "duplicateAccount": {
       "actions": {
-        "continue": "続行"
+        "continue": "続行",
+        "disableAndContinue": "今後表示せずに続行"
       },
       "description_other": "{{siteUrl}} にはすでに {{count}} 件のアカウントがあります。さらに追加すると重複する可能性があります。続行しますか？",
       "descriptionExact": "{{siteUrl}} に user ID {{userId}}（{{username}}）のアカウントがすでに存在します。さらに追加すると重複する可能性があります。続行しますか？",
@@ -172,6 +201,10 @@
       "guide": "この機能は現在のアカウントを先に保存し、そのアカウントで使える API Key を自動で用意して {{managedSite}} の新規チャネルに事前入力します。より素早くチャネルを作成でき、管理サイト設定の完了後に利用できます。",
       "title": "先に {{managedSite}} を設定してください",
       "warningTitle": "{{managedSite}} はまだ設定されていません"
+    },
+    "reloadExtension": {
+      "title": "拡張機能を再読み込み",
+      "warningTitle": "拡張機能を再読み込みしますか？"
     }
   }
 }

@@ -11,8 +11,19 @@ import toast from "react-hot-toast"
 import { I18nextProvider } from "react-i18next"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import ManagedSiteModelSync from "~/features/ManagedSiteModelSync/ManagedSiteModelSync"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+} from "~/services/productAnalytics/events"
+import { ModelSyncMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import { testI18n } from "~~/tests/test-utils/i18n"
 
 const {
@@ -20,12 +31,18 @@ const {
   mockUseUserPreferencesContext,
   mockShowWarningToast,
   mockOpenSettingsTab,
+  mockStartProductAnalyticsAction,
+  mockTrackProductAnalyticsActionCompleted,
+  mockCompleteProductAnalyticsAction,
   loggerMocks,
 } = vi.hoisted(() => ({
   mockSendRuntimeMessage: vi.fn(),
   mockUseUserPreferencesContext: vi.fn(),
   mockShowWarningToast: vi.fn(),
   mockOpenSettingsTab: vi.fn(),
+  mockStartProductAnalyticsAction: vi.fn(),
+  mockTrackProductAnalyticsActionCompleted: vi.fn(),
+  mockCompleteProductAnalyticsAction: vi.fn(),
   loggerMocks: {
     error: vi.fn(),
     info: vi.fn(),
@@ -58,6 +75,26 @@ vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
   }
 })
 
+vi.mock("~/services/models/modelSync/messaging", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("~/services/models/modelSync/messaging")
+    >()
+
+  return {
+    ...actual,
+    sendModelSyncMessage: (type: string, _data?: Record<string, unknown>) =>
+      mockSendRuntimeMessage(type, _data),
+  }
+})
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  startProductAnalyticsAction: (...args: unknown[]) =>
+    mockStartProductAnalyticsAction(...args),
+  trackProductAnalyticsActionCompleted: (...args: unknown[]) =>
+    mockTrackProductAnalyticsActionCompleted(...args),
+}))
+
 vi.mock("~/contexts/UserPreferencesContext", () => ({
   useUserPreferencesContext: mockUseUserPreferencesContext,
 }))
@@ -82,13 +119,89 @@ vi.mock("~/components/ManagedSiteChannelLinkButton", () => ({
   }) => <span>{`${channelName}#${channelId}`}</span>,
 }))
 
+vi.mock("~/components/ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/components/ui")>()
+
+  return {
+    ...actual,
+    Button: ({
+      analyticsAction,
+      children,
+      leftIcon,
+      loading: _loading,
+      rightIcon,
+      ...props
+    }: any) => (
+      <button
+        type="button"
+        data-analytics-action={
+          analyticsAction
+            ? `${analyticsAction.featureId}:${analyticsAction.actionId}:${analyticsAction.surfaceId}:${analyticsAction.entrypoint}`
+            : undefined
+        }
+        {...props}
+      >
+        {leftIcon}
+        {children}
+        {rightIcon}
+      </button>
+    ),
+    EmptyState: ({ title, description, action, icon }: any) => (
+      <div>
+        {icon}
+        <div>{title}</div>
+        <div>{description}</div>
+        {action ? (
+          <button
+            type="button"
+            onClick={action.onClick}
+            data-analytics-action={
+              action.analyticsAction
+                ? `${action.analyticsAction.featureId}:${action.analyticsAction.actionId}:${action.analyticsAction.surfaceId}:${action.analyticsAction.entrypoint}`
+                : undefined
+            }
+          >
+            {action.label}
+          </button>
+        ) : null}
+      </div>
+    ),
+  }
+})
+
 function render(ui: ReactNode) {
   return rtlRender(<I18nextProvider i18n={testI18n}>{ui}</I18nextProvider>)
 }
 
+const actionBarAnalyticsContext = (actionId: string) => ({
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  actionId,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+})
+
+const manualPanelAnalyticsContext = (actionId: string) => ({
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  actionId,
+  surfaceId:
+    PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncManualPanel,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+})
+
+const resultsTableAnalyticsContext = (actionId: string) => ({
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  actionId,
+  surfaceId:
+    PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncResultsTable,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+})
+
 describe("ManagedSiteModelSync page", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockStartProductAnalyticsAction.mockReturnValue({
+      complete: mockCompleteProductAnalyticsAction,
+    })
     mockUseUserPreferencesContext.mockReturnValue({
       preferences: {
         managedSiteType: "new-api",
@@ -100,92 +213,94 @@ describe("ManagedSiteModelSync page", () => {
       },
       managedSiteType: "new-api",
     })
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: false,
-                  message: "failed",
-                  attempts: 2,
-                  finishedAt: 1_700_000_000_000,
-                  httpStatus: 500,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: false,
+                    message: "failed",
+                    attempts: 2,
+                    finishedAt: 1_700_000_000_000,
+                    httpStatus: 500,
+                  },
+                  {
+                    channelId: 102,
+                    channelName: "Beta",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_001_000,
+                  },
+                ],
+                statistics: {
+                  total: 2,
+                  successCount: 1,
+                  failureCount: 1,
+                  durationMs: 4000,
+                  startedAt: 1_700_000_000_000,
+                  endedAt: 1_700_000_004_000,
                 },
-                {
-                  channelId: 102,
-                  channelName: "Beta",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_001_000,
-                },
-              ],
-              statistics: {
-                total: 2,
-                successCount: 1,
-                failureCount: 1,
-                durationMs: 4000,
-                startedAt: 1_700_000_000_000,
-                endedAt: 1_700_000_004_000,
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return {
-            success: true,
-            data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
-          }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return {
-            success: true,
-            data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
-          }
-        case RuntimeActionIds.ModelSyncTriggerSelected:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_005_000,
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return {
+              success: true,
+              data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
+            }
+          case ModelSyncMessageTypes.GetPreferences:
+            return {
+              success: true,
+              data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
+            }
+          case ModelSyncMessageTypes.TriggerSelected:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_005_000,
+                  },
+                ],
+                statistics: {
+                  total: 1,
+                  successCount: 1,
+                  failureCount: 0,
+                  durationMs: 1000,
+                  startedAt: 1_700_000_004_000,
+                  endedAt: 1_700_000_005_000,
                 },
-              ],
-              statistics: {
-                total: 1,
-                successCount: 1,
-                failureCount: 0,
-                durationMs: 1000,
-                startedAt: 1_700_000_004_000,
-                endedAt: 1_700_000_005_000,
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncListChannels:
-          return {
-            success: true,
-            data: {
-              items: [
-                { id: 201, name: "Manual Alpha" },
-                { id: 202, name: "Manual Beta" },
-              ],
-            },
-          }
-        default:
-          return { success: true }
-      }
-    })
+            }
+          case ModelSyncMessageTypes.ListChannels:
+            return {
+              success: true,
+              data: {
+                items: [
+                  { id: 201, name: "Manual Alpha" },
+                  { id: 202, name: "Manual Beta" },
+                ],
+              },
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
   })
 
   it("loads history data, filters results, and runs selected rows", async () => {
@@ -218,12 +333,31 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [101],
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerSelected,
+        { channelIds: [101] },
+      )
     })
     expect(toast.success).toHaveBeenCalled()
+  })
+
+  it("opens managed-site model sync settings from the title shortcut", async () => {
+    render(<ManagedSiteModelSync />)
+
+    expect(
+      await screen.findByText(
+        "managedSiteModelSync:execution.overview.enabled",
+      ),
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "common:labels.settings" }),
+    )
+
+    expect(mockOpenSettingsTab).toHaveBeenCalledWith("managedSite", {
+      anchor: "managed-site-model-sync",
+      preserveHistory: true,
+    })
   })
 
   it("shows a configuration empty state and skips model-sync loading when managed-site config is missing", async () => {
@@ -248,6 +382,21 @@ describe("ManagedSiteModelSync page", () => {
       screen.getByText("messages:newapi.configMissing"),
     ).toBeInTheDocument()
     expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      ...actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteModelSyncConfigRequired,
+      ),
+      result: PRODUCT_ANALYTICS_RESULTS.Skipped,
+      insights: {
+        managedSiteType: "new-api",
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ConfigRequired,
+      },
+    })
+    expect(mockStartProductAnalyticsAction).not.toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteModelSyncConfigRequired,
+      ),
+    )
 
     fireEvent.click(
       screen.getByRole("button", { name: "common:actions.goToSettings" }),
@@ -258,78 +407,106 @@ describe("ManagedSiteModelSync page", () => {
     })
   })
 
+  it("shows an unsupported empty state and skips model-sync loading for unsupported managed sites", async () => {
+    mockUseUserPreferencesContext.mockReturnValue({
+      preferences: {
+        managedSiteType: "axonhub",
+        axonHub: {
+          baseUrl: "https://axon.example",
+          email: "admin@example.com",
+          password: "admin-password",
+        },
+      },
+      managedSiteType: "axonhub",
+    })
+
+    render(<ManagedSiteModelSync />)
+
+    expect(
+      await screen.findByText(
+        "managedSiteModelSync:execution.unsupported.title",
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("messages:axonhub.unsupportedModelSync"),
+    ).toBeInTheDocument()
+    expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+  })
+
   it("keeps the current history snapshot rendered while a manual refresh is loading", async () => {
     let lastExecutionCalls = 0
     let resolveRefresh:
       | ((value: { success: boolean; data: any }) => void)
       | undefined
 
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          lastExecutionCalls += 1
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            lastExecutionCalls += 1
 
-          if (lastExecutionCalls === 1) {
+            if (lastExecutionCalls === 1) {
+              return {
+                success: true,
+                data: {
+                  items: [
+                    {
+                      channelId: 101,
+                      channelName: "Alpha",
+                      ok: false,
+                      message: "failed",
+                      attempts: 2,
+                      finishedAt: 1_700_000_000_000,
+                      httpStatus: 500,
+                    },
+                  ],
+                  statistics: {
+                    total: 1,
+                    successCount: 0,
+                    failureCount: 1,
+                    durationMs: 4000,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_004_000,
+                  },
+                },
+              }
+            }
+
+            return await new Promise<{ success: boolean; data: any }>(
+              (resolve) => {
+                resolveRefresh = resolve
+              },
+            )
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return {
+              success: true,
+              data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
+            }
+          case ModelSyncMessageTypes.GetPreferences:
+            return {
+              success: true,
+              data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
+            }
+          case ModelSyncMessageTypes.ListChannels:
             return {
               success: true,
               data: {
                 items: [
-                  {
-                    channelId: 101,
-                    channelName: "Alpha",
-                    ok: false,
-                    message: "failed",
-                    attempts: 2,
-                    finishedAt: 1_700_000_000_000,
-                    httpStatus: 500,
-                  },
+                  { id: 201, name: "Manual Alpha" },
+                  { id: 202, name: "Manual Beta" },
                 ],
-                statistics: {
-                  total: 1,
-                  successCount: 0,
-                  failureCount: 1,
-                  durationMs: 4000,
-                  startedAt: 1_700_000_000_000,
-                  endedAt: 1_700_000_004_000,
-                },
               },
             }
-          }
-
-          return await new Promise<{ success: boolean; data: any }>(
-            (resolve) => {
-              resolveRefresh = resolve
-            },
-          )
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return {
-            success: true,
-            data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
-          }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return {
-            success: true,
-            data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
-          }
-        case RuntimeActionIds.ModelSyncListChannels:
-          return {
-            success: true,
-            data: {
-              items: [
-                { id: 201, name: "Manual Alpha" },
-                { id: 202, name: "Manual Beta" },
-              ],
-            },
-          }
-        default:
-          return { success: true }
-      }
-    })
+          default:
+            return { success: true }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -376,102 +553,116 @@ describe("ManagedSiteModelSync page", () => {
     await waitFor(() => {
       expect(screen.queryByText("failed")).not.toBeInTheDocument()
     })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteModelSyncResults,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          itemCount: 1,
+        },
+      }),
+    )
   })
 
   it("uses a warning toast when run-all completes with failed channels still present", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncTriggerAll:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_005_000,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.TriggerAll:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_005_000,
+                  },
+                  {
+                    channelId: 102,
+                    channelName: "Beta",
+                    ok: false,
+                    message: "rate limited",
+                    attempts: 2,
+                    finishedAt: 1_700_000_006_000,
+                  },
+                ],
+                statistics: {
+                  total: 2,
+                  successCount: 1,
+                  failureCount: 1,
+                  durationMs: 2000,
+                  startedAt: 1_700_000_004_000,
+                  endedAt: 1_700_000_006_000,
                 },
-                {
-                  channelId: 102,
-                  channelName: "Beta",
-                  ok: false,
-                  message: "rate limited",
-                  attempts: 2,
-                  finishedAt: 1_700_000_006_000,
-                },
-              ],
-              statistics: {
-                total: 2,
-                successCount: 1,
-                failureCount: 1,
-                durationMs: 2000,
-                startedAt: 1_700_000_004_000,
-                endedAt: 1_700_000_006_000,
               },
-            },
-          }
-        default:
-          return {
-            success: true,
-            data:
-              message.action === RuntimeActionIds.ModelSyncGetLastExecution
-                ? {
-                    items: [
-                      {
-                        channelId: 101,
-                        channelName: "Alpha",
-                        ok: false,
-                        message: "failed",
-                        attempts: 2,
-                        finishedAt: 1_700_000_000_000,
-                        httpStatus: 500,
-                      },
-                      {
-                        channelId: 102,
-                        channelName: "Beta",
-                        ok: true,
-                        attempts: 1,
-                        finishedAt: 1_700_000_001_000,
-                      },
-                    ],
-                    statistics: {
-                      total: 2,
-                      successCount: 1,
-                      failureCount: 1,
-                      durationMs: 4000,
-                      startedAt: 1_700_000_000_000,
-                      endedAt: 1_700_000_004_000,
-                    },
-                  }
-                : message.action === RuntimeActionIds.ModelSyncGetProgress
+            }
+          default:
+            return {
+              success: true,
+              data:
+                type === ModelSyncMessageTypes.GetLastExecution
                   ? {
-                      isRunning: false,
-                      completed: 0,
-                      total: 0,
-                      failed: 0,
+                      items: [
+                        {
+                          channelId: 101,
+                          channelName: "Alpha",
+                          ok: false,
+                          message: "failed",
+                          attempts: 2,
+                          finishedAt: 1_700_000_000_000,
+                          httpStatus: 500,
+                        },
+                        {
+                          channelId: 102,
+                          channelName: "Beta",
+                          ok: true,
+                          attempts: 1,
+                          finishedAt: 1_700_000_001_000,
+                        },
+                      ],
+                      statistics: {
+                        total: 2,
+                        successCount: 1,
+                        failureCount: 1,
+                        durationMs: 4000,
+                        startedAt: 1_700_000_000_000,
+                        endedAt: 1_700_000_004_000,
+                      },
                     }
-                  : message.action === RuntimeActionIds.ModelSyncGetNextRun
-                    ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
-                    : message.action ===
-                        RuntimeActionIds.ModelSyncGetPreferences
-                      ? {
-                          enableSync: true,
-                          intervalMs: 2 * 60 * 60 * 1000,
-                        }
-                      : message.action ===
-                          RuntimeActionIds.ModelSyncListChannels
+                  : type === ModelSyncMessageTypes.GetProgress
+                    ? {
+                        isRunning: false,
+                        completed: 0,
+                        total: 0,
+                        failed: 0,
+                      }
+                    : type === ModelSyncMessageTypes.GetNextRun
+                      ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                      : type === ModelSyncMessageTypes.GetPreferences
                         ? {
-                            items: [
-                              { id: 201, name: "Manual Alpha" },
-                              { id: 202, name: "Manual Beta" },
-                            ],
+                            enableSync: true,
+                            intervalMs: 2 * 60 * 60 * 1000,
                           }
-                        : undefined,
-          }
-      }
-    })
+                        : type === ModelSyncMessageTypes.ListChannels
+                          ? {
+                              items: [
+                                { id: 201, name: "Manual Alpha" },
+                                { id: 202, name: "Manual Beta" },
+                              ],
+                            }
+                          : undefined,
+            }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -494,50 +685,92 @@ describe("ManagedSiteModelSync page", () => {
       )
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncAllManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        diagnostics: {
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          },
+          execution: {
+            retryAttempted: true,
+            retryCount: 1,
+          },
+          outcome: {
+            itemCount: 2,
+            successCount: 1,
+            failureCount: 1,
+            skippedCount: 0,
+            modelCount: 0,
+          },
+          failure: {
+            category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+            stage: "execute",
+            reason: "partial_success",
+          },
+        },
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          itemCount: 2,
+          successCount: 1,
+          failureCount: 1,
+        },
+      },
+    )
     expect(toast.success).not.toHaveBeenCalled()
   })
 
   it("uses manual route params to load and preselect channels", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          return {
-            success: true,
-            data: {
-              items: [],
-              statistics: {
-                total: 0,
-                successCount: 0,
-                failureCount: 0,
-                durationMs: 0,
-                startedAt: 1_700_000_000_000,
-                endedAt: 1_700_000_000_000,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [],
+                statistics: {
+                  total: 0,
+                  successCount: 0,
+                  failureCount: 0,
+                  durationMs: 0,
+                  startedAt: 1_700_000_000_000,
+                  endedAt: 1_700_000_000_000,
+                },
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return { success: true, data: { nextScheduledAt: null } }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return { success: true, data: { enableSync: false, intervalMs: 0 } }
-        case RuntimeActionIds.ModelSyncListChannels:
-          return {
-            success: true,
-            data: {
-              items: [
-                { id: 42, name: "Route Match" },
-                { id: 99, name: "Other" },
-              ],
-            },
-          }
-        default:
-          return { success: true }
-      }
-    })
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return { success: true, data: { nextScheduledAt: null } }
+          case ModelSyncMessageTypes.GetPreferences:
+            return { success: true, data: { enableSync: false, intervalMs: 0 } }
+          case ModelSyncMessageTypes.ListChannels:
+            return {
+              success: true,
+              data: {
+                items: [
+                  { id: 42, name: "Route Match" },
+                  { id: 99, name: "Other" },
+                ],
+              },
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
 
     render(
       <ManagedSiteModelSync routeParams={{ channelId: "42", tab: "manual" }} />,
@@ -565,52 +798,82 @@ describe("ManagedSiteModelSync page", () => {
     expect(await screen.findByDisplayValue("Beta")).toBeInTheDocument()
     expect(screen.getByText("Manual Beta#202")).toBeInTheDocument()
     expect(screen.queryByText("Manual Alpha#201")).not.toBeInTheDocument()
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SelectManagedSiteModelSyncTab,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+        },
+      }),
+    )
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      manualPanelAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SearchManagedSiteModelSyncChannels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+        },
+      }),
+    )
   })
 
   it("shows the manual empty-state error when channel loading fails and recovers on reload", async () => {
     let channelLoadAttempt = 0
 
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          return {
-            success: true,
-            data: {
-              items: [],
-              statistics: {
-                total: 0,
-                successCount: 0,
-                failureCount: 0,
-                durationMs: 0,
-                startedAt: 1_700_000_000_000,
-                endedAt: 1_700_000_000_000,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [],
+                statistics: {
+                  total: 0,
+                  successCount: 0,
+                  failureCount: 0,
+                  durationMs: 0,
+                  startedAt: 1_700_000_000_000,
+                  endedAt: 1_700_000_000_000,
+                },
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return { success: true, data: { nextScheduledAt: null } }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return { success: true, data: { enableSync: false, intervalMs: 0 } }
-        case RuntimeActionIds.ModelSyncListChannels:
-          channelLoadAttempt += 1
-          if (channelLoadAttempt === 1) {
-            return { success: false, error: "channel load failed" }
-          }
-          return {
-            success: true,
-            data: {
-              items: [{ id: 301, name: "Recovered Channel" }],
-            },
-          }
-        default:
-          return { success: true }
-      }
-    })
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return { success: true, data: { nextScheduledAt: null } }
+          case ModelSyncMessageTypes.GetPreferences:
+            return { success: true, data: { enableSync: false, intervalMs: 0 } }
+          case ModelSyncMessageTypes.ListChannels:
+            channelLoadAttempt += 1
+            if (channelLoadAttempt === 1) {
+              return { success: false, error: "channel load failed" }
+            }
+            return {
+              success: true,
+              data: {
+                items: [{ id: 301, name: "Recovered Channel" }],
+              },
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -642,6 +905,22 @@ describe("ManagedSiteModelSync page", () => {
     await waitFor(() => {
       expect(screen.queryByText("Beta#102")).not.toBeInTheDocument()
     })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.FilterManagedSiteModelSyncResults,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+          statusKind: "error",
+          itemCount: 1,
+        },
+      }),
+    )
 
     const [selectAllCheckbox] = screen.getAllByRole("checkbox")
     fireEvent.click(selectAllCheckbox)
@@ -675,6 +954,24 @@ describe("ManagedSiteModelSync page", () => {
         name: "managedSiteModelSync:execution.actions.runSelected (0)",
       }),
     ).toBeDisabled()
+
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+          selectedCount: 1,
+          itemCount: 1,
+        },
+      }),
+    )
   })
 
   it("filters history rows by channel id and failure message and shows a no-results state", async () => {
@@ -700,82 +997,136 @@ describe("ManagedSiteModelSync page", () => {
     expect(
       await screen.findByText("managedSiteModelSync:execution.empty.noResults"),
     ).toBeInTheDocument()
+
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SearchManagedSiteModelSyncChannels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+          itemCount: 0,
+        },
+      }),
+    )
+    expect(mockCompleteProductAnalyticsAction.mock.calls.flat()).not.toContain(
+      "zzz",
+    )
+  })
+
+  it("tracks history search again when a different keyword has the same result count", async () => {
+    render(<ManagedSiteModelSync />)
+
+    const searchInput = (await screen.findByPlaceholderText(
+      "managedSiteModelSync:execution.filters.searchPlaceholder",
+    )) as HTMLInputElement
+
+    fireEvent.change(searchInput, { target: { value: "102" } })
+    await waitFor(() => {
+      expect(screen.getByText("Beta#102")).toBeInTheDocument()
+      expect(screen.queryByText("Alpha#101")).not.toBeInTheDocument()
+    })
+
+    fireEvent.change(searchInput, { target: { value: "failed" } })
+    await waitFor(() => {
+      expect(screen.getByText("Alpha#101")).toBeInTheDocument()
+      expect(screen.queryByText("Beta#102")).not.toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      const searchCompletions = mockCompleteProductAnalyticsAction.mock.calls
+        .map(([, options]) => options)
+        .filter(
+          (options: any) =>
+            options?.insights?.sourceKind ===
+              PRODUCT_ANALYTICS_SOURCE_KINDS.History &&
+            options.insights.itemCount === 1,
+        )
+
+      expect(searchCompletions).toHaveLength(2)
+    })
   })
 
   it("updates a single channel row with an inline failure result", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_001_000,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_001_000,
+                  },
+                ],
+                statistics: {
+                  total: 1,
+                  successCount: 1,
+                  failureCount: 0,
+                  durationMs: 1000,
+                  startedAt: 1_700_000_000_000,
+                  endedAt: 1_700_000_001_000,
                 },
-              ],
-              statistics: {
-                total: 1,
-                successCount: 1,
-                failureCount: 0,
-                durationMs: 1000,
-                startedAt: 1_700_000_000_000,
-                endedAt: 1_700_000_001_000,
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return {
-            success: true,
-            data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
-          }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return {
-            success: true,
-            data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
-          }
-        case RuntimeActionIds.ModelSyncTriggerSelected:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: false,
-                  message: "rate limited",
-                  attempts: 2,
-                  finishedAt: 1_700_000_002_000,
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return {
+              success: true,
+              data: { nextScheduledAt: "2026-03-28T10:00:00.000Z" },
+            }
+          case ModelSyncMessageTypes.GetPreferences:
+            return {
+              success: true,
+              data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
+            }
+          case ModelSyncMessageTypes.TriggerSelected:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: false,
+                    message: "rate limited",
+                    attempts: 2,
+                    finishedAt: 1_700_000_002_000,
+                  },
+                ],
+                statistics: {
+                  total: 1,
+                  successCount: 0,
+                  failureCount: 1,
+                  durationMs: 1000,
+                  startedAt: 1_700_000_001_000,
+                  endedAt: 1_700_000_002_000,
                 },
-              ],
-              statistics: {
-                total: 1,
-                successCount: 0,
-                failureCount: 1,
-                durationMs: 1000,
-                startedAt: 1_700_000_001_000,
-                endedAt: 1_700_000_002_000,
               },
-            },
-          }
-        case RuntimeActionIds.ModelSyncListChannels:
-          return {
-            success: true,
-            data: { items: [] },
-          }
-        default:
-          return { success: true }
-      }
-    })
+            }
+          case ModelSyncMessageTypes.ListChannels:
+            return {
+              success: true,
+              data: { items: [] },
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -791,6 +1142,39 @@ describe("ManagedSiteModelSync page", () => {
       )
       expect(screen.getByText("rate limited")).toBeInTheDocument()
     })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncSingleManagedSiteModel,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      expect.objectContaining({
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+          },
+          outcome: expect.objectContaining({
+            itemCount: 1,
+            successCount: 0,
+            failureCount: 1,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+          selectedCount: 1,
+          itemCount: 1,
+          successCount: 0,
+          failureCount: 1,
+        },
+      }),
+    )
   })
 
   it("supports selecting and clearing all manual rows", async () => {
@@ -802,11 +1186,17 @@ describe("ManagedSiteModelSync page", () => {
     const [selectAllCheckbox] = screen.getAllByRole("checkbox")
     fireEvent.click(selectAllCheckbox)
 
+    const runSelectedButton = screen.getByRole("button", {
+      name: "managedSiteModelSync:execution.actions.runSelected (2)",
+    })
+    expect(runSelectedButton).toBeEnabled()
+    expect(runSelectedButton).not.toHaveAttribute("data-analytics-action")
+
     expect(
       screen.getByRole("button", {
-        name: "managedSiteModelSync:execution.actions.runSelected (2)",
+        name: "managedSiteModelSync:execution.actions.refresh",
       }),
-    ).toBeEnabled()
+    ).not.toHaveAttribute("data-analytics-action")
 
     const manualAlphaRow = screen.getByText("Manual Alpha#201").closest("tr")
     expect(manualAlphaRow).toBeTruthy()
@@ -831,6 +1221,24 @@ describe("ManagedSiteModelSync page", () => {
         name: "managedSiteModelSync:execution.actions.runSelected (0)",
       }),
     ).toBeDisabled()
+
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        insights: {
+          managedSiteType: "new-api",
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+          selectedCount: 2,
+          itemCount: 2,
+        },
+      }),
+    )
   })
 
   it("runs selected manual channels and clears the manual selection after success", async () => {
@@ -855,13 +1263,45 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [201],
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerSelected,
+        { channelIds: [201] },
+      )
     })
 
     expect(toast.success).toHaveBeenCalled()
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      manualPanelAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncSelectedManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+          },
+          outcome: expect.objectContaining({
+            itemCount: 1,
+            successCount: 1,
+            failureCount: 0,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+          selectedCount: 1,
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+        },
+      }),
+    )
     expect(
       screen.getByRole("button", {
         name: "managedSiteModelSync:execution.actions.runSelected (0)",
@@ -869,94 +1309,206 @@ describe("ManagedSiteModelSync page", () => {
     ).toBeDisabled()
   })
 
-  it("replaces the last execution snapshot when running all channels succeeds", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncTriggerAll:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 101,
-                  channelName: "Alpha",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_006_000,
+  it("declares manual empty-state reload analytics metadata", async () => {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [],
+                statistics: {
+                  total: 0,
+                  successCount: 0,
+                  failureCount: 0,
+                  durationMs: 0,
+                  startedAt: 0,
+                  endedAt: 0,
                 },
-                {
-                  channelId: 102,
-                  channelName: "Beta",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_006_500,
-                },
-              ],
-              statistics: {
-                total: 2,
-                successCount: 2,
-                failureCount: 0,
-                durationMs: 1500,
-                startedAt: 1_700_000_005_000,
-                endedAt: 1_700_000_006_500,
               },
-            },
-          }
-        default:
-          return {
-            success: true,
-            data:
-              message.action === RuntimeActionIds.ModelSyncGetLastExecution
-                ? {
-                    items: [
-                      {
-                        channelId: 101,
-                        channelName: "Alpha",
-                        ok: false,
-                        message: "failed",
-                        attempts: 2,
-                        finishedAt: 1_700_000_000_000,
-                        httpStatus: 500,
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return { success: true, data: { nextScheduledAt: null } }
+          case ModelSyncMessageTypes.GetPreferences:
+            return {
+              success: true,
+              data: { enableSync: true, intervalMs: 2 * 60 * 60 * 1000 },
+            }
+          case ModelSyncMessageTypes.ListChannels:
+            return { success: true, data: { items: [] } }
+          default:
+            return { success: true }
+        }
+      },
+    )
+
+    render(<ManagedSiteModelSync routeParams={{ tab: "manual" }} />)
+
+    expect(
+      await screen.findByRole("button", {
+        name: "managedSiteModelSync:execution.manual.reload",
+      }),
+    ).not.toHaveAttribute("data-analytics-action")
+  })
+
+  it("completes manual channel reload analytics without leaking backend error text", async () => {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            return {
+              success: true,
+              data: {
+                items: [],
+                statistics: {
+                  total: 0,
+                  successCount: 0,
+                  failureCount: 0,
+                  durationMs: 0,
+                  startedAt: 0,
+                  endedAt: 0,
+                },
+              },
+            }
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return { success: true, data: { nextScheduledAt: null } }
+          case ModelSyncMessageTypes.GetPreferences:
+            return { success: true, data: { enableSync: false, intervalMs: 0 } }
+          case ModelSyncMessageTypes.ListChannels:
+            return {
+              success: false,
+              error: "raw backend channel load failure",
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
+
+    render(<ManagedSiteModelSync routeParams={{ tab: "manual" }} />)
+
+    expect(
+      await screen.findByText("raw backend channel load failure"),
+    ).toBeInTheDocument()
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      manualPanelAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.ReloadManagedSiteModelSyncChannels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      expect.objectContaining({
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          managedSiteType: "new-api",
+          itemCount: 0,
+        },
+      }),
+    )
+    expect(mockCompleteProductAnalyticsAction.mock.calls.flat()).not.toContain(
+      "raw backend channel load failure",
+    )
+  })
+
+  it("replaces the last execution snapshot when running all channels succeeds", async () => {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.TriggerAll:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 101,
+                    channelName: "Alpha",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_006_000,
+                  },
+                  {
+                    channelId: 102,
+                    channelName: "Beta",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_006_500,
+                  },
+                ],
+                statistics: {
+                  total: 2,
+                  successCount: 2,
+                  failureCount: 0,
+                  durationMs: 1500,
+                  startedAt: 1_700_000_005_000,
+                  endedAt: 1_700_000_006_500,
+                },
+              },
+            }
+          default:
+            return {
+              success: true,
+              data:
+                type === ModelSyncMessageTypes.GetLastExecution
+                  ? {
+                      items: [
+                        {
+                          channelId: 101,
+                          channelName: "Alpha",
+                          ok: false,
+                          message: "failed",
+                          attempts: 2,
+                          finishedAt: 1_700_000_000_000,
+                          httpStatus: 500,
+                        },
+                        {
+                          channelId: 102,
+                          channelName: "Beta",
+                          ok: true,
+                          attempts: 1,
+                          finishedAt: 1_700_000_001_000,
+                        },
+                      ],
+                      statistics: {
+                        total: 2,
+                        successCount: 1,
+                        failureCount: 1,
+                        durationMs: 4000,
+                        startedAt: 1_700_000_000_000,
+                        endedAt: 1_700_000_004_000,
                       },
-                      {
-                        channelId: 102,
-                        channelName: "Beta",
-                        ok: true,
-                        attempts: 1,
-                        finishedAt: 1_700_000_001_000,
-                      },
-                    ],
-                    statistics: {
-                      total: 2,
-                      successCount: 1,
-                      failureCount: 1,
-                      durationMs: 4000,
-                      startedAt: 1_700_000_000_000,
-                      endedAt: 1_700_000_004_000,
-                    },
-                  }
-                : message.action === RuntimeActionIds.ModelSyncGetProgress
-                  ? { isRunning: false, completed: 0, total: 0, failed: 0 }
-                  : message.action === RuntimeActionIds.ModelSyncGetNextRun
-                    ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
-                    : message.action ===
-                        RuntimeActionIds.ModelSyncGetPreferences
-                      ? {
-                          enableSync: true,
-                          intervalMs: 2 * 60 * 60 * 1000,
-                        }
-                      : message.action ===
-                          RuntimeActionIds.ModelSyncListChannels
+                    }
+                  : type === ModelSyncMessageTypes.GetProgress
+                    ? { isRunning: false, completed: 0, total: 0, failed: 0 }
+                    : type === ModelSyncMessageTypes.GetNextRun
+                      ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                      : type === ModelSyncMessageTypes.GetPreferences
                         ? {
-                            items: [
-                              { id: 201, name: "Manual Alpha" },
-                              { id: 202, name: "Manual Beta" },
-                            ],
+                            enableSync: true,
+                            intervalMs: 2 * 60 * 60 * 1000,
                           }
-                        : undefined,
-          }
-      }
-    })
+                        : type === ModelSyncMessageTypes.ListChannels
+                          ? {
+                              items: [
+                                { id: 201, name: "Manual Alpha" },
+                                { id: 202, name: "Manual Beta" },
+                              ],
+                            }
+                          : undefined,
+            }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -969,11 +1521,41 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerAll,
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerAll,
+        undefined,
+      )
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncAllManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          },
+          outcome: expect.objectContaining({
+            itemCount: 2,
+            successCount: 2,
+            failureCount: 0,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          itemCount: 2,
+          successCount: 2,
+          failureCount: 0,
+        },
+      }),
+    )
     expect(toast.success).toHaveBeenCalled()
     await waitFor(() => {
       expect(screen.queryByText("failed")).not.toBeInTheDocument()
@@ -982,66 +1564,180 @@ describe("ManagedSiteModelSync page", () => {
     expect(screen.getByText("Beta#102")).toBeInTheDocument()
   })
 
-  it("keeps the current execution snapshot when running all channels fails", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.ModelSyncTriggerAll) {
-        return {
-          success: false,
-          error: "backend unavailable",
+  it("reports skipped analytics when running all channels has no executable work", async () => {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        if (type === ModelSyncMessageTypes.TriggerAll) {
+          return {
+            success: true,
+            data: {
+              items: [],
+              statistics: {
+                total: 0,
+                successCount: 0,
+                failureCount: 0,
+                durationMs: 0,
+                startedAt: 1_700_000_010_000,
+                endedAt: 1_700_000_010_000,
+              },
+            },
+          }
         }
-      }
 
-      return {
-        success: true,
-        data:
-          message.action === RuntimeActionIds.ModelSyncGetLastExecution
-            ? {
-                items: [
-                  {
-                    channelId: 101,
-                    channelName: "Alpha",
-                    ok: false,
-                    message: "failed",
-                    attempts: 2,
-                    finishedAt: 1_700_000_000_000,
-                    httpStatus: 500,
+        return {
+          success: true,
+          data:
+            type === ModelSyncMessageTypes.GetLastExecution
+              ? {
+                  items: [
+                    {
+                      channelId: 101,
+                      channelName: "Alpha",
+                      ok: true,
+                      attempts: 1,
+                      finishedAt: 1_700_000_001_000,
+                    },
+                  ],
+                  statistics: {
+                    total: 1,
+                    successCount: 1,
+                    failureCount: 0,
+                    durationMs: 1000,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_001_000,
                   },
-                  {
-                    channelId: 102,
-                    channelName: "Beta",
-                    ok: true,
-                    attempts: 1,
-                    finishedAt: 1_700_000_001_000,
-                  },
-                ],
-                statistics: {
-                  total: 2,
-                  successCount: 1,
-                  failureCount: 1,
-                  durationMs: 4000,
-                  startedAt: 1_700_000_000_000,
-                  endedAt: 1_700_000_004_000,
-                },
-              }
-            : message.action === RuntimeActionIds.ModelSyncGetProgress
-              ? { isRunning: false, completed: 0, total: 0, failed: 0 }
-              : message.action === RuntimeActionIds.ModelSyncGetNextRun
-                ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
-                : message.action === RuntimeActionIds.ModelSyncGetPreferences
-                  ? {
-                      enableSync: true,
-                      intervalMs: 2 * 60 * 60 * 1000,
-                    }
-                  : message.action === RuntimeActionIds.ModelSyncListChannels
+                }
+              : type === ModelSyncMessageTypes.GetProgress
+                ? { isRunning: false, completed: 0, total: 0, failed: 0 }
+                : type === ModelSyncMessageTypes.GetNextRun
+                  ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                  : type === ModelSyncMessageTypes.GetPreferences
                     ? {
-                        items: [
-                          { id: 201, name: "Manual Alpha" },
-                          { id: 202, name: "Manual Beta" },
-                        ],
+                        enableSync: true,
+                        intervalMs: 2 * 60 * 60 * 1000,
                       }
-                    : undefined,
-      }
+                    : type === ModelSyncMessageTypes.ListChannels
+                      ? {
+                          items: [
+                            { id: 201, name: "Manual Alpha" },
+                            { id: 202, name: "Manual Beta" },
+                          ],
+                        }
+                      : undefined,
+        }
+      },
+    )
+
+    render(<ManagedSiteModelSync />)
+
+    expect(await screen.findByText("Alpha#101")).toBeInTheDocument()
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "managedSiteModelSync:execution.actions.runAll",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerAll,
+        undefined,
+      )
     })
+
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncAllManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Skipped,
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          },
+          outcome: expect.objectContaining({
+            itemCount: 0,
+            successCount: 0,
+            failureCount: 0,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          itemCount: 0,
+          successCount: 0,
+          failureCount: 0,
+        },
+      }),
+    )
+  })
+
+  it("keeps the current execution snapshot when running all channels fails", async () => {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        if (type === ModelSyncMessageTypes.TriggerAll) {
+          return {
+            success: false,
+            error: "backend unavailable",
+          }
+        }
+
+        return {
+          success: true,
+          data:
+            type === ModelSyncMessageTypes.GetLastExecution
+              ? {
+                  items: [
+                    {
+                      channelId: 101,
+                      channelName: "Alpha",
+                      ok: false,
+                      message: "failed",
+                      attempts: 2,
+                      finishedAt: 1_700_000_000_000,
+                      httpStatus: 500,
+                    },
+                    {
+                      channelId: 102,
+                      channelName: "Beta",
+                      ok: true,
+                      attempts: 1,
+                      finishedAt: 1_700_000_001_000,
+                    },
+                  ],
+                  statistics: {
+                    total: 2,
+                    successCount: 1,
+                    failureCount: 1,
+                    durationMs: 4000,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_004_000,
+                  },
+                }
+              : type === ModelSyncMessageTypes.GetProgress
+                ? { isRunning: false, completed: 0, total: 0, failed: 0 }
+                : type === ModelSyncMessageTypes.GetNextRun
+                  ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                  : type === ModelSyncMessageTypes.GetPreferences
+                    ? {
+                        enableSync: true,
+                        intervalMs: 2 * 60 * 60 * 1000,
+                      }
+                    : type === ModelSyncMessageTypes.ListChannels
+                      ? {
+                          items: [
+                            { id: 201, name: "Manual Alpha" },
+                            { id: 202, name: "Manual Beta" },
+                          ],
+                        }
+                      : undefined,
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -1054,78 +1750,95 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerAll,
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerAll,
+        undefined,
+      )
       expect(toast.error).toHaveBeenCalledWith(
         "managedSiteModelSync:messages.error.syncFailed",
       )
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncAllManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          managedSiteType: "new-api",
+        },
+      },
+    )
     expect(screen.getByText("failed")).toBeInTheDocument()
     expect(screen.getByText("Alpha#101")).toBeInTheDocument()
   })
 
   it("keeps selected history rows checked when a targeted sync fails", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.ModelSyncTriggerSelected) {
-        return {
-          success: false,
-          error: "permission denied",
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        if (type === ModelSyncMessageTypes.TriggerSelected) {
+          return {
+            success: false,
+            error: "permission denied",
+          }
         }
-      }
 
-      return {
-        success: true,
-        data:
-          message.action === RuntimeActionIds.ModelSyncGetLastExecution
-            ? {
-                items: [
-                  {
-                    channelId: 101,
-                    channelName: "Alpha",
-                    ok: false,
-                    message: "failed",
-                    attempts: 2,
-                    finishedAt: 1_700_000_000_000,
-                    httpStatus: 500,
+        return {
+          success: true,
+          data:
+            type === ModelSyncMessageTypes.GetLastExecution
+              ? {
+                  items: [
+                    {
+                      channelId: 101,
+                      channelName: "Alpha",
+                      ok: false,
+                      message: "failed",
+                      attempts: 2,
+                      finishedAt: 1_700_000_000_000,
+                      httpStatus: 500,
+                    },
+                    {
+                      channelId: 102,
+                      channelName: "Beta",
+                      ok: true,
+                      attempts: 1,
+                      finishedAt: 1_700_000_001_000,
+                    },
+                  ],
+                  statistics: {
+                    total: 2,
+                    successCount: 1,
+                    failureCount: 1,
+                    durationMs: 4000,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_004_000,
                   },
-                  {
-                    channelId: 102,
-                    channelName: "Beta",
-                    ok: true,
-                    attempts: 1,
-                    finishedAt: 1_700_000_001_000,
-                  },
-                ],
-                statistics: {
-                  total: 2,
-                  successCount: 1,
-                  failureCount: 1,
-                  durationMs: 4000,
-                  startedAt: 1_700_000_000_000,
-                  endedAt: 1_700_000_004_000,
-                },
-              }
-            : message.action === RuntimeActionIds.ModelSyncGetProgress
-              ? { isRunning: false, completed: 0, total: 0, failed: 0 }
-              : message.action === RuntimeActionIds.ModelSyncGetNextRun
-                ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
-                : message.action === RuntimeActionIds.ModelSyncGetPreferences
-                  ? {
-                      enableSync: true,
-                      intervalMs: 2 * 60 * 60 * 1000,
-                    }
-                  : message.action === RuntimeActionIds.ModelSyncListChannels
+                }
+              : type === ModelSyncMessageTypes.GetProgress
+                ? { isRunning: false, completed: 0, total: 0, failed: 0 }
+                : type === ModelSyncMessageTypes.GetNextRun
+                  ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                  : type === ModelSyncMessageTypes.GetPreferences
                     ? {
-                        items: [
-                          { id: 201, name: "Manual Alpha" },
-                          { id: 202, name: "Manual Beta" },
-                        ],
+                        enableSync: true,
+                        intervalMs: 2 * 60 * 60 * 1000,
                       }
-                    : undefined,
-      }
-    })
+                    : type === ModelSyncMessageTypes.ListChannels
+                      ? {
+                          items: [
+                            { id: 201, name: "Manual Alpha" },
+                            { id: 202, name: "Manual Beta" },
+                          ],
+                        }
+                      : undefined,
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -1142,104 +1855,120 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [101],
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerSelected,
+        { channelIds: [101] },
+      )
       expect(toast.error).toHaveBeenCalledWith(
         "managedSiteModelSync:messages.error.syncFailed",
       )
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncSelectedManagedSiteModels,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          managedSiteType: "new-api",
+        },
+      },
+    )
     expect(within(alphaRow!).getByRole("checkbox")).toBeChecked()
     expect(screen.getByText("failed")).toBeInTheDocument()
   })
 
   it("retries failed rows and replaces them with the successful result", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.ModelSyncTriggerFailedOnly) {
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        if (type === ModelSyncMessageTypes.TriggerFailedOnly) {
+          return {
+            success: true,
+            data: {
+              items: [
+                {
+                  channelId: 101,
+                  channelName: "Alpha",
+                  ok: true,
+                  attempts: 3,
+                  finishedAt: 1_700_000_006_000,
+                },
+                {
+                  channelId: 102,
+                  channelName: "Beta",
+                  ok: true,
+                  attempts: 1,
+                  finishedAt: 1_700_000_001_000,
+                },
+              ],
+              statistics: {
+                total: 2,
+                successCount: 2,
+                failureCount: 0,
+                durationMs: 2000,
+                startedAt: 1_700_000_004_000,
+                endedAt: 1_700_000_006_000,
+              },
+            },
+          }
+        }
+
         return {
           success: true,
-          data: {
-            items: [
-              {
-                channelId: 101,
-                channelName: "Alpha",
-                ok: true,
-                attempts: 3,
-                finishedAt: 1_700_000_006_000,
-              },
-              {
-                channelId: 102,
-                channelName: "Beta",
-                ok: true,
-                attempts: 1,
-                finishedAt: 1_700_000_001_000,
-              },
-            ],
-            statistics: {
-              total: 2,
-              successCount: 2,
-              failureCount: 0,
-              durationMs: 2000,
-              startedAt: 1_700_000_004_000,
-              endedAt: 1_700_000_006_000,
-            },
-          },
-        }
-      }
-
-      return {
-        success: true,
-        data:
-          message.action === RuntimeActionIds.ModelSyncGetLastExecution
-            ? {
-                items: [
-                  {
-                    channelId: 101,
-                    channelName: "Alpha",
-                    ok: false,
-                    message: "failed",
-                    attempts: 2,
-                    finishedAt: 1_700_000_000_000,
-                    httpStatus: 500,
+          data:
+            type === ModelSyncMessageTypes.GetLastExecution
+              ? {
+                  items: [
+                    {
+                      channelId: 101,
+                      channelName: "Alpha",
+                      ok: false,
+                      message: "failed",
+                      attempts: 2,
+                      finishedAt: 1_700_000_000_000,
+                      httpStatus: 500,
+                    },
+                    {
+                      channelId: 102,
+                      channelName: "Beta",
+                      ok: true,
+                      attempts: 1,
+                      finishedAt: 1_700_000_001_000,
+                    },
+                  ],
+                  statistics: {
+                    total: 2,
+                    successCount: 1,
+                    failureCount: 1,
+                    durationMs: 4000,
+                    startedAt: 1_700_000_000_000,
+                    endedAt: 1_700_000_004_000,
                   },
-                  {
-                    channelId: 102,
-                    channelName: "Beta",
-                    ok: true,
-                    attempts: 1,
-                    finishedAt: 1_700_000_001_000,
-                  },
-                ],
-                statistics: {
-                  total: 2,
-                  successCount: 1,
-                  failureCount: 1,
-                  durationMs: 4000,
-                  startedAt: 1_700_000_000_000,
-                  endedAt: 1_700_000_004_000,
-                },
-              }
-            : message.action === RuntimeActionIds.ModelSyncGetProgress
-              ? { isRunning: false, completed: 0, total: 0, failed: 0 }
-              : message.action === RuntimeActionIds.ModelSyncGetNextRun
-                ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
-                : message.action === RuntimeActionIds.ModelSyncGetPreferences
-                  ? {
-                      enableSync: true,
-                      intervalMs: 2 * 60 * 60 * 1000,
-                    }
-                  : message.action === RuntimeActionIds.ModelSyncListChannels
+                }
+              : type === ModelSyncMessageTypes.GetProgress
+                ? { isRunning: false, completed: 0, total: 0, failed: 0 }
+                : type === ModelSyncMessageTypes.GetNextRun
+                  ? { nextScheduledAt: "2026-03-28T10:00:00.000Z" }
+                  : type === ModelSyncMessageTypes.GetPreferences
                     ? {
-                        items: [
-                          { id: 201, name: "Manual Alpha" },
-                          { id: 202, name: "Manual Beta" },
-                        ],
+                        enableSync: true,
+                        intervalMs: 2 * 60 * 60 * 1000,
                       }
-                    : undefined,
-      }
-    })
+                    : type === ModelSyncMessageTypes.ListChannels
+                      ? {
+                          items: [
+                            { id: 201, name: "Manual Alpha" },
+                            { id: 202, name: "Manual Beta" },
+                          ],
+                        }
+                      : undefined,
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync />)
 
@@ -1252,11 +1981,45 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerFailedOnly,
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerFailedOnly,
+        undefined,
+      )
     })
 
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      actionBarAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.RetryFailedManagedSiteModelSync,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+          },
+          execution: expect.objectContaining({
+            retryAttempted: true,
+            retryCount: 2,
+          }),
+          outcome: expect.objectContaining({
+            itemCount: 2,
+            successCount: 2,
+            failureCount: 0,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+          itemCount: 2,
+          successCount: 2,
+          failureCount: 0,
+        },
+      }),
+    )
     expect(toast.success).toHaveBeenCalled()
     await waitFor(() => {
       expect(screen.queryByText("failed")).not.toBeInTheDocument()
@@ -1269,53 +2032,55 @@ describe("ManagedSiteModelSync page", () => {
   })
 
   it("creates the first execution snapshot from a manual single-channel sync", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      switch (message.action) {
-        case RuntimeActionIds.ModelSyncGetLastExecution:
-          throw new Error("history unavailable")
-        case RuntimeActionIds.ModelSyncGetProgress:
-          return {
-            success: true,
-            data: { isRunning: false, completed: 0, total: 0, failed: 0 },
-          }
-        case RuntimeActionIds.ModelSyncGetNextRun:
-          return { success: true, data: { nextScheduledAt: null } }
-        case RuntimeActionIds.ModelSyncGetPreferences:
-          return { success: true, data: { enableSync: false, intervalMs: 0 } }
-        case RuntimeActionIds.ModelSyncListChannels:
-          return {
-            success: true,
-            data: {
-              items: [{ id: 201, name: "Manual Alpha" }],
-            },
-          }
-        case RuntimeActionIds.ModelSyncTriggerSelected:
-          return {
-            success: true,
-            data: {
-              items: [
-                {
-                  channelId: 201,
-                  channelName: "Manual Alpha",
-                  ok: true,
-                  attempts: 1,
-                  finishedAt: 1_700_000_005_000,
-                },
-              ],
-              statistics: {
-                total: 1,
-                successCount: 1,
-                failureCount: 0,
-                durationMs: 1000,
-                startedAt: 1_700_000_004_000,
-                endedAt: 1_700_000_005_000,
+    mockSendRuntimeMessage.mockImplementation(
+      async (type: string, _data?: any) => {
+        switch (type) {
+          case ModelSyncMessageTypes.GetLastExecution:
+            throw new Error("history unavailable")
+          case ModelSyncMessageTypes.GetProgress:
+            return {
+              success: true,
+              data: { isRunning: false, completed: 0, total: 0, failed: 0 },
+            }
+          case ModelSyncMessageTypes.GetNextRun:
+            return { success: true, data: { nextScheduledAt: null } }
+          case ModelSyncMessageTypes.GetPreferences:
+            return { success: true, data: { enableSync: false, intervalMs: 0 } }
+          case ModelSyncMessageTypes.ListChannels:
+            return {
+              success: true,
+              data: {
+                items: [{ id: 201, name: "Manual Alpha" }],
               },
-            },
-          }
-        default:
-          return { success: true }
-      }
-    })
+            }
+          case ModelSyncMessageTypes.TriggerSelected:
+            return {
+              success: true,
+              data: {
+                items: [
+                  {
+                    channelId: 201,
+                    channelName: "Manual Alpha",
+                    ok: true,
+                    attempts: 1,
+                    finishedAt: 1_700_000_005_000,
+                  },
+                ],
+                statistics: {
+                  total: 1,
+                  successCount: 1,
+                  failureCount: 0,
+                  durationMs: 1000,
+                  startedAt: 1_700_000_004_000,
+                  endedAt: 1_700_000_005_000,
+                },
+              },
+            }
+          default:
+            return { success: true }
+        }
+      },
+    )
 
     render(<ManagedSiteModelSync routeParams={{ tab: "manual" }} />)
 
@@ -1330,11 +2095,43 @@ describe("ManagedSiteModelSync page", () => {
     )
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [201],
-      })
+      expect(mockSendRuntimeMessage).toHaveBeenCalledWith(
+        ModelSyncMessageTypes.TriggerSelected,
+        { channelIds: [201] },
+      )
     })
+    expect(mockStartProductAnalyticsAction).toHaveBeenCalledWith(
+      resultsTableAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.SyncSingleManagedSiteModel,
+      ),
+    )
+    expect(mockCompleteProductAnalyticsAction).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+      expect.objectContaining({
+        diagnostics: expect.objectContaining({
+          context: {
+            managedSiteType: "new-api",
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+          },
+          outcome: expect.objectContaining({
+            itemCount: 1,
+            successCount: 1,
+            failureCount: 0,
+            skippedCount: 0,
+          }),
+        }),
+        insights: {
+          managedSiteType: "new-api",
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+          selectedCount: 1,
+          itemCount: 1,
+          successCount: 1,
+          failureCount: 0,
+        },
+      }),
+    )
     expect(toast.success).toHaveBeenCalled()
 
     fireEvent.click(
@@ -1364,11 +2161,10 @@ describe("ManagedSiteModelSync page", () => {
 
     const getLastExecutionCallsBefore =
       mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.ModelSyncGetLastExecution,
+        ([type]) => type === ModelSyncMessageTypes.GetLastExecution,
       ).length
     const getNextRunCallsBefore = mockSendRuntimeMessage.mock.calls.filter(
-      ([message]) => message?.action === RuntimeActionIds.ModelSyncGetNextRun,
+      ([type]) => type === ModelSyncMessageTypes.GetNextRun,
     ).length
 
     await act(async () => {
@@ -1404,14 +2200,12 @@ describe("ManagedSiteModelSync page", () => {
     await waitFor(() => {
       expect(
         mockSendRuntimeMessage.mock.calls.filter(
-          ([message]) =>
-            message?.action === RuntimeActionIds.ModelSyncGetLastExecution,
+          ([type]) => type === ModelSyncMessageTypes.GetLastExecution,
         ).length,
       ).toBeGreaterThan(getLastExecutionCallsBefore)
       expect(
         mockSendRuntimeMessage.mock.calls.filter(
-          ([message]) =>
-            message?.action === RuntimeActionIds.ModelSyncGetNextRun,
+          ([type]) => type === ModelSyncMessageTypes.GetNextRun,
         ).length,
       ).toBeGreaterThan(getNextRunCallsBefore)
     })

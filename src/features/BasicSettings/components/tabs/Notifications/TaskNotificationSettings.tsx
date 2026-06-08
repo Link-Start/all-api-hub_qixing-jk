@@ -18,15 +18,19 @@ import {
   Separator,
   Switch,
 } from "~/components/ui"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { SETTINGS_ANCHORS } from "~/constants/settingsAnchors"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
+import {
+  sendTaskNotificationMessage,
+  TaskNotificationMessageTypes,
+} from "~/services/notifications/messaging"
 import {
   hasPermission,
   onOptionalPermissionsChanged,
   OPTIONAL_PERMISSION_IDS,
-  requestPermission,
+  requestPermissionDetailed,
 } from "~/services/permissions/permissionManager"
+import { trackOptionalPermissionRequestResult } from "~/services/productAnalytics/permissions"
 import {
   TASK_NOTIFICATION_CHANNELS,
   TASK_NOTIFICATION_TASKS,
@@ -34,7 +38,6 @@ import {
   type TaskNotificationChannelPreferences,
   type TaskNotificationTask,
 } from "~/types/taskNotifications"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import { showResultToast, showUpdateToast } from "~/utils/core/toastHelpers"
@@ -78,7 +81,7 @@ function NotificationSettingItem({
   return (
     <CardItem id={id} className="items-stretch sm:items-stretch">
       <div className="w-full space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 [@container(min-width:42rem)]:flex-row [@container(min-width:42rem)]:items-center [@container(min-width:42rem)]:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
             {title && (
               <Label className="text-base font-semibold tracking-tight">
@@ -92,7 +95,9 @@ function NotificationSettingItem({
             )}
           </div>
           {actions && (
-            <div className="flex items-center gap-3 sm:shrink-0">{actions}</div>
+            <div className="flex w-full flex-wrap items-center gap-3 [@container(min-width:42rem)]:w-auto [@container(min-width:42rem)]:shrink-0">
+              {actions}
+            </div>
           )}
         </div>
         {children && (
@@ -529,13 +534,43 @@ export default function TaskNotificationSettings() {
 
   const handleRequestPermission = async () => {
     setIsRequestingPermission(true)
+    const wasGrantedBefore = permissionGranted === true
     try {
-      const success = await requestPermission(
+      const result = await requestPermissionDetailed(
         OPTIONAL_PERMISSION_IDS.Notifications,
+      )
+      const success = result.success
+      trackOptionalPermissionRequestResult(
+        OPTIONAL_PERMISSION_IDS.Notifications,
+        {
+          success,
+          failureReason: result.failureReason
+            ? result.failureReason
+            : undefined,
+          wasGrantedBefore,
+          wasGrantedAfter: success || wasGrantedBefore,
+        },
       )
       await refreshPermissionStatus()
       showResultToast(
         success,
+        t("taskNotifications.permission.requestSuccess"),
+        t("taskNotifications.permission.requestFailed"),
+      )
+    } catch (error) {
+      trackOptionalPermissionRequestResult(
+        OPTIONAL_PERMISSION_IDS.Notifications,
+        {
+          success: false,
+          failureReason: error,
+          wasGrantedBefore,
+          wasGrantedAfter: wasGrantedBefore,
+        },
+      )
+      logger.warn("Failed to request notification permission", error)
+      await refreshPermissionStatus()
+      showResultToast(
+        false,
         t("taskNotifications.permission.requestSuccess"),
         t("taskNotifications.permission.requestFailed"),
       )
@@ -552,13 +587,13 @@ export default function TaskNotificationSettings() {
         throw new Error(t("messages.saveSettingsFailed"))
       }
 
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.TaskNotificationsTest,
-        channel,
-      })
+      const response = await sendTaskNotificationMessage(
+        TaskNotificationMessageTypes.Test,
+        { channel },
+      )
       showResultToast({
         success: response?.success === true,
-        message: response?.error,
+        message: response?.success === false ? response.error : undefined,
         successFallback: t("taskNotifications.test.sent"),
         errorFallback: t("taskNotifications.test.failed"),
       })
@@ -881,81 +916,87 @@ export default function TaskNotificationSettings() {
                 />
               }
             >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <FormField
-                  label={t("taskNotifications.channels.dingtalk.webhookKey")}
-                  htmlFor={
-                    SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_WEBHOOK_KEY
-                  }
-                >
-                  <Input
-                    id={
+              <div className="space-y-3">
+                <div className="grid gap-3 [@container(min-width:42rem)]:grid-cols-2">
+                  <FormField
+                    label={t("taskNotifications.channels.dingtalk.webhookKey")}
+                    htmlFor={
                       SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_WEBHOOK_KEY
                     }
-                    type="password"
-                    revealable
-                    revealLabels={{
-                      show: t("keyManagement:actions.showKey"),
-                      hide: t("keyManagement:actions.hideKey"),
-                    }}
-                    value={dingtalkDraft.webhookKey}
-                    disabled={
-                      !taskNotifications.enabled ||
-                      !channels[TASK_NOTIFICATION_CHANNELS.Dingtalk].enabled
+                  >
+                    <Input
+                      id={
+                        SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_WEBHOOK_KEY
+                      }
+                      type="password"
+                      revealable
+                      revealLabels={{
+                        show: t("keyManagement:actions.showKey"),
+                        hide: t("keyManagement:actions.hideKey"),
+                      }}
+                      value={dingtalkDraft.webhookKey}
+                      disabled={
+                        !taskNotifications.enabled ||
+                        !channels[TASK_NOTIFICATION_CHANNELS.Dingtalk].enabled
+                      }
+                      placeholder={t(
+                        "taskNotifications.channels.dingtalk.webhookKeyPlaceholder",
+                      )}
+                      onChange={(event) =>
+                        setDingtalkDraft((draft) => ({
+                          ...draft,
+                          webhookKey: event.target.value,
+                        }))
+                      }
+                      onBlur={() => void handleDingtalkConfigSave()}
+                    />
+                  </FormField>
+                  <FormField
+                    label={t("taskNotifications.channels.dingtalk.secret")}
+                    htmlFor={
+                      SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_SECRET
                     }
-                    placeholder={t(
-                      "taskNotifications.channels.dingtalk.webhookKeyPlaceholder",
-                    )}
-                    onChange={(event) =>
-                      setDingtalkDraft((draft) => ({
-                        ...draft,
-                        webhookKey: event.target.value,
-                      }))
-                    }
-                    onBlur={() => void handleDingtalkConfigSave()}
-                  />
-                </FormField>
-                <FormField
-                  label={t("taskNotifications.channels.dingtalk.secret")}
-                  htmlFor={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_SECRET}
-                >
-                  <Input
-                    id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_SECRET}
-                    type="password"
-                    revealable
-                    revealLabels={{
-                      show: t("keyManagement:actions.showKey"),
-                      hide: t("keyManagement:actions.hideKey"),
-                    }}
-                    value={dingtalkDraft.secret}
-                    disabled={
-                      !taskNotifications.enabled ||
-                      !channels[TASK_NOTIFICATION_CHANNELS.Dingtalk].enabled
-                    }
-                    placeholder={t(
-                      "taskNotifications.channels.dingtalk.secretPlaceholder",
-                    )}
-                    onChange={(event) =>
-                      setDingtalkDraft((draft) => ({
-                        ...draft,
-                        secret: event.target.value,
-                      }))
-                    }
-                    onBlur={() => void handleDingtalkConfigSave()}
-                  />
-                </FormField>
+                  >
+                    <Input
+                      id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_DINGTALK_SECRET}
+                      type="password"
+                      revealable
+                      revealLabels={{
+                        show: t("keyManagement:actions.showKey"),
+                        hide: t("keyManagement:actions.hideKey"),
+                      }}
+                      value={dingtalkDraft.secret}
+                      disabled={
+                        !taskNotifications.enabled ||
+                        !channels[TASK_NOTIFICATION_CHANNELS.Dingtalk].enabled
+                      }
+                      placeholder={t(
+                        "taskNotifications.channels.dingtalk.secretPlaceholder",
+                      )}
+                      onChange={(event) =>
+                        setDingtalkDraft((draft) => ({
+                          ...draft,
+                          secret: event.target.value,
+                        }))
+                      }
+                      onBlur={() => void handleDingtalkConfigSave()}
+                    />
+                  </FormField>
+                </div>
+                <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                  {t(
+                    "taskNotifications.channels.dingtalk.webhookKeyDescription",
+                  )}{" "}
+                  <Link
+                    href={dingtalkDocsUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-xs"
+                  >
+                    {t("taskNotifications.channels.dingtalk.docsLink")}
+                  </Link>
+                </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {t("taskNotifications.channels.dingtalk.webhookKeyDescription")}{" "}
-                <Link
-                  href={dingtalkDocsUrl}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="text-xs"
-                >
-                  {t("taskNotifications.channels.dingtalk.docsLink")}
-                </Link>
-              </p>
             </NotificationSettingItem>
 
             <NotificationSettingItem
@@ -1036,73 +1077,75 @@ export default function TaskNotificationSettings() {
                 />
               }
             >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <FormField
-                  label={t("taskNotifications.channels.ntfy.topicUrl")}
-                  htmlFor={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_TOPIC_URL}
-                >
-                  <Input
-                    id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_TOPIC_URL}
-                    value={ntfyDraft.topicUrl}
-                    disabled={
-                      !taskNotifications.enabled ||
-                      !channels[TASK_NOTIFICATION_CHANNELS.Ntfy].enabled
+              <div className="space-y-3">
+                <div className="grid gap-3 [@container(min-width:42rem)]:grid-cols-2">
+                  <FormField
+                    label={t("taskNotifications.channels.ntfy.topicUrl")}
+                    htmlFor={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_TOPIC_URL}
+                  >
+                    <Input
+                      id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_TOPIC_URL}
+                      value={ntfyDraft.topicUrl}
+                      disabled={
+                        !taskNotifications.enabled ||
+                        !channels[TASK_NOTIFICATION_CHANNELS.Ntfy].enabled
+                      }
+                      placeholder={t(
+                        "taskNotifications.channels.ntfy.topicUrlPlaceholder",
+                      )}
+                      onChange={(event) =>
+                        setNtfyDraft((draft) => ({
+                          ...draft,
+                          topicUrl: event.target.value,
+                        }))
+                      }
+                      onBlur={() => void handleNtfyConfigSave()}
+                    />
+                  </FormField>
+                  <FormField
+                    label={t("taskNotifications.channels.ntfy.accessToken")}
+                    htmlFor={
+                      SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_ACCESS_TOKEN
                     }
-                    placeholder={t(
-                      "taskNotifications.channels.ntfy.topicUrlPlaceholder",
-                    )}
-                    onChange={(event) =>
-                      setNtfyDraft((draft) => ({
-                        ...draft,
-                        topicUrl: event.target.value,
-                      }))
-                    }
-                    onBlur={() => void handleNtfyConfigSave()}
-                  />
-                </FormField>
-                <FormField
-                  label={t("taskNotifications.channels.ntfy.accessToken")}
-                  htmlFor={
-                    SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_ACCESS_TOKEN
-                  }
-                >
-                  <Input
-                    id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_ACCESS_TOKEN}
-                    type="password"
-                    revealable
-                    revealLabels={{
-                      show: t("keyManagement:actions.showKey"),
-                      hide: t("keyManagement:actions.hideKey"),
-                    }}
-                    value={ntfyDraft.accessToken}
-                    disabled={
-                      !taskNotifications.enabled ||
-                      !channels[TASK_NOTIFICATION_CHANNELS.Ntfy].enabled
-                    }
-                    placeholder={t(
-                      "taskNotifications.channels.ntfy.accessTokenPlaceholder",
-                    )}
-                    onChange={(event) =>
-                      setNtfyDraft((draft) => ({
-                        ...draft,
-                        accessToken: event.target.value,
-                      }))
-                    }
-                    onBlur={() => void handleNtfyConfigSave()}
-                  />
-                </FormField>
+                  >
+                    <Input
+                      id={SETTINGS_ANCHORS.TASK_NOTIFICATIONS_NTFY_ACCESS_TOKEN}
+                      type="password"
+                      revealable
+                      revealLabels={{
+                        show: t("keyManagement:actions.showKey"),
+                        hide: t("keyManagement:actions.hideKey"),
+                      }}
+                      value={ntfyDraft.accessToken}
+                      disabled={
+                        !taskNotifications.enabled ||
+                        !channels[TASK_NOTIFICATION_CHANNELS.Ntfy].enabled
+                      }
+                      placeholder={t(
+                        "taskNotifications.channels.ntfy.accessTokenPlaceholder",
+                      )}
+                      onChange={(event) =>
+                        setNtfyDraft((draft) => ({
+                          ...draft,
+                          accessToken: event.target.value,
+                        }))
+                      }
+                      onBlur={() => void handleNtfyConfigSave()}
+                    />
+                  </FormField>
+                </div>
+                <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                  {t("taskNotifications.channels.ntfy.topicUrlDescription")}{" "}
+                  <Link
+                    href={ntfyDocsUrl}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-xs"
+                  >
+                    {t("taskNotifications.channels.ntfy.docsLink")}
+                  </Link>
+                </p>
               </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {t("taskNotifications.channels.ntfy.topicUrlDescription")}{" "}
-                <Link
-                  href={ntfyDocsUrl}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="text-xs"
-                >
-                  {t("taskNotifications.channels.ntfy.docsLink")}
-                </Link>
-              </p>
             </NotificationSettingItem>
 
             <NotificationSettingItem

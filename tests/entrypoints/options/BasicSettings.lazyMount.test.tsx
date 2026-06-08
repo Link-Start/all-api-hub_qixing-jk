@@ -40,15 +40,6 @@ vi.mock("~/features/BasicSettings/components/shared/LoadingSkeleton", () => ({
   default: () => <div data-testid="loading-skeleton" />,
 }))
 
-vi.mock(
-  "~/features/BasicSettings/components/dialogs/PermissionOnboardingDialog",
-  () => ({
-    PermissionOnboardingDialog: () => (
-      <div data-testid="permission-onboarding" />
-    ),
-  }),
-)
-
 vi.mock("~/features/BasicSettings/components/tabs/General/GeneralTab", () => ({
   default: () => <div data-testid="general-tab-content" />,
 }))
@@ -319,6 +310,32 @@ describe("BasicSettings tab mounting", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("seeds the selected tab from explicit tab parameters when a settings anchor is present", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      "/?tab=checkinRedeem&anchor=auto-checkin#basic",
+    )
+
+    render(<BasicSettings />, { withReleaseUpdateStatusProvider: false })
+
+    expect(
+      await screen.findByTestId("checkin-redeem-tab-content"),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("general-tab-content")).not.toBeInTheDocument()
+  })
+
+  it("falls back to the anchor's settings tab when the tab parameter is missing", async () => {
+    window.history.replaceState(null, "", "/?anchor=auto-checkin#basic")
+
+    render(<BasicSettings />, { withReleaseUpdateStatusProvider: false })
+
+    expect(
+      await screen.findByTestId("checkin-redeem-tab-content"),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId("general-tab-content")).not.toBeInTheDocument()
+  })
+
   it("seeds the selected and mounted tab from the URL tab parameter", async () => {
     window.history.replaceState(null, "", "/?tab=managedSite#basic")
 
@@ -328,6 +345,22 @@ describe("BasicSettings tab mounting", () => {
       await screen.findByTestId("managed-site-tab-content"),
     ).toBeInTheDocument()
     expect(screen.queryByTestId("general-tab-content")).not.toBeInTheDocument()
+  })
+
+  it("ignores onboarding query params because permissions onboarding is owned by Overview", async () => {
+    render(<BasicSettings />, { withReleaseUpdateStatusProvider: false })
+
+    act(() => {
+      window.history.replaceState(
+        null,
+        "",
+        "/?onboarding=permissions&reason=debug#basic",
+      )
+      window.dispatchEvent(new Event("hashchange"))
+    })
+
+    expect(screen.queryByText("debug")).not.toBeInTheDocument()
+    expect(screen.getByTestId("general-tab-content")).toBeInTheDocument()
   })
 
   it("keeps the current page visible during subsequent preference reloads", async () => {

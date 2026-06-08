@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle } from "react"
 
 import { useApiCredentialProfilesController } from "../hooks/useApiCredentialProfilesController"
+import { API_CREDENTIAL_PROFILES_TEST_IDS } from "../testIds"
 import { ApiCredentialProfilesListView } from "./ApiCredentialProfilesListView"
 
 export type ApiCredentialProfilesPopupViewHandle = {
@@ -28,7 +29,7 @@ const ApiCredentialProfilesPopupView = forwardRef<
   return (
     <div
       className="space-y-4 p-3 sm:p-4"
-      data-testid="api-credential-profiles-popup-view"
+      data-testid={API_CREDENTIAL_PROFILES_TEST_IDS.popupView}
     >
       <ApiCredentialProfilesListView
         controller={controller}

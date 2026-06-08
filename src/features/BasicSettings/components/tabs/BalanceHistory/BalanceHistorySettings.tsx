@@ -11,10 +11,12 @@ import {
   Label,
   Switch,
 } from "~/components/ui"
+import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { clampBalanceHistoryRetentionDays } from "~/services/history/dailyBalanceHistory/utils"
 import { DEFAULT_BALANCE_HISTORY_PREFERENCES } from "~/types/dailyBalanceHistory"
-import { hasAlarmsAPI } from "~/utils/browser/browserApi"
+import { hasAlarmsAPI, sendRuntimeMessage } from "~/utils/browser/browserApi"
+import { isDevelopmentMode } from "~/utils/core/environment"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 
@@ -34,6 +36,10 @@ export default function BalanceHistorySettings() {
   const [endOfDayCaptureEnabled, setEndOfDayCaptureEnabled] = useState<boolean>(
     preferences.balanceHistory?.endOfDayCapture?.enabled ?? false,
   )
+  const [estimatedTodayIncomeEnabled, setEstimatedTodayIncomeEnabled] =
+    useState<boolean>(
+      preferences.balanceHistory?.estimatedTodayIncome?.enabled ?? false,
+    )
   const [retentionDays, setRetentionDays] = useState<number>(
     preferences.balanceHistory?.retentionDays ??
       DEFAULT_BALANCE_HISTORY_PREFERENCES.retentionDays,
@@ -44,6 +50,9 @@ export default function BalanceHistorySettings() {
     setEndOfDayCaptureEnabled(
       preferences.balanceHistory?.endOfDayCapture?.enabled ?? false,
     )
+    setEstimatedTodayIncomeEnabled(
+      preferences.balanceHistory?.estimatedTodayIncome?.enabled ?? false,
+    )
     setRetentionDays(
       preferences.balanceHistory?.retentionDays ??
         DEFAULT_BALANCE_HISTORY_PREFERENCES.retentionDays,
@@ -51,6 +60,7 @@ export default function BalanceHistorySettings() {
   }, [preferences.balanceHistory])
 
   const alarmsSupported = hasAlarmsAPI()
+  const showDebugSeedAction = isDevelopmentMode()
 
   const safeRetentionDays = useMemo(
     () => clampBalanceHistoryRetentionDays(retentionDays),
@@ -64,6 +74,7 @@ export default function BalanceHistorySettings() {
       const success = await updateBalanceHistory({
         enabled,
         endOfDayCapture: { enabled: endOfDayCaptureEnabled },
+        estimatedTodayIncome: { enabled: estimatedTodayIncomeEnabled },
         retentionDays: safeRetentionDays,
       })
 
@@ -85,10 +96,40 @@ export default function BalanceHistorySettings() {
   }, [
     enabled,
     endOfDayCaptureEnabled,
+    estimatedTodayIncomeEnabled,
     safeRetentionDays,
     t,
     updateBalanceHistory,
   ])
+
+  const handleSeedEstimateSnapshots = useCallback(async () => {
+    let toastId: string | undefined
+    try {
+      toastId = toast.loading("Seeding estimated income snapshots…")
+      const response = await sendRuntimeMessage<{
+        success: boolean
+        data?: { seeded: number; skipped: number }
+        error?: string
+      }>({
+        action: RuntimeActionIds.BalanceHistoryDebugSeedEstimateSnapshots,
+      })
+
+      if (!response?.success) {
+        toast.error(response?.error ?? "Failed to seed test snapshots", {
+          id: toastId,
+        })
+        return
+      }
+
+      toast.success(
+        `Seeded ${response.data?.seeded ?? 0} account(s), skipped ${response.data?.skipped ?? 0}. Check Popup stats or Balance History metrics.`,
+        { id: toastId },
+      )
+    } catch (error) {
+      logger.error("Failed to seed estimated income test snapshots", error)
+      toast.error(getErrorMessage(error), { id: toastId })
+    }
+  }, [])
 
   return (
     <SettingSection
@@ -110,7 +151,11 @@ export default function BalanceHistorySettings() {
                 {t("settings.enabledHint")}
               </div>
             </div>
-            <Switch checked={enabled} onChange={setEnabled} />
+            <Switch
+              aria-label={t("settings.enabled")}
+              checked={enabled}
+              onChange={setEnabled}
+            />
           </div>
 
           <div
@@ -126,9 +171,29 @@ export default function BalanceHistorySettings() {
               </div>
             </div>
             <Switch
+              aria-label={t("settings.endOfDayCapture")}
               checked={endOfDayCaptureEnabled}
               onChange={setEndOfDayCaptureEnabled}
               disabled={!alarmsSupported}
+            />
+          </div>
+
+          <div
+            id="balance-history-estimated-today-income"
+            className="flex items-center justify-between gap-3"
+          >
+            <div>
+              <Label className="text-sm font-medium">
+                {t("settings.estimatedTodayIncome")}
+              </Label>
+              <div className="dark:text-dark-text-tertiary text-xs text-gray-500">
+                {t("settings.estimatedTodayIncomeHint")}
+              </div>
+            </div>
+            <Switch
+              aria-label={t("settings.estimatedTodayIncome")}
+              checked={estimatedTodayIncomeEnabled}
+              onChange={setEstimatedTodayIncomeEnabled}
             />
           </div>
 
@@ -164,6 +229,16 @@ export default function BalanceHistorySettings() {
             >
               {t("actions.applySettings")}
             </Button>
+            {showDebugSeedAction && (
+              <Button
+                id="balance-history-debug-seed-estimate-snapshots"
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleSeedEstimateSnapshots()}
+              >
+                Dev: Seed estimate snapshots
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>

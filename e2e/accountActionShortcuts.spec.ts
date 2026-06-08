@@ -2,8 +2,14 @@ import type { Page } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { SITE_TYPES } from "~/constants/siteType"
+import {
+  ACCOUNT_MANAGEMENT_TEST_IDS,
+  getAccountManagementListItemTestId,
+} from "~/features/AccountManagement/testIds"
 import type { ApiToken } from "~/types"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
+import { verifyAccountProviderDestinationUsage } from "~~/e2e/scenarios/accountUsage"
 import {
   createStoredAccount,
   forceExtensionLanguage,
@@ -84,29 +90,16 @@ async function readClipboardWrites(page: Page): Promise<string[]> {
 
 function getAccountRow(page: Page, accountName: string) {
   return page
-    .getByRole("button", { name: accountName })
-    .locator("xpath=ancestor::div[contains(@class, 'group')][1]")
+    .getByTestId(new RegExp(`^${getAccountManagementListItemTestId("")}`))
+    .filter({ hasText: accountName })
 }
 
 async function openAccountActionsMenu(page: Page, accountName: string) {
   const row = getAccountRow(page, accountName)
   await row.hover()
-  await row.getByRole("button", { name: "More" }).click()
-}
-
-async function expectBrowserTabOpened(
-  serviceWorker: Awaited<ReturnType<typeof getServiceWorker>>,
-  url: string,
-) {
-  await expect
-    .poll(async () => {
-      return await serviceWorker.evaluate(async (targetUrl) => {
-        const chromeApi = (globalThis as any).chrome
-        const tabs = await chromeApi.tabs.query({})
-        return tabs.some((tab: { url?: string }) => tab.url === targetUrl)
-      }, url)
-    })
-    .toBe(true)
+  await row
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowMoreActionsButton)
+    .click()
 }
 
 test.beforeEach(async ({ context, page }) => {
@@ -128,7 +121,7 @@ test("copies a stored account URL from the account list shortcut", async ({
       site_name: "Shortcut Account",
       site_url: "https://shortcut.example.com",
       account_info: {
-        id: 101,
+        id: "101",
         username: "shortcut-user",
         access_token: "shortcut-token",
       },
@@ -143,7 +136,7 @@ test("copies a stored account URL from the account list shortcut", async ({
 
   const row = getAccountRow(page, "Shortcut Account")
   await row.hover()
-  await row.getByRole("button", { name: "Copy URL" }).click()
+  await row.getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowCopyUrlButton).click()
 
   await expect
     .poll(() => readClipboardWrites(page))
@@ -163,7 +156,7 @@ test("copies the only API key directly from the account list shortcut", async ({
       site_name: "Shortcut Account",
       site_url: "https://shortcut.example.com",
       account_info: {
-        id: 101,
+        id: "101",
         username: "shortcut-user",
         access_token: "shortcut-token",
       },
@@ -188,7 +181,7 @@ test("copies the only API key directly from the account list shortcut", async ({
 
   const row = getAccountRow(page, "Shortcut Account")
   await row.hover()
-  await row.getByRole("button", { name: "Copy Key" }).click()
+  await row.getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowCopyKeyButton).click()
 
   await expect
     .poll(() => readClipboardWrites(page))
@@ -208,7 +201,7 @@ test("opens per-account key and model management from the row menu", async ({
       site_name: "Shortcut Account",
       site_url: "https://shortcut.example.com",
       account_info: {
-        id: 101,
+        id: "101",
         username: "shortcut-user",
         access_token: "shortcut-token",
       },
@@ -233,7 +226,9 @@ test("opens per-account key and model management from the row menu", async ({
   })
 
   await openAccountActionsMenu(page, "Shortcut Account")
-  await page.getByRole("menuitem", { name: "Key Management" }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowKeyManagementMenuItem)
+    .click()
 
   const keysPage = await keysPagePromise
   installExtensionPageGuards(keysPage)
@@ -253,7 +248,9 @@ test("opens per-account key and model management from the row menu", async ({
   })
 
   await openAccountActionsMenu(page, "Shortcut Account")
-  await page.getByRole("menuitem", { name: "Model Management" }).click()
+  await page
+    .getByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.rowModelManagementMenuItem)
+    .click()
 
   const modelsPage = await modelsPagePromise
   installExtensionPageGuards(modelsPage)
@@ -279,12 +276,15 @@ test("opens provider usage and redeem destinations from the account row menu", a
       site_name: "Shortcut Routes Account",
       site_url: "https://shortcut-routes.example.com",
       account_info: {
-        id: 201,
+        id: "201",
         username: "shortcut-routes-user",
         access_token: "shortcut-routes-token",
       },
     }),
   ])
+  await stubNewApiSiteRoutes(context, {
+    baseUrl: "https://shortcut-routes.example.com",
+  })
 
   await page.goto(
     `chrome-extension://${extensionId}/${OPTIONS_PAGE_PATH}#${MENU_ITEM_IDS.ACCOUNT}`,
@@ -292,20 +292,13 @@ test("opens provider usage and redeem destinations from the account row menu", a
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await openAccountActionsMenu(page, "Shortcut Routes Account")
-  await page.getByRole("menuitem", { name: "Usage Log" }).click()
-
-  await expectBrowserTabOpened(
+  await verifyAccountProviderDestinationUsage({
+    page,
     serviceWorker,
-    "https://shortcut-routes.example.com/console/log",
-  )
-
-  await page.bringToFront()
-  await openAccountActionsMenu(page, "Shortcut Routes Account")
-  await page.getByRole("menuitem", { name: "Redeem" }).click()
-
-  await expectBrowserTabOpened(
-    serviceWorker,
-    "https://shortcut-routes.example.com/console/topup",
-  )
+    account: {
+      accountId: "shortcut-routes-account",
+      siteType: SITE_TYPES.NEW_API,
+      baseUrl: "https://shortcut-routes.example.com",
+    },
+  })
 })

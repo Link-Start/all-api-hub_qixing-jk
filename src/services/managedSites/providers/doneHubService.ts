@@ -4,12 +4,14 @@ import { DEFAULT_CHANNEL_FIELDS } from "~/constants/managedSite"
 import { SITE_TYPES } from "~/constants/siteType"
 import { ensureAccountApiToken } from "~/services/accounts/accountOperations"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { normalizeAccountForManagedChannel } from "~/services/accounts/utils/siteUrlNormalization"
 import { getApiService } from "~/services/apiService"
 import { fetchChannel as fetchDoneHubChannel } from "~/services/apiService/doneHub"
 import {
-  findManagedSiteChannelByComparableInputs,
-  findManagedSiteChannelsByBaseUrlAndModels,
-} from "~/services/managedSites/utils/channelMatching"
+  MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS,
+  MatchResolutionUnresolvedError,
+} from "~/services/managedSites/channelMatch"
+import { resolveManagedSiteImportDuplicate } from "~/services/managedSites/importDuplicateResolution"
 import { fetchManagedSiteAvailableModels } from "~/services/managedSites/utils/fetchManagedSiteAvailableModels"
 import { fetchTokenScopedModels } from "~/services/managedSites/utils/fetchTokenScopedModels"
 import {
@@ -44,6 +46,22 @@ import { resolveDefaultChannelGroups } from "./defaultChannelGroups"
  */
 const logger = createLogger("DoneHubService")
 
+const doneHubImportDuplicateService = {
+  siteType: SITE_TYPES.DONE_HUB,
+  searchChannel,
+  hydrateComparableChannelKeys,
+  fetchChannelSecretKey,
+}
+
+const toDoneHubRequestConfig = (config: DoneHubConfig) => ({
+  baseUrl: config.baseUrl,
+  auth: {
+    authType: AuthTypeEnum.AccessToken,
+    accessToken: config.adminToken,
+    userId: config.userId,
+  },
+})
+
 const toSafeDoneHubChannelDetailDiagnostic = (error: unknown): string => {
   const message = getErrorMessage(error) || "Unknown error"
 
@@ -64,20 +82,11 @@ const toSafeDoneHubChannelDetailDiagnostic = (error: unknown): string => {
  * Searches channels matching the keyword.
  */
 export async function searchChannel(
-  baseUrl: string,
-  accessToken: string,
-  userId: number | string,
+  config: DoneHubConfig,
   keyword: string,
 ): Promise<ManagedSiteChannelListData | null> {
   return await getApiService(SITE_TYPES.DONE_HUB).searchChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken,
-        userId,
-      },
-    },
+    toDoneHubRequestConfig(config),
     keyword,
   )
 }
@@ -86,20 +95,11 @@ export async function searchChannel(
  * Creates a channel.
  */
 export async function createChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: DoneHubConfig,
   channelData: CreateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.DONE_HUB).createChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toDoneHubRequestConfig(config),
     channelData,
   )
 }
@@ -108,20 +108,11 @@ export async function createChannel(
  * Updates a channel.
  */
 export async function updateChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: DoneHubConfig,
   channelData: UpdateChannelPayload,
 ) {
   return await getApiService(SITE_TYPES.DONE_HUB).updateChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toDoneHubRequestConfig(config),
     channelData,
   )
 }
@@ -129,21 +120,9 @@ export async function updateChannel(
 /**
  * Deletes a channel.
  */
-export async function deleteChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  channelId: number,
-) {
+export async function deleteChannel(config: DoneHubConfig, channelId: number) {
   return await getApiService(SITE_TYPES.DONE_HUB).deleteChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toDoneHubRequestConfig(config),
     channelId,
   )
 }
@@ -152,20 +131,11 @@ export async function deleteChannel(
  * Fetches the full secret key for a Done Hub channel from its detail payload.
  */
 export async function fetchChannelSecretKey(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
+  config: DoneHubConfig,
   channelId: number,
 ): Promise<string> {
   const channel = await fetchDoneHubChannel(
-    {
-      baseUrl,
-      auth: {
-        authType: AuthTypeEnum.AccessToken,
-        accessToken: adminToken,
-        userId,
-      },
-    },
+    toDoneHubRequestConfig(config),
     channelId,
   )
 
@@ -175,6 +145,50 @@ export async function fetchChannelSecretKey(
   }
 
   return key
+}
+
+/**
+ * Hydrates Done Hub channel keys from detail payloads for shared comparison.
+ */
+export async function hydrateComparableChannelKeys(
+  config: DoneHubConfig,
+  candidates: ManagedSiteChannel[],
+): Promise<ManagedSiteChannel[]> {
+  const hydratedCandidates: ManagedSiteChannel[] = []
+
+  for (const candidate of candidates) {
+    if (candidate.key?.trim() || !candidate.id) {
+      hydratedCandidates.push(candidate)
+      continue
+    }
+
+    try {
+      const detail = await fetchDoneHubChannel(
+        toDoneHubRequestConfig(config),
+        candidate.id,
+      )
+      const key = detail.key?.trim()
+      if (!key) {
+        throw new Error("done_hub_channel_key_missing")
+      }
+
+      hydratedCandidates.push({
+        ...candidate,
+        key,
+      })
+    } catch (error) {
+      logger.warn("Failed to fetch Done Hub channel detail for key matching", {
+        channelId: candidate.id,
+        diagnostic: toSafeDoneHubChannelDetailDiagnostic(error),
+      })
+
+      throw new MatchResolutionUnresolvedError(
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
+      )
+    }
+  }
+
+  return hydratedCandidates
 }
 
 /**
@@ -269,8 +283,9 @@ export async function prepareChannelFormData(
   account: DisplaySiteData,
   token: ApiToken | AccountToken,
 ): Promise<ChannelFormData> {
+  const upstreamAccount = normalizeAccountForManagedChannel(account)
   const { models: availableModels, fetchFailed } = await fetchTokenScopedModels(
-    account,
+    upstreamAccount,
     token,
   )
 
@@ -286,7 +301,7 @@ export async function prepareChannelFormData(
     name: buildChannelName(account, token),
     type: DEFAULT_CHANNEL_FIELDS.type,
     key: token.key,
-    base_url: account.baseUrl,
+    base_url: upstreamAccount.baseUrl,
     models: normalizeList(availableModels),
     ...(fetchFailed ? { modelPrefillFetchFailed: true } : {}),
     groups: normalizeList(resolvedGroups),
@@ -328,95 +343,6 @@ export function buildChannelPayload(
 }
 
 /**
- * Finds an existing matching channel.
- *
- * Matches by base_url + models by default; when key is provided, it further
- * requires an exact key match to avoid false positives.
- *
- * DoneHub's list/search responses may omit the channel key, so exact key
- * matching must fetch the channel detail payload by id before deciding whether
- * the comparable key is truly present.
- */
-export async function findMatchingChannel(
-  baseUrl: string,
-  adminToken: string,
-  userId: number | string,
-  accountBaseUrl: string,
-  models: string[],
-  key?: string,
-): Promise<ManagedSiteChannel | null> {
-  const searchResults = await searchChannel(
-    baseUrl,
-    adminToken,
-    userId,
-    accountBaseUrl,
-  )
-
-  if (!searchResults) {
-    return null
-  }
-
-  const comparableChannels = findManagedSiteChannelsByBaseUrlAndModels({
-    channels: searchResults.items,
-    accountBaseUrl,
-    models,
-  })
-
-  if (!key?.trim()) {
-    return comparableChannels[0] ?? null
-  }
-
-  const immediateMatch = findManagedSiteChannelByComparableInputs({
-    channels: comparableChannels,
-    accountBaseUrl,
-    models,
-    key,
-  })
-
-  if (immediateMatch) {
-    return immediateMatch
-  }
-
-  for (const channel of comparableChannels) {
-    if (!channel.id) {
-      continue
-    }
-
-    try {
-      const detailedChannel = await fetchDoneHubChannel(
-        {
-          baseUrl,
-          auth: {
-            authType: AuthTypeEnum.AccessToken,
-            accessToken: adminToken,
-            userId,
-          },
-        },
-        channel.id,
-      )
-
-      const detailMatch = findManagedSiteChannelByComparableInputs({
-        channels: [detailedChannel],
-        accountBaseUrl,
-        models,
-        key,
-      })
-
-      if (detailMatch) {
-        return detailMatch
-      }
-    } catch (error) {
-      logger.warn("Failed to fetch Done Hub channel detail for key matching", {
-        channelId: channel.id,
-        diagnostic: toSafeDoneHubChannelDetailDiagnostic(error),
-      })
-    }
-  }
-
-  return null
-}
-
-/**
  * Imports an account as a channel into Done Hub.
  */
 async function importToDoneHub(
@@ -442,14 +368,17 @@ async function importToDoneHub(
 
     const formData = await prepareChannelFormData(account, token)
 
-    const existingChannel = await findMatchingChannel(
-      doneHubBaseUrl!,
-      doneHubAdminToken!,
-      doneHubUserId!,
-      account.baseUrl,
-      formData.models,
-      formData.key,
-    )
+    const managedConfig = {
+      baseUrl: doneHubBaseUrl!,
+      adminToken: doneHubAdminToken!,
+      userId: doneHubUserId!,
+    }
+
+    const existingChannel = await resolveManagedSiteImportDuplicate({
+      service: doneHubImportDuplicateService,
+      managedConfig,
+      formData,
+    })
 
     if (existingChannel) {
       return {
@@ -462,12 +391,7 @@ async function importToDoneHub(
 
     const payload = buildChannelPayload(formData)
 
-    const createdChannelResponse = await createChannel(
-      doneHubBaseUrl!,
-      doneHubAdminToken!,
-      doneHubUserId!,
-      payload,
-    )
+    const createdChannelResponse = await createChannel(managedConfig, payload)
 
     if (createdChannelResponse.success) {
       return {

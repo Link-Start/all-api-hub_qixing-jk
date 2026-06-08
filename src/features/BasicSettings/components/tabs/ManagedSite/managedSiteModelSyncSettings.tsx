@@ -19,19 +19,29 @@ import {
   type CompactMultiSelectOption,
 } from "~/components/ui"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { normalizeChannelFilters } from "~/services/managedSites/channelModelFilterRules"
 import { modelMetadataService } from "~/services/models/modelMetadata"
 import type { ModelMetadata } from "~/services/models/modelMetadata/types"
+import { sendModelSyncMessage } from "~/services/models/modelSync/messaging"
 import { DEFAULT_PREFERENCES } from "~/services/preferences/userPreferences"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_EDITOR_MODES,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsActionId,
+} from "~/services/productAnalytics/events"
+import { ModelSyncMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type { ChannelModelFilterRule } from "~/types/channelModelFilters"
 import {
   DEFAULT_CHANNEL_MODEL_FILTER_PROBE_IDS,
   isProbeChannelModelFilterRule,
 } from "~/types/channelModelFilters"
 import type { ManagedSiteModelSyncPreferences } from "~/types/managedSiteModelSync"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { safeRandomUUID } from "~/utils/core/identifier"
 import { createLogger } from "~/utils/core/logger"
@@ -70,6 +80,22 @@ function moveFilterById(
  * Unified logger scoped to the Managed Site model sync settings section.
  */
 const logger = createLogger("ManagedSiteModelSyncSettings")
+
+const MODEL_SYNC_SETTINGS_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+} as const
+
+/**
+ * Starts an analytics span for model-sync settings actions using fixed enums.
+ */
+function startSettingsAnalyticsAction(actionId: ProductAnalyticsActionId) {
+  return startProductAnalyticsAction({
+    ...MODEL_SYNC_SETTINGS_ANALYTICS_CONTEXT,
+    actionId,
+  })
+}
 
 /**
  * Render the Managed Site Model Sync settings UI and manage its local state and interactions.
@@ -148,15 +174,11 @@ export default function ManagedSiteModelSyncSettings() {
         setOptionsLoading(true)
         setOptionsError(null)
 
-        const response = await sendRuntimeMessage({
-          action: RuntimeActionIds.ModelSyncGetChannelUpstreamModelOptions,
-        })
+        const response = await sendModelSyncMessage(
+          ModelSyncMessageTypes.GetChannelUpstreamModelOptions,
+        )
 
-        if (
-          response?.success &&
-          Array.isArray(response.data) &&
-          response.data.length > 0
-        ) {
+        if (response?.success && Array.isArray(response.data)) {
           if (isMounted) {
             setChannelUpstreamModelOptions(buildOptionsFromIds(response.data))
           }
@@ -191,6 +213,14 @@ export default function ManagedSiteModelSyncSettings() {
   const savePreferences = async (
     updates: Partial<ManagedSiteModelSyncPreferences>,
   ) => {
+    const isGlobalFiltersUpdate =
+      updates.globalChannelModelFilters !== undefined
+    const tracker = startSettingsAnalyticsAction(
+      isGlobalFiltersUpdate
+        ? PRODUCT_ANALYTICS_ACTION_IDS.SaveManagedSiteChannelModelFilters
+        : PRODUCT_ANALYTICS_ACTION_IDS.UpdateManagedSiteModelSyncSettings,
+    )
+
     try {
       setIsSaving(true)
 
@@ -222,6 +252,7 @@ export default function ManagedSiteModelSyncSettings() {
       const success = await updateNewApiModelSync(userPrefsUpdate)
 
       if (!success) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure)
         toast.error(t("settings:messages.saveSettingsFailed"))
         return false
       } else if (!updates.globalChannelModelFilters) {
@@ -229,9 +260,22 @@ export default function ManagedSiteModelSyncSettings() {
         // which already shows a dedicated success message.
         toast.success(t("managedSiteModelSync:messages.success.settingsSaved"))
       }
+      if (isGlobalFiltersUpdate) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+          insights: {
+            editorMode:
+              viewMode === "json"
+                ? PRODUCT_ANALYTICS_EDITOR_MODES.Json
+                : PRODUCT_ANALYTICS_EDITOR_MODES.Visual,
+          },
+        })
+      } else {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
+      }
       return true
     } catch (error) {
       logger.error("Failed to save preferences", error)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure)
       toast.error(t("settings:messages.saveSettingsFailed"))
       return false
     } finally {
@@ -240,6 +284,10 @@ export default function ManagedSiteModelSyncSettings() {
   }
 
   const handleOpenGlobalChannelModelFilters = () => {
+    startSettingsAnalyticsAction(
+      PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteChannelFilters,
+    ).complete(PRODUCT_ANALYTICS_RESULTS.Success)
+
     const currentFilters = preferences.globalChannelModelFilters ?? []
     setGlobalChannelModelFiltersDraft(currentFilters)
     try {
@@ -443,6 +491,10 @@ export default function ManagedSiteModelSyncSettings() {
   }
 
   const handleNavigateToExecution = () => {
+    startSettingsAnalyticsAction(
+      PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteChannelModelSync,
+    ).complete(PRODUCT_ANALYTICS_RESULTS.Success)
+
     // Navigate to the ManagedSiteModelSync page
     pushWithinOptionsPage(`#${MENU_ITEM_IDS.MANAGED_SITE_MODEL_SYNC}`)
   }
@@ -453,10 +505,16 @@ export default function ManagedSiteModelSyncSettings() {
       title={t("managedSiteModelSync:settings.title")}
       description={t("managedSiteModelSync:description")}
       onReset={async () => {
+        const tracker = startSettingsAnalyticsAction(
+          PRODUCT_ANALYTICS_ACTION_IDS.UpdateManagedSiteModelSyncSettings,
+        )
         const result = await resetNewApiModelSyncConfig()
-        if (result) {
-          setIsSaving(false)
-        }
+        tracker.complete(
+          result
+            ? PRODUCT_ANALYTICS_RESULTS.Success
+            : PRODUCT_ANALYTICS_RESULTS.Failure,
+        )
+        if (result) setIsSaving(false)
         return result
       }}
     >

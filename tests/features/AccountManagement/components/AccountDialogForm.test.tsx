@@ -6,6 +6,7 @@ import { SITE_TYPES } from "~/constants/siteType"
 import AccountForm from "~/features/AccountManagement/components/AccountDialog/AccountForm"
 import { ACCOUNT_FORM_MOBILE_DEFAULT_OPEN } from "~/features/AccountManagement/components/AccountDialog/accountFormSections"
 import { createEmptyAccountDialogDraft } from "~/features/AccountManagement/components/AccountDialog/models"
+import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
 import { AuthTypeEnum, type CheckInConfig } from "~/types"
 import { fireEvent, render, screen, within } from "~~/tests/test-utils/render"
 
@@ -68,6 +69,7 @@ describe("AccountDialog AccountForm", () => {
       notes: "existing note",
       tagIds: [],
       excludeFromTotalBalance: false,
+      excludeFromTodayIncome: false,
       cookieAuthSessionCookie: "",
       sub2apiUseRefreshToken: false,
       sub2apiRefreshToken: "",
@@ -91,9 +93,11 @@ describe("AccountDialog AccountForm", () => {
     onNotesChange: vi.fn(),
     onSelectedTagIdsChange: vi.fn(),
     onExcludeFromTotalBalanceChange: vi.fn(),
+    onExcludeFromTodayIncomeChange: vi.fn(),
     onCookieAuthSessionCookieChange: vi.fn(),
     onImportCookieAuthSessionCookie: vi.fn(),
     onOpenCookiePermissionSettings: vi.fn(),
+    onRequestCookieAuthPermissions: vi.fn(),
     onSub2apiUseRefreshTokenChange: vi.fn(),
     onSub2apiRefreshTokenChange: vi.fn(),
     onImportSub2apiSession: vi.fn(),
@@ -177,6 +181,31 @@ describe("AccountDialog AccountForm", () => {
     expect(props.onAuthTypeChange).toHaveBeenCalledWith(AuthTypeEnum.Cookie)
   })
 
+  it("uses the site-specific account identity input strategy", async () => {
+    const props = createProps()
+
+    const { rerender } = render(<AccountForm {...props} />)
+
+    expect(
+      await screen.findByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.userIdInput),
+    ).toHaveAttribute("type", "number")
+
+    props.draft.siteType = SITE_TYPES.AIHUBMIX
+    props.draft.userId = "aihubmix-user"
+
+    rerender(<AccountForm {...props} />)
+
+    const userIdInput = screen.getByTestId(
+      ACCOUNT_MANAGEMENT_TEST_IDS.userIdInput,
+    )
+    expect(userIdInput).toHaveAttribute("type", "text")
+    expect(userIdInput).toHaveAttribute("autocomplete", "off")
+    expect(userIdInput).toHaveAttribute(
+      "placeholder",
+      "accountDialog:form.userId",
+    )
+  })
+
   it("only lists account site types in the site type selector", async () => {
     const user = userEvent.setup()
     const props = createProps()
@@ -184,7 +213,7 @@ describe("AccountDialog AccountForm", () => {
     render(<AccountForm {...props} />)
 
     await user.click(
-      await screen.findByTestId("account-management-site-type-trigger"),
+      await screen.findByTestId(ACCOUNT_MANAGEMENT_TEST_IDS.siteTypeTrigger),
     )
 
     expect(
@@ -340,6 +369,11 @@ describe("AccountDialog AccountForm", () => {
       }),
     )
     await user.click(
+      screen.getByRole("switch", {
+        name: "accountDialog:form.excludeFromTodayIncome",
+      }),
+    )
+    await user.click(
       screen.getByRole("button", {
         name: "accountDialog:form.tagsPlaceholder",
       }),
@@ -363,6 +397,7 @@ describe("AccountDialog AccountForm", () => {
     expect(props.onExchangeRateChange).toHaveBeenLastCalledWith("8.8")
     expect(props.onManualBalanceUsdChange).toHaveBeenLastCalledWith("12.5")
     expect(props.onExcludeFromTotalBalanceChange).toHaveBeenCalledWith(true)
+    expect(props.onExcludeFromTodayIncomeChange).toHaveBeenCalledWith(true)
     expect(props.onSelectedTagIdsChange).toHaveBeenCalledWith(["tag-1"])
     expect(props.onNotesChange).toHaveBeenLastCalledWith(
       "existing note updated",
@@ -430,6 +465,40 @@ describe("AccountDialog AccountForm", () => {
     ).toBeEnabled()
     expect(
       await screen.findByPlaceholderText(
+        "accountDialog:form.cookieAuthSessionCookiePlaceholder",
+      ),
+    ).toBeRequired()
+  })
+
+  it("shows a compact full cookie-auth permission recommendation without fallback copy", async () => {
+    const user = userEvent.setup()
+    const props = createProps()
+    props.draft.authType = AuthTypeEnum.Cookie
+    props.cookieAuthPermissionsGranted = false
+
+    render(<AccountForm {...props} />)
+
+    expect(
+      await screen.findByTestId(
+        ACCOUNT_MANAGEMENT_TEST_IDS.cookiePermissionRecommendation,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("accountDialog:form.cookiePermissionRecommendationDesc"),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText("accountDialog:form.cookiePermissionManualFallback"),
+    ).not.toBeInTheDocument()
+
+    await user.click(
+      screen.getByTestId(
+        ACCOUNT_MANAGEMENT_TEST_IDS.cookiePermissionGrantButton,
+      ),
+    )
+
+    expect(props.onRequestCookieAuthPermissions).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByPlaceholderText(
         "accountDialog:form.cookieAuthSessionCookiePlaceholder",
       ),
     ).toBeRequired()

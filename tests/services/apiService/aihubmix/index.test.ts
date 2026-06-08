@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw"
 import { beforeEach, describe, expect, it } from "vitest"
 
+import { SITE_TYPES } from "~/constants/siteType"
 import { UI_CONSTANTS } from "~/constants/ui"
 import {
   createApiToken,
@@ -12,6 +13,7 @@ import {
   fetchAccountTokens,
   fetchAllModels,
   fetchCheckInStatus,
+  fetchModelPricing,
   fetchSiteStatus,
   fetchSupportCheckIn,
   fetchTodayIncome,
@@ -27,7 +29,11 @@ import {
   validateAccountConnection,
 } from "~/services/apiService/aihubmix"
 import { API_ERROR_CODES, ApiError } from "~/services/apiService/common/errors"
-import type { CreateTokenRequest } from "~/services/apiService/common/type"
+import {
+  MODEL_LIST_SOURCE_KINDS,
+  type CreateTokenRequest,
+} from "~/services/apiService/common/type"
+import { calculateModelPrice } from "~/services/models/utils/modelPricing"
 import { AuthTypeEnum } from "~/types"
 import { server } from "~~/tests/msw/server"
 
@@ -35,7 +41,7 @@ const baseRequest = {
   baseUrl: "https://aihubmix.com",
   auth: {
     authType: AuthTypeEnum.AccessToken,
-    userId: 7,
+    userId: "7",
     accessToken: "system-access-token",
   },
 }
@@ -122,7 +128,7 @@ describe("apiService AIHubMix", () => {
       expect.objectContaining({
         id: 0,
         user_id: 0,
-        key: "sk-direct-key",
+        key: "direct-key",
         status: 1,
         name: "",
         created_time: 0,
@@ -210,6 +216,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "existing-access-token",
             quota: 900000,
             used_quota: 12345,
@@ -225,7 +232,34 @@ describe("apiService AIHubMix", () => {
 
     expect(capturedCookieAuth).toBe(true)
     expect(userInfo).toMatchObject({
-      id: 7,
+      id: "aihubmix-user",
+      username: "aihubmix-user",
+      access_token: "existing-access-token",
+    })
+  })
+
+  it("uses username as the stable cookie-authenticated account identity when AIHubMix omits id", async () => {
+    server.use(
+      http.get("https://aihubmix.com/call/usr/self", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: {
+            username: "aihubmix-user",
+            display_name: "aihubmix-user",
+            access_token: "existing-access-token",
+          },
+        }),
+      ),
+    )
+
+    await expect(
+      fetchUserInfo({
+        baseUrl: "https://aihubmix.com",
+        auth: { authType: AuthTypeEnum.Cookie },
+      }),
+    ).resolves.toMatchObject({
+      id: "aihubmix-user",
       username: "aihubmix-user",
       access_token: "existing-access-token",
     })
@@ -243,6 +277,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "",
           },
         })
@@ -266,7 +301,7 @@ describe("apiService AIHubMix", () => {
         auth: { authType: AuthTypeEnum.Cookie },
       }),
     ).resolves.toMatchObject({
-      id: 7,
+      id: "aihubmix-user",
       username: "aihubmix-user",
     })
     expect(mainOriginUserInfoCalled).toBe(true)
@@ -286,6 +321,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "",
             quota: 900000,
           },
@@ -322,7 +358,7 @@ describe("apiService AIHubMix", () => {
         },
       }),
     ).resolves.toMatchObject({
-      id: 7,
+      id: "aihubmix-user",
       username: "aihubmix-user",
     })
     expect(mainOriginUserInfoCalled).toBe(true)
@@ -339,6 +375,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "existing-access-token",
           },
         }),
@@ -376,6 +413,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "",
           },
         }),
@@ -419,6 +457,7 @@ describe("apiService AIHubMix", () => {
           data: {
             id: 7,
             username: "aihubmix-user",
+            display_name: "aihubmix-user",
             access_token: "",
           },
         })
@@ -521,7 +560,7 @@ describe("apiService AIHubMix", () => {
     expect(tokens).toEqual([
       expect.objectContaining({
         id: 1,
-        key: "sk-plain-key",
+        key: "plain-key",
         name: "test-key",
         remain_quota: 500000,
         used_quota: 1000,
@@ -620,7 +659,7 @@ describe("apiService AIHubMix", () => {
     expect(tokens).toEqual([
       expect.objectContaining({
         id: 9,
-        key: "sk-searched-key",
+        key: "searched-key",
         name: "search match",
       }),
     ])
@@ -832,7 +871,7 @@ describe("apiService AIHubMix", () => {
 
     await expect(fetchTokenById(baseRequest, 12)).resolves.toMatchObject({
       id: 12,
-      key: "sk-detail-key",
+      key: "detail-key",
     })
     await expect(createApiToken(baseRequest, tokenRequest)).resolves.toEqual(
       expect.objectContaining({
@@ -1029,7 +1068,7 @@ describe("apiService AIHubMix", () => {
         id: 12,
         key: "plain-key",
       } as any),
-    ).resolves.toBe("sk-plain-key")
+    ).resolves.toBe("plain-key")
     expect(revealCalled).toBe(false)
     expect(detailCalled).toBe(false)
   })
@@ -1056,21 +1095,40 @@ describe("apiService AIHubMix", () => {
     ])
   })
 
-  it("normalizes catalog model response variants and removes duplicates", async () => {
+  it("trims and de-duplicates user-scoped model ids", async () => {
     server.use(
-      http.get("https://aihubmix.com/api/models", () =>
+      http.get("https://aihubmix.com/api/user/available_models", () =>
         HttpResponse.json({
           success: true,
           message: "",
-          data: {
-            OpenAI: [
-              { id: "gpt-4o" },
-              { name: "gpt-4o-mini" },
-              { model: "gpt-4o" },
-              { id: 123 },
-            ],
-            Misc: ["claude-3-5-sonnet"],
-          },
+          data: [
+            " gpt-4o ",
+            { model: "gpt-4o" },
+            { id: " claude-3-5-sonnet " },
+            " ",
+          ],
+        }),
+      ),
+    )
+
+    await expect(fetchAccountAvailableModels(baseRequest)).resolves.toEqual([
+      "gpt-4o",
+      "claude-3-5-sonnet",
+    ])
+  })
+
+  it("normalizes catalog model response variants", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-4o" },
+            { id: "gpt-4o-mini" },
+            { name: "claude-3-5-sonnet" },
+            { id: 123 },
+          ],
         }),
       ),
     )
@@ -1082,16 +1140,18 @@ describe("apiService AIHubMix", () => {
     ])
   })
 
-  it("normalizes nested catalog string model values", async () => {
+  it("trims and de-duplicates global catalog model ids", async () => {
     server.use(
-      http.get("https://aihubmix.com/api/models", () =>
+      http.get("https://aihubmix.com/api/v1/models", () =>
         HttpResponse.json({
           success: true,
           message: "",
-          data: {
-            OpenAI: ["gpt-4o", "gpt-4o"],
-            Anthropic: ["claude-3-5-sonnet"],
-          },
+          data: [
+            { model_id: " gpt-4o " },
+            { id: "gpt-4o" },
+            { name: " claude-3-5-sonnet " },
+            { model_id: " " },
+          ],
         }),
       ),
     )
@@ -1102,9 +1162,455 @@ describe("apiService AIHubMix", () => {
     ])
   })
 
-  it("returns an empty model list for unrecognized model payloads", async () => {
+  it("maps AIHubMix /api/v1/models catalog prices as direct USD per 1M token prices", async () => {
+    let legacyModelsCalled = false
     server.use(
-      http.get("https://aihubmix.com/api/models", () =>
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            {
+              model_id: "gemini-3.5-flash",
+              desc: "Fast Gemini model",
+              developer_id: 8,
+              developer_name: "Google",
+              endpoints: ["chat"],
+              pricing: {
+                cache_read: 1.5,
+                input: 1.5,
+                output: 9,
+              },
+            },
+            {
+              model_id: "claude-3-5-sonnet",
+              desc: "Anthropic model",
+              developer_id: 2,
+              developer_name: "Anthropic",
+              endpoints: ["chat"],
+            },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model: "gemini-3.5-flash", developer_id: 8, order: 10 }],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/models", () => {
+        legacyModelsCalled = true
+        return HttpResponse.json({ success: true, message: "", data: {} })
+      }),
+    )
+
+    const result = await fetchModelPricing(baseRequest)
+
+    expect(result).toMatchObject({
+      success: true,
+      group_ratio: {},
+      usable_group: {},
+      model_list_source: {
+        kind: MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+        provider: SITE_TYPES.AIHUBMIX,
+      },
+      data: [
+        {
+          model_name: "gemini-3.5-flash",
+          model_description: "Fast Gemini model",
+          owner_by: "Google",
+          model_price: 0,
+          quota_type: 0,
+          enable_groups: [],
+          supported_endpoint_types: ["chat"],
+          token_price_usd_per_million: {
+            cache_read: 1.5,
+            input: 1.5,
+            output: 9,
+          },
+        },
+      ],
+    })
+    expect(calculateModelPrice(result.data[0], {}, 7)).toMatchObject({
+      inputUSD: 1.5,
+      outputUSD: 9,
+      inputCNY: 10.5,
+      outputCNY: 63,
+    })
+    expect(legacyModelsCalled).toBe(false)
+  })
+
+  it("falls back from /api/user/available_models to /call/usr/avail_mdls for user-scoped AIHubMix models", async () => {
+    let webAvailableModelsCalled = false
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-web-scope", desc: "Web scope model" },
+            { model_id: "gpt-catalog-only", desc: "Catalog only model" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json(
+          { success: false, message: "removed", data: [] },
+          { status: 404 },
+        ),
+      ),
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () => {
+        webAvailableModelsCalled = true
+        return HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model: "gpt-web-scope", developer_id: 1, order: 1 }],
+        })
+      }),
+    )
+
+    const pricing = await fetchModelPricing(baseRequest)
+
+    expect(webAvailableModelsCalled).toBe(true)
+    expect(pricing.model_list_source?.kind).toBe(
+      MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+    )
+    expect(pricing.data.map((model) => model.model_name)).toEqual([
+      "gpt-web-scope",
+    ])
+  })
+
+  it("falls through from malformed API user scope to valid web user scope", async () => {
+    let webAvailableModelsCalled = false
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-web-scope", desc: "Web scope model" },
+            { model_id: "gpt-catalog-only", desc: "Catalog only model" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: { unexpected: true },
+        }),
+      ),
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () => {
+        webAvailableModelsCalled = true
+        return HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model: "gpt-web-scope", developer_id: 1, order: 1 }],
+        })
+      }),
+    )
+
+    const pricing = await fetchModelPricing(baseRequest)
+
+    expect(webAvailableModelsCalled).toBe(true)
+    expect(pricing.model_list_source?.kind).toBe(
+      MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+    )
+    expect(pricing.data.map((model) => model.model_name)).toEqual([
+      "gpt-web-scope",
+    ])
+  })
+
+  it("accepts recognized object wrappers for AIHubMix user scope", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-wrapper-scope", desc: "Wrapper scope model" },
+            { model_id: "gpt-catalog-only", desc: "Catalog only model" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: {
+            models: [{ model: "gpt-wrapper-scope", developer_id: 1 }],
+          },
+        }),
+      ),
+    )
+
+    const pricing = await fetchModelPricing(baseRequest)
+
+    expect(pricing.model_list_source?.kind).toBe(
+      MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+    )
+    expect(pricing.data.map((model) => model.model_name)).toEqual([
+      "gpt-wrapper-scope",
+    ])
+  })
+
+  it("falls through from unrecognized API user scope array fields to valid web user scope", async () => {
+    let webAvailableModelsCalled = false
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-web-scope", desc: "Web scope model" },
+            { model_id: "gpt-catalog-only", desc: "Catalog only model" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: { unexpected: [] },
+        }),
+      ),
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () => {
+        webAvailableModelsCalled = true
+        return HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model: "gpt-web-scope", developer_id: 1, order: 1 }],
+        })
+      }),
+    )
+
+    const pricing = await fetchModelPricing(baseRequest)
+
+    expect(webAvailableModelsCalled).toBe(true)
+    expect(pricing.model_list_source?.kind).toBe(
+      MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+    )
+    expect(pricing.data.map((model) => model.model_name)).toEqual([
+      "gpt-web-scope",
+    ])
+  })
+
+  it("uses the full AIHubMix catalog with fallback metadata when user-scoped endpoints fail", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-catalog-a", desc: "Catalog model A" },
+            { model_id: "gpt-catalog-b", desc: "Catalog model B" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json(
+          { success: false, message: "removed", data: [] },
+          { status: 404 },
+        ),
+      ),
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () =>
+        HttpResponse.json(
+          { success: false, message: "not authenticated", data: [] },
+          { status: 401 },
+        ),
+      ),
+    )
+
+    await expect(fetchModelPricing(baseRequest)).resolves.toMatchObject({
+      success: true,
+      group_ratio: {},
+      usable_group: {},
+      model_list_source: {
+        kind: MODEL_LIST_SOURCE_KINDS.CATALOG_FALLBACK,
+        provider: SITE_TYPES.AIHUBMIX,
+      },
+      data: [
+        { model_name: "gpt-catalog-a", enable_groups: [] },
+        { model_name: "gpt-catalog-b", enable_groups: [] },
+      ],
+    })
+  })
+
+  it("uses catalog fallback metadata when both user scope payloads are malformed", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model_id: "gpt-catalog-a", desc: "Catalog model A" },
+            { model_id: "gpt-catalog-b", desc: "Catalog model B" },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: { unexpected: true },
+        }),
+      ),
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: "bad",
+        }),
+      ),
+    )
+
+    await expect(fetchModelPricing(baseRequest)).resolves.toMatchObject({
+      success: true,
+      group_ratio: {},
+      usable_group: {},
+      model_list_source: {
+        kind: MODEL_LIST_SOURCE_KINDS.CATALOG_FALLBACK,
+        provider: SITE_TYPES.AIHUBMIX,
+      },
+      data: [
+        { model_name: "gpt-catalog-a", enable_groups: [] },
+        { model_name: "gpt-catalog-b", enable_groups: [] },
+      ],
+    })
+  })
+
+  it("treats a successful empty AIHubMix user scope as an empty model list", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model_id: "gpt-catalog-only", desc: "Catalog model" }],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({ success: true, message: "", data: [] }),
+      ),
+    )
+
+    const pricing = await fetchModelPricing(baseRequest)
+
+    expect(pricing.model_list_source?.kind).toBe(
+      MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+    )
+    expect(pricing.data).toEqual([])
+  })
+
+  it("keeps AIHubMix user-scoped model ids that are missing from the catalog as minimal rows", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model_id: "gpt-known", desc: "Known model" }],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model: "gpt-missing-from-catalog" }],
+        }),
+      ),
+    )
+
+    await expect(fetchModelPricing(baseRequest)).resolves.toMatchObject({
+      data: [
+        {
+          model_name: "gpt-missing-from-catalog",
+          model_description: "",
+          model_ratio: 0,
+          completion_ratio: 0,
+          enable_groups: [],
+          supported_endpoint_types: [],
+        },
+      ],
+    })
+  })
+
+  it("maps catalog description fallbacks, owner fallbacks, and comma-separated endpoints", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            {
+              model_id: "catalog-with-description",
+              description: "Description fallback",
+              developer: "Developer fallback",
+              endpoints: " chat, embeddings , ",
+            },
+            {
+              model_id: "catalog-with-owner",
+              owner_by: "Owner fallback",
+            },
+            {
+              model_id: "catalog-with-developer-id",
+              developer_id: 12,
+            },
+          ],
+        }),
+      ),
+      http.get("https://aihubmix.com/api/user/available_models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [
+            { model: "catalog-with-description" },
+            { model: "catalog-with-owner" },
+            { model: "catalog-with-developer-id" },
+          ],
+        }),
+      ),
+    )
+
+    await expect(fetchModelPricing(baseRequest)).resolves.toMatchObject({
+      data: [
+        {
+          model_name: "catalog-with-description",
+          model_description: "Description fallback",
+          owner_by: "Developer fallback",
+          supported_endpoint_types: ["chat", "embeddings"],
+        },
+        {
+          model_name: "catalog-with-owner",
+          owner_by: "Owner fallback",
+        },
+        {
+          model_name: "catalog-with-developer-id",
+          owner_by: "12",
+        },
+      ],
+    })
+  })
+
+  it("normalizes nested catalog string model values", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
+        HttpResponse.json({
+          success: true,
+          message: "",
+          data: [{ model_id: "gpt-4o" }, { id: "claude-3-5-sonnet" }],
+        }),
+      ),
+    )
+
+    await expect(fetchAllModels(baseRequest)).resolves.toEqual([
+      "gpt-4o",
+      "claude-3-5-sonnet",
+    ])
+  })
+
+  it("throws ApiError for malformed model catalog payloads", async () => {
+    server.use(
+      http.get("https://aihubmix.com/api/v1/models", () =>
         HttpResponse.json({
           success: true,
           message: "",
@@ -1113,7 +1619,7 @@ describe("apiService AIHubMix", () => {
       ),
     )
 
-    await expect(fetchAllModels(baseRequest)).resolves.toEqual([])
+    await expect(fetchAllModels(baseRequest)).rejects.toBeInstanceOf(ApiError)
   })
 
   it("fetches available models from the main API origin for console.aihubmix.com", async () => {
@@ -1161,15 +1667,22 @@ describe("apiService AIHubMix", () => {
           { status: 500 },
         ),
       ),
-      http.get("https://aihubmix.com/api/models", () => {
+      http.get("https://aihubmix.com/call/usr/avail_mdls", () =>
+        HttpResponse.json(
+          {
+            success: false,
+            message: "web available models unavailable",
+            data: [],
+          },
+          { status: 500 },
+        ),
+      ),
+      http.get("https://aihubmix.com/api/v1/models", () => {
         globalModelsCalled = true
         return HttpResponse.json({
           success: true,
           message: "",
-          data: {
-            OpenAI: [{ id: "gpt-4o" }],
-            Anthropic: [{ id: "claude-3-5-sonnet" }],
-          },
+          data: [{ model_id: "gpt-4o" }, { model_id: "claude-3-5-sonnet" }],
         })
       }),
     )

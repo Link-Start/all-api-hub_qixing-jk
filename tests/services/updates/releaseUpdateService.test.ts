@@ -6,18 +6,29 @@ import { STORAGE_KEYS } from "~/services/core/storageKeys"
 const {
   createAlarmMock,
   getAlarmMock,
+  getExtensionUrlMock,
+  getManagementSelfMock,
   getManifestMock,
+  getRuntimeIdMock,
   hasAlarmsApiMock,
   onAlarmMock,
   withExtensionStorageWriteLockMock,
 } = vi.hoisted(() => ({
   createAlarmMock: vi.fn(),
   getAlarmMock: vi.fn(),
+  getExtensionUrlMock: vi.fn((path: string) =>
+    (globalThis as any).browser.runtime.getURL(path),
+  ),
+  getManagementSelfMock: vi.fn(async () => {
+    const getSelf = (globalThis as any).browser?.management?.getSelf
+    return typeof getSelf === "function" ? await getSelf() : null
+  }),
   getManifestMock: vi.fn(() => ({
     manifest_version: 3,
     version: "3.32.0",
     optional_permissions: [],
   })),
+  getRuntimeIdMock: vi.fn(() => (globalThis as any).browser?.runtime?.id),
   hasAlarmsApiMock: vi.fn(() => true),
   onAlarmMock: vi.fn(),
   withExtensionStorageWriteLockMock: vi.fn(
@@ -50,7 +61,10 @@ vi.mock("~/services/core/storageWriteLock", () => ({
 vi.mock("~/utils/browser/browserApi", () => ({
   createAlarm: createAlarmMock,
   getAlarm: getAlarmMock,
+  getExtensionURL: getExtensionUrlMock,
+  getManagementSelf: getManagementSelfMock,
   getManifest: getManifestMock,
+  getRuntimeId: getRuntimeIdMock,
   hasAlarmsAPI: hasAlarmsApiMock,
   onAlarm: onAlarmMock,
 }))
@@ -145,6 +159,90 @@ describe("releaseUpdateService", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
+  it("classifies Chromium installs as API-unavailable when management self lookup fails", async () => {
+    ;(globalThis as any).browser.management.getSelf.mockRejectedValueOnce(
+      new Error("management unavailable"),
+    )
+
+    const { releaseUpdateService } = await import(
+      "~/services/updates/releaseUpdateService"
+    )
+
+    const status = await releaseUpdateService.getStatus()
+
+    expect(status).toMatchObject({
+      eligible: false,
+      reason: "api-unavailable",
+      currentVersion: "3.32.0",
+      latestVersion: null,
+      updateAvailable: false,
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it("classifies Chromium installs as API-unavailable when management self returns no info", async () => {
+    ;(globalThis as any).browser.management.getSelf.mockResolvedValueOnce(null)
+
+    const { releaseUpdateService } = await import(
+      "~/services/updates/releaseUpdateService"
+    )
+
+    const status = await releaseUpdateService.getStatus()
+
+    expect(status).toMatchObject({
+      eligible: false,
+      reason: "api-unavailable",
+      currentVersion: "3.32.0",
+      latestVersion: null,
+      updateAvailable: false,
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it("keeps Firefox installs ambiguous even when management self reports development", async () => {
+    browserAny.runtime.id = "{bc73541a-133d-4b50-b261-36ea20df0d24}"
+    browserAny.runtime.getURL = vi.fn(
+      () => "moz-extension://firefox-extension/",
+    )
+    ;(globalThis as any).browser.management.getSelf.mockResolvedValueOnce({
+      installType: "development",
+    })
+
+    const { releaseUpdateService } = await import(
+      "~/services/updates/releaseUpdateService"
+    )
+
+    const status = await releaseUpdateService.getStatus()
+
+    expect(status).toMatchObject({
+      eligible: false,
+      reason: "firefox-ambiguous",
+      currentVersion: "3.32.0",
+      latestVersion: null,
+      updateAvailable: false,
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
+  it("classifies known Chromium store builds as ineligible", async () => {
+    browserAny.runtime.id = "lapnciffpekdengooeolaienkeoilfeo"
+
+    const { releaseUpdateService } = await import(
+      "~/services/updates/releaseUpdateService"
+    )
+
+    const status = await releaseUpdateService.getStatus()
+
+    expect(status).toMatchObject({
+      eligible: false,
+      reason: "store-build",
+      currentVersion: "3.32.0",
+      latestVersion: null,
+      updateAvailable: false,
+    })
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+
   it("registers the daily alarm once and preserves an existing matching schedule", async () => {
     getAlarmMock.mockResolvedValueOnce({
       name: "releaseUpdateDailyCheck",
@@ -180,11 +278,9 @@ describe("releaseUpdateService", () => {
     const first = releaseUpdateService.initialize()
     const second = releaseUpdateService.initialize()
 
-    for (let index = 0; index < 10 && !resolveAlarm; index++) {
-      await Promise.resolve()
-    }
-
-    expect(resolveAlarm).toEqual(expect.any(Function))
+    await vi.waitFor(() => {
+      expect(resolveAlarm).toEqual(expect.any(Function))
+    })
 
     if (resolveAlarm) {
       resolveAlarm()

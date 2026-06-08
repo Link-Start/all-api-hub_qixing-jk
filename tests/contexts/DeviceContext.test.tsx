@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DeviceProvider, useDevice } from "~/contexts/DeviceContext"
 
+const TEST_IDS = {
+  isTouch: "is-touch",
+  isMobile: "is-mobile",
+  isTablet: "is-tablet",
+  isDesktop: "is-desktop",
+} as const
+
 type MatchMediaConfig = {
   mobile?: boolean
   tablet?: boolean
@@ -52,10 +59,10 @@ const Probe = ({ children }: { children?: ReactNode }) => {
 
   return (
     <div>
-      <div data-testid="is-touch">{String(context.isTouchDevice)}</div>
-      <div data-testid="is-mobile">{String(context.isMobile)}</div>
-      <div data-testid="is-tablet">{String(context.isTablet)}</div>
-      <div data-testid="is-desktop">{String(context.isDesktop)}</div>
+      <div data-testid={TEST_IDS.isTouch}>{String(context.isTouchDevice)}</div>
+      <div data-testid={TEST_IDS.isMobile}>{String(context.isMobile)}</div>
+      <div data-testid={TEST_IDS.isTablet}>{String(context.isTablet)}</div>
+      <div data-testid={TEST_IDS.isDesktop}>{String(context.isDesktop)}</div>
       {children}
     </div>
   )
@@ -101,10 +108,10 @@ describe("DeviceContext", () => {
       </DeviceProvider>,
     )
 
-    expect(screen.getByTestId("is-touch")).toHaveTextContent("true")
-    expect(screen.getByTestId("is-mobile")).toHaveTextContent("true")
-    expect(screen.getByTestId("is-tablet")).toHaveTextContent("false")
-    expect(screen.getByTestId("is-desktop")).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isTouch)).toHaveTextContent("true")
+    expect(screen.getByTestId(TEST_IDS.isMobile)).toHaveTextContent("true")
+    expect(screen.getByTestId(TEST_IDS.isTablet)).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isDesktop)).toHaveTextContent("false")
   })
 
   it("detects touch capability from coarse pointers when no touch globals are present", () => {
@@ -121,10 +128,10 @@ describe("DeviceContext", () => {
       </DeviceProvider>,
     )
 
-    expect(screen.getByTestId("is-touch")).toHaveTextContent("true")
-    expect(screen.getByTestId("is-mobile")).toHaveTextContent("false")
-    expect(screen.getByTestId("is-tablet")).toHaveTextContent("true")
-    expect(screen.getByTestId("is-desktop")).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isTouch)).toHaveTextContent("true")
+    expect(screen.getByTestId(TEST_IDS.isMobile)).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isTablet)).toHaveTextContent("true")
+    expect(screen.getByTestId(TEST_IDS.isDesktop)).toHaveTextContent("false")
   })
 
   it("detects desktop devices from viewport breakpoints when touch is unavailable", () => {
@@ -141,9 +148,9 @@ describe("DeviceContext", () => {
       </DeviceProvider>,
     )
 
-    expect(screen.getByTestId("is-touch")).toHaveTextContent("false")
-    expect(screen.getByTestId("is-mobile")).toHaveTextContent("false")
-    expect(screen.getByTestId("is-tablet")).toHaveTextContent("false")
-    expect(screen.getByTestId("is-desktop")).toHaveTextContent("true")
+    expect(screen.getByTestId(TEST_IDS.isTouch)).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isMobile)).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isTablet)).toHaveTextContent("false")
+    expect(screen.getByTestId(TEST_IDS.isDesktop)).toHaveTextContent("true")
   })
 })

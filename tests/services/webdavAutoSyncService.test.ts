@@ -112,6 +112,7 @@ vi.mock("~/services/tags/tagStorage", () => ({
 const mockTestConnection = vi.fn()
 const mockDownloadBackup = vi.fn()
 const mockUploadBackup = vi.fn()
+const mockParseWebdavBackupJson = vi.fn()
 
 /**
  * Creates a deferred promise helper for tests.
@@ -129,6 +130,7 @@ function createDeferred<T>() {
 vi.mock("~/services/webdav/webdavService", () => ({
   testWebdavConnection: (...args: any[]) => mockTestConnection(...args),
   downloadBackup: (...args: any[]) => mockDownloadBackup(...args),
+  parseWebdavBackupJson: (...args: any[]) => mockParseWebdavBackupJson(...args),
   isWebdavFileNotFoundError: (error: any) =>
     error?.code === "WEBDAV_FILE_NOT_FOUND",
   uploadBackup: (...args: any[]) => mockUploadBackup(...args),
@@ -204,6 +206,436 @@ describe("WebdavAutoSyncService.mergeData", () => {
 
     const a2 = result.accounts.find((a: any) => a.id === "a2")!
     expect(a2.site_name).toBe("remote-2")
+  })
+
+  it("keeps deleted local accounts from being restored by older remote backups", () => {
+    const local: any = {
+      accounts: [{ id: "kept", site_name: "local-kept", updated_at: 300 }],
+      bookmarks: [],
+      deletedEntryRecords: {
+        deleted: {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [
+        { id: "deleted", site_name: "remote-deleted", updated_at: 100 },
+        { id: "newer", site_name: "remote-newer", updated_at: 250 },
+      ],
+      bookmarks: [],
+      deletedEntryRecords: {},
+      accountsTimestamp: 150,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.accounts.map((account: any) => account.id).sort()).toEqual([
+      "kept",
+      "newer",
+    ])
+    expect(result.deletedEntryRecords).toEqual({
+      deleted: {
+        kind: "account",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+    })
+  })
+
+  it("keeps deleted accounts suppressed when only automation updated the remote account", () => {
+    const local: any = {
+      accounts: [],
+      bookmarks: [],
+      deletedEntryRecords: {
+        deleted: {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [
+        {
+          id: "deleted",
+          site_name: "remote-deleted",
+          updated_at: 250,
+          user_updated_at: 100,
+        },
+      ],
+      bookmarks: [],
+      deletedEntryRecords: {},
+      accountsTimestamp: 250,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.accounts).toEqual([])
+    expect(result.deletedEntryRecords).toEqual({
+      deleted: {
+        kind: "account",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+    })
+  })
+
+  it("restores deleted accounts when the remote account has newer user edits", () => {
+    const local: any = {
+      accounts: [],
+      bookmarks: [],
+      deletedEntryRecords: {
+        deleted: {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remoteAccount = {
+      id: "deleted",
+      site_name: "remote-edited",
+      updated_at: 250,
+      user_updated_at: 250,
+    }
+    const remote: any = {
+      accounts: [remoteAccount],
+      bookmarks: [],
+      deletedEntryRecords: {},
+      accountsTimestamp: 250,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.accounts).toEqual([remoteAccount])
+    expect(result.deletedEntryRecords).toEqual({})
+  })
+
+  it("applies remote account deletion markers to stale local accounts", () => {
+    const local: any = {
+      accounts: [
+        { id: "deleted", site_name: "local-deleted", updated_at: 100 },
+        { id: "kept", site_name: "local-kept", updated_at: 300 },
+      ],
+      bookmarks: [],
+      deletedEntryRecords: {},
+      accountsTimestamp: 100,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [],
+      bookmarks: [],
+      deletedEntryRecords: {
+        deleted: {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.accounts.map((account: any) => account.id)).toEqual(["kept"])
+    expect(result.deletedEntryRecords).toEqual({
+      deleted: {
+        kind: "account",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+    })
+  })
+
+  it("applies bookmark deletion markers to stale local and remote bookmarks", () => {
+    const keptBookmark = {
+      id: "kept-bookmark",
+      name: "Kept",
+      url: "https://kept.example.com",
+      tagIds: [],
+      notes: "",
+      created_at: 1,
+      updated_at: 300,
+    }
+    const local: any = {
+      accounts: [],
+      bookmarks: [
+        {
+          id: "local-deleted-bookmark",
+          name: "Local Deleted",
+          url: "https://local-deleted.example.com",
+          tagIds: [],
+          notes: "",
+          created_at: 1,
+          updated_at: 100,
+        },
+        keptBookmark,
+      ],
+      deletedEntryRecords: {},
+      accountsTimestamp: 100,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [],
+      bookmarks: [
+        {
+          id: "remote-deleted-bookmark",
+          name: "Remote Deleted",
+          url: "https://remote-deleted.example.com",
+          tagIds: [],
+          notes: "",
+          created_at: 1,
+          updated_at: 100,
+        },
+      ],
+      deletedEntryRecords: {
+        "local-deleted-bookmark": {
+          kind: "bookmark",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+        "remote-deleted-bookmark": {
+          kind: "bookmark",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.bookmarks).toEqual([keptBookmark])
+    expect(result.deletedEntryRecords).toEqual({
+      "local-deleted-bookmark": {
+        kind: "bookmark",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+      "remote-deleted-bookmark": {
+        kind: "bookmark",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+    })
+  })
+
+  it("does not apply remote account deletion markers when accounts are unselected", () => {
+    const localAccount = {
+      id: "local-account",
+      site_name: "local-account",
+      updated_at: 100,
+    }
+    const local: any = {
+      accounts: [localAccount],
+      bookmarks: [],
+      deletedEntryRecords: {},
+      accountsTimestamp: 100,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [],
+      bookmarks: [],
+      deletedEntryRecords: {
+        "local-account": {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 200,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = (webdavAutoSyncService as any).mergeData(local, remote, {
+      accounts: false,
+      bookmarks: true,
+      apiCredentialProfiles: false,
+      preferences: false,
+    })
+
+    expect(result.accounts).toEqual([localAccount])
+    expect(result.deletedEntryRecords).toEqual({})
+  })
+
+  it("keeps newest local deletion markers and prunes markers for restored entries", () => {
+    const restoredAccount = {
+      id: "restored-account",
+      site_name: "restored-account",
+      updated_at: 300,
+      user_updated_at: 300,
+    }
+    const kindMismatchAccount = {
+      id: "bookmark-marker-only",
+      site_name: "kind-mismatch",
+      updated_at: 10,
+    }
+    const restoredBookmark = {
+      id: "restored-bookmark",
+      name: "Restored",
+      url: "https://restored.example.com",
+      tagIds: [],
+      notes: "",
+      created_at: 1,
+      updated_at: 300,
+    }
+    const local: any = {
+      accounts: [restoredAccount, kindMismatchAccount],
+      bookmarks: [restoredBookmark],
+      deletedEntryRecords: {
+        "local-newer": {
+          kind: "account",
+          deletedAt: 300,
+          entryUpdatedAt: 250,
+        },
+        "bookmark-marker-only": {
+          kind: "bookmark",
+          deletedAt: 200,
+          entryUpdatedAt: 10,
+        },
+        "restored-account": {
+          kind: "account",
+          deletedAt: 100,
+          entryUpdatedAt: 100,
+        },
+        "restored-bookmark": {
+          kind: "bookmark",
+          deletedAt: 100,
+          entryUpdatedAt: 100,
+        },
+        "missing-timestamps": {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 50,
+        },
+      },
+      accountsTimestamp: 300,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsLocal,
+      preferencesTimestamp: 50,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const remote: any = {
+      accounts: [
+        { id: "missing-timestamps", site_name: "stale-remote" },
+        {
+          id: "remote-restored",
+          site_name: "remote-restored",
+          updated_at: 400,
+          user_updated_at: 400,
+        },
+      ],
+      bookmarks: [],
+      deletedEntryRecords: {
+        "local-newer": {
+          kind: "account",
+          deletedAt: 200,
+          entryUpdatedAt: 150,
+        },
+        "remote-restored": {
+          kind: "account",
+          deletedAt: 100,
+          entryUpdatedAt: 100,
+        },
+      },
+      accountsTimestamp: 400,
+      tagStore: { version: 1, tagsById: {} },
+      preferences: basePrefsRemote,
+      preferencesTimestamp: 60,
+      channelConfigs: {},
+      apiCredentialProfiles: emptyApiCredentialProfiles,
+    }
+
+    const result = callMerge(local, remote)
+
+    expect(result.accounts.map((account: any) => account.id).sort()).toEqual([
+      "bookmark-marker-only",
+      "remote-restored",
+      "restored-account",
+    ])
+    expect(result.bookmarks).toEqual([restoredBookmark])
+    expect(result.deletedEntryRecords).toEqual({
+      "local-newer": {
+        kind: "account",
+        deletedAt: 300,
+        entryUpdatedAt: 250,
+      },
+      "missing-timestamps": {
+        kind: "account",
+        deletedAt: 200,
+        entryUpdatedAt: 50,
+      },
+    })
   })
 
   it("merges bookmarks by id choosing the most recently updated", () => {
@@ -457,6 +889,9 @@ describe("WebdavAutoSyncService.syncWithWebdav (selective sync)", () => {
 
     mockTestConnection.mockResolvedValue(true)
     mockUploadBackup.mockResolvedValue(true)
+    mockParseWebdavBackupJson.mockImplementation((content: string) =>
+      JSON.parse(content),
+    )
 
     mockAccountStorageImportData.mockResolvedValue({ migratedCount: 0 })
     mockChannelConfigImport.mockResolvedValue(undefined)
@@ -530,6 +965,79 @@ describe("WebdavAutoSyncService.syncWithWebdav (selective sync)", () => {
       uploaded.accounts.accounts.map((account: any) => account.id),
     ).toEqual(["a1"])
     expect(uploaded.preferences).toBeUndefined()
+  })
+
+  it("surfaces safe commit failure during upload-only first upload", async () => {
+    const service = createService()
+
+    mockGetPreferences.mockResolvedValue({
+      webdav: {
+        syncStrategy: "upload_only",
+        syncData: {
+          accounts: true,
+          bookmarks: false,
+          apiCredentialProfiles: false,
+          preferences: false,
+        },
+      },
+    } as any)
+
+    mockAccountStorageExportData.mockResolvedValue({
+      accounts: [{ id: "local-account", created_at: 1, updated_at: 10 }],
+      bookmarks: [],
+      pinnedAccountIds: ["local-account"],
+      orderedAccountIds: ["local-account"],
+      last_updated: 100,
+    })
+    mockDownloadBackup.mockRejectedValue({
+      code: "WEBDAV_FILE_NOT_FOUND",
+      message: "messages:webdav.fileNotFound",
+    })
+    mockUploadBackup.mockRejectedValueOnce(
+      new Error("messages:webdav.safeCommitFailed"),
+    )
+
+    await expect(service.syncWithWebdav()).rejects.toThrow(
+      "messages:webdav.safeCommitFailed",
+    )
+
+    expect(mockAccountStorageImportData).not.toHaveBeenCalled()
+    expect(mockUploadBackup).toHaveBeenCalledTimes(1)
+  })
+
+  it("rejects malformed remote backup JSON with a stable WebDAV backup error", async () => {
+    const service = createService()
+
+    mockGetPreferences.mockResolvedValue({
+      webdav: {
+        syncStrategy: "merge",
+        syncData: {
+          accounts: true,
+          bookmarks: false,
+          apiCredentialProfiles: false,
+          preferences: false,
+        },
+      },
+    } as any)
+
+    mockAccountStorageExportData.mockResolvedValue({
+      accounts: [{ id: "a1", created_at: 1, updated_at: 1 }],
+      bookmarks: [],
+      pinnedAccountIds: ["a1"],
+      orderedAccountIds: ["a1"],
+      last_updated: 100,
+    })
+    mockDownloadBackup.mockResolvedValue('{"version":"2.0","accounts":"')
+    mockParseWebdavBackupJson.mockImplementationOnce(() => {
+      throw new Error("messages:webdav.invalidBackupJson")
+    })
+
+    await expect(service.syncWithWebdav()).rejects.toThrow(
+      "messages:webdav.invalidBackupJson",
+    )
+
+    expect(mockAccountStorageImportData).not.toHaveBeenCalled()
+    expect(mockUploadBackup).not.toHaveBeenCalled()
   })
 
   it("download_only preserves local accounts when remote omits the accounts section", async () => {
@@ -1432,6 +1940,9 @@ describe("WebdavAutoSyncService local apply phase", () => {
 
     mockTestConnection.mockResolvedValue(true)
     mockUploadBackup.mockResolvedValue(true)
+    mockParseWebdavBackupJson.mockImplementation((content: string) =>
+      JSON.parse(content),
+    )
 
     mockChannelConfigImport.mockResolvedValue(undefined)
     mockApiCredentialProfilesImport.mockResolvedValue(undefined)

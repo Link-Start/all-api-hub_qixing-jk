@@ -8,6 +8,16 @@ import { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 
 import { Input } from "~/components/ui"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+} from "~/services/productAnalytics/events"
 import {
   CHECKIN_RESULT_STATUS,
   type CheckinAccountResult,
@@ -21,6 +31,42 @@ export const FILTER_STATUS = {
 } as const
 
 export type FilterStatus = (typeof FILTER_STATUS)[keyof typeof FILTER_STATUS]
+
+const getResultMessage = (result: CheckinAccountResult) =>
+  result.rawMessage ?? result.message ?? result.messageKey ?? ""
+
+const matchesStatusFilter = (
+  result: CheckinAccountResult,
+  status: FilterStatus,
+) => {
+  switch (status) {
+    case FILTER_STATUS.SUCCESS:
+      return (
+        result.status === CHECKIN_RESULT_STATUS.SUCCESS ||
+        result.status === CHECKIN_RESULT_STATUS.ALREADY_CHECKED
+      )
+    case FILTER_STATUS.FAILED:
+      return result.status === CHECKIN_RESULT_STATUS.FAILED
+    case FILTER_STATUS.SKIPPED:
+      return result.status === CHECKIN_RESULT_STATUS.SKIPPED
+    case FILTER_STATUS.ALL:
+      return true
+  }
+}
+
+const matchesKeywordFilter = (
+  result: CheckinAccountResult,
+  keyword: string,
+) => {
+  const normalizedKeyword = keyword.trim().toLowerCase()
+  if (!normalizedKeyword) return true
+
+  return (
+    result.accountName.toLowerCase().includes(normalizedKeyword) ||
+    String(result.accountId).toLowerCase().includes(normalizedKeyword) ||
+    getResultMessage(result).toLowerCase().includes(normalizedKeyword)
+  )
+}
 
 interface FilterBarProps {
   accountResults: CheckinAccountResult[]
@@ -60,6 +106,39 @@ export default function FilterBar({
   const skippedCount = accountResults.filter(
     (r) => r.status === CHECKIN_RESULT_STATUS.SKIPPED,
   ).length
+  const getFilteredResultCount = (
+    nextStatus: FilterStatus,
+    nextKeyword: string,
+  ) =>
+    accountResults.filter(
+      (result) =>
+        matchesStatusFilter(result, nextStatus) &&
+        matchesKeywordFilter(result, nextKeyword),
+    ).length
+  const trackFilterSelection = (
+    mode:
+      | typeof PRODUCT_ANALYTICS_MODE_IDS.SearchFilter
+      | typeof PRODUCT_ANALYTICS_MODE_IDS.StatusFilter,
+    nextStatus: FilterStatus = status,
+    nextKeyword: string = keyword,
+  ) => {
+    const filterCount =
+      (nextStatus === FILTER_STATUS.ALL ? 0 : 1) + (nextKeyword.trim() ? 1 : 0)
+
+    void trackProductAnalyticsActionCompleted({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.FilterAutoCheckinResults,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinFilterBar,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ResultFilter,
+        mode,
+        filterCount,
+        resultCount: getFilteredResultCount(nextStatus, nextKeyword),
+      },
+    })
+  }
 
   const renderFilterButton = (
     value: FilterStatus,
@@ -69,7 +148,10 @@ export default function FilterBar({
     count?: number,
   ) => (
     <button
-      onClick={() => onStatusChange(value)}
+      onClick={() => {
+        onStatusChange(value)
+        trackFilterSelection(PRODUCT_ANALYTICS_MODE_IDS.StatusFilter, value)
+      }}
       className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
         status === value
           ? `${color} text-white`
@@ -131,7 +213,14 @@ export default function FilterBar({
           value={keyword}
           onChange={(e) => onKeywordChange(e.target.value)}
           leftIcon={<MagnifyingGlassIcon className="h-4 w-4" />}
-          onClear={() => onKeywordChange("")}
+          onClear={() => {
+            onKeywordChange("")
+            trackFilterSelection(
+              PRODUCT_ANALYTICS_MODE_IDS.SearchFilter,
+              status,
+              "",
+            )
+          }}
           clearButtonLabel={t("common:actions.clear")}
         />
       </div>

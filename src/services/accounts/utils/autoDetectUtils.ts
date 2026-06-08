@@ -17,8 +17,17 @@
  */
 import {
   AUTO_DETECT_ERROR_CODES,
+  AUTO_DETECT_FAILURE_REASONS,
+  type AutoDetectAnalyticsContext,
   type AutoDetectErrorCode,
+  type AutoDetectFailureReason,
 } from "~/constants/autoDetect"
+import { type AccountSiteType } from "~/constants/siteType"
+import {
+  getBestEffortLoginUrl,
+  resolveAccountSiteLoginUrl,
+} from "~/services/accounts/utils/siteRouteResolver"
+import { createTab, queryTabs, reloadTab } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { t } from "~/utils/i18n/core"
 import { getDocsAutoDetectUrl } from "~/utils/navigation/docsLinks"
@@ -34,6 +43,12 @@ export enum AutoDetectErrorType {
   FORBIDDEN = "forbidden",
   NOT_FOUND = "notFound",
   SERVER_ERROR = "serverError",
+}
+
+export {
+  AUTO_DETECT_FAILURE_REASONS,
+  type AutoDetectAnalyticsContext,
+  type AutoDetectFailureReason,
 }
 
 // 自动识别错误信息
@@ -104,6 +119,12 @@ export function getAutoDetectErrorByCode(
   switch (errorCode) {
     case AUTO_DETECT_ERROR_CODES.CURRENT_TAB_CONTENT_SCRIPT_UNAVAILABLE:
       return createCurrentTabReloadRequiredError()
+    case AUTO_DETECT_ERROR_CODES.SITE_TYPE_DETECTION_FAILED:
+      return {
+        type: AutoDetectErrorType.NOT_FOUND,
+        message: t("messages:autodetect.notFound"),
+        helpDocUrl: getDocsAutoDetectUrl(),
+      }
     default:
       return null
   }
@@ -193,6 +214,7 @@ export function analyzeAutoDetectError(error: any): AutoDetectError {
 export interface AutoDetectErrorProps {
   error: AutoDetectError
   siteUrl?: string
+  siteType?: AccountSiteType
   onHelpClick?: () => void
   onActionClick?: () => void
 }
@@ -206,23 +228,20 @@ export interface AutoDetectErrorProps {
  * @returns Login page URL to open in a new tab.
  */
 export function getLoginUrl(siteUrl: string): string {
-  try {
-    const url = new URL(siteUrl)
-    // 对于 One API 和 New API，通常登录页面在 /login
-    return `${url.protocol}//${url.host}/login`
-  } catch {
-    // If parsing fails, fall back to the original URL (best-effort)
-    return siteUrl
-  }
+  return getBestEffortLoginUrl(siteUrl)
 }
 
 /**
  * Open a new browser tab pointing to the site's login page.
  * @param siteUrl Base site URL used to derive the login page.
+ * @param siteTypeHint Optional already-known site type from the caller.
  */
-export async function openLoginTab(siteUrl: string): Promise<void> {
-  const loginUrl = getLoginUrl(siteUrl)
-  await browser.tabs.create({ url: loginUrl, active: true })
+export async function openLoginTab(
+  siteUrl: string,
+  siteTypeHint?: AccountSiteType,
+): Promise<void> {
+  const loginUrl = await resolveAccountSiteLoginUrl(siteUrl, siteTypeHint)
+  await createTab(loginUrl, true)
 }
 
 /**
@@ -230,13 +249,13 @@ export async function openLoginTab(siteUrl: string): Promise<void> {
  * script can attach before the next auto-detect attempt.
  */
 export async function reloadCurrentTab(): Promise<void> {
-  const tabs = await browser.tabs.query({
+  const tabs = await queryTabs({
     active: true,
     currentWindow: true,
   })
 
   const activeTab = tabs[0]
   if (typeof activeTab?.id === "number") {
-    await browser.tabs.reload(activeTab.id)
+    await reloadTab(activeTab.id)
   }
 }

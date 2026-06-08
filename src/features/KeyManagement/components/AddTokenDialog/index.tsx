@@ -6,11 +6,23 @@ import { Alert } from "~/components/ui"
 import { Modal } from "~/components/ui/Dialog/Modal"
 import { UI_CONSTANTS } from "~/constants/ui"
 import { createDisplayAccountApiContext } from "~/services/accounts/utils/apiServiceRequest"
+import { formatOptionalSkPrefixSiteToken } from "~/services/apiService/common/apiKey"
 import type { CreateTokenRequest } from "~/services/apiService/common/type"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { AccountToken, ApiToken, DisplaySiteData } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 
+import { KEY_MANAGEMENT_TEST_IDS } from "../../testIds"
+import { buildOneTimeApiKeyProfileSaveAction } from "../../utils/apiCredentialProfileSaveAction"
 import { OneTimeApiKeyDialog } from "../OneTimeApiKeyDialog"
 import { DialogHeader } from "./DialogHeader"
 import { FormActions } from "./FormActions"
@@ -30,6 +42,34 @@ const isCreatedApiToken = (value: unknown): value is ApiToken =>
   typeof value === "object" &&
   typeof (value as Partial<ApiToken>).id === "number" &&
   typeof (value as Partial<ApiToken>).key === "string"
+
+const keyManagementDialogAnalyticsContext = (
+  actionId:
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.CreateAccountToken
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.UpdateAccountToken,
+) => ({
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+  actionId,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementDialog,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+})
+
+const startKeyManagementDialogAnalytics = (
+  actionId:
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.CreateAccountToken
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.UpdateAccountToken,
+) => {
+  try {
+    return startProductAnalyticsAction(
+      keyManagementDialogAnalyticsContext(actionId),
+    )
+  } catch (error) {
+    logger.warn("Add token dialog analytics start failed", error)
+    return {
+      complete: () => undefined,
+    }
+  }
+}
 
 interface AddTokenDialogProps {
   isOpen: boolean
@@ -92,6 +132,19 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
     setOneTimeToken(null)
     handleClose()
   }
+  const oneTimeKeySaveAction =
+    oneTimeToken && currentAccount
+      ? buildOneTimeApiKeyProfileSaveAction({
+          accountName: currentAccount.name,
+          baseUrl: currentAccount.baseUrl,
+          siteType: currentAccount.siteType,
+          tagIds: currentAccount.tagIds ?? [],
+          token: oneTimeToken,
+          t,
+          logger,
+          source: "AddTokenDialog",
+        })
+      : undefined
 
   const handleSubmit = async () => {
     if (
@@ -101,6 +154,11 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
       return
     }
 
+    const tracker = startKeyManagementDialogAnalytics(
+      isEditMode
+        ? PRODUCT_ANALYTICS_ACTION_IDS.UpdateAccountToken
+        : PRODUCT_ANALYTICS_ACTION_IDS.CreateAccountToken,
+    )
     setIsSubmitting(true)
     try {
       const tokenData: CreateTokenRequest = {
@@ -129,15 +187,24 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
       } else {
         const created = await service.createApiToken(request, tokenData)
         const createdToken = isCreatedApiToken(created) ? created : undefined
+        const displayCreatedToken = createdToken
+          ? formatOptionalSkPrefixSiteToken(
+              createdToken,
+              currentAccount.siteType,
+            )
+          : undefined
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
         if (createdToken && showOneTimeKeyDialog) {
-          setOneTimeToken(createdToken)
+          setOneTimeToken(displayCreatedToken ?? createdToken)
         } else {
           toast.success(t("dialog.createSuccess"))
         }
         if (onSuccess) {
-          void Promise.resolve(onSuccess(createdToken)).catch((error) => {
+          try {
+            await onSuccess(createdToken)
+          } catch (error) {
             logger.error("AddTokenDialog onSuccess callback failed", error)
-          })
+          }
         }
 
         if (createdToken && showOneTimeKeyDialog) {
@@ -145,12 +212,17 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
         }
       }
 
-      handleClose()
-      if (isEditMode && onSuccess) {
-        void Promise.resolve(onSuccess()).catch((error) => {
-          logger.error("AddTokenDialog onSuccess callback failed", error)
-        })
+      if (isEditMode) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
       }
+      if (isEditMode && onSuccess) {
+        try {
+          await onSuccess()
+        } catch (error) {
+          logger.error("AddTokenDialog onSuccess callback failed", error)
+        }
+      }
+      handleClose()
     } catch (error) {
       logger.error(`${isEditMode ? "更新" : "创建"}密钥失败`, error)
       const message = getErrorMessage(error)
@@ -161,6 +233,9 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
         message && message.trim() ? message : fallbackMessage
 
       toast.error(displayMessage)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
     } finally {
       setIsSubmitting(false)
     }
@@ -173,6 +248,7 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
         onClose={handleClose}
         size="lg"
         header={<DialogHeader isEditMode={isEditMode} />}
+        panelTestId={KEY_MANAGEMENT_TEST_IDS.addTokenDialog}
         footer={
           isLoading ? null : (
             <FormActions
@@ -214,6 +290,7 @@ export default function AddTokenDialog(props: AddTokenDialogProps) {
         isOpen={!!oneTimeToken}
         token={oneTimeToken}
         onClose={handleCloseOneTimeKeyDialog}
+        saveAction={oneTimeKeySaveAction}
       />
     </>
   )

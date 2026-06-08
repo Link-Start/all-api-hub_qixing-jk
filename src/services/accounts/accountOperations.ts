@@ -4,6 +4,8 @@
 
 import toast from "react-hot-toast"
 
+import type { AutoDetectErrorCode } from "~/constants/autoDetect"
+import { AUTO_DETECT_ERROR_CODES } from "~/constants/autoDetect"
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import {
   ACCOUNT_SITE_TITLE_RULES,
@@ -12,6 +14,11 @@ import {
   type AccountSiteType,
 } from "~/constants/siteType"
 import { UI_CONSTANTS } from "~/constants/ui"
+import { AccountUpdateUserTimestampMode } from "~/services/accounts/accountDefaults"
+import {
+  isValidManualAccountIdentity,
+  normalizeAccountIdentity,
+} from "~/services/accounts/accountIdentity"
 import {
   ensureDefaultApiTokenForAccount,
   generateDefaultTokenRequest,
@@ -20,10 +27,20 @@ import { accountStorage } from "~/services/accounts/accountStorage"
 import { createDisplayAccountApiContext } from "~/services/accounts/utils/apiServiceRequest"
 import {
   analyzeAutoDetectError,
+  AUTO_DETECT_FAILURE_REASONS,
+  AutoDetectErrorType,
   getAutoDetectErrorByCode,
+  type AutoDetectAnalyticsContext,
+  type AutoDetectFailureReason,
 } from "~/services/accounts/utils/autoDetectUtils"
 import { normalizeAccountSiteUrlForStorage } from "~/services/accounts/utils/siteUrlNormalization"
 import { getApiService } from "~/services/apiService"
+import {
+  API_SERVICE_FETCH_CONTEXT_KINDS,
+  type ApiServiceFetchContext,
+  type ApiServiceRequest,
+  type SiteStatusInfo,
+} from "~/services/apiService/common/type"
 import {
   DEFAULT_PREFERENCES,
   userPreferences,
@@ -53,11 +70,102 @@ const logger = createLogger("AccountOperations")
 
 export const MANUAL_ADD_ACCOUNT_DATA_FETCH_TIMEOUT_MS = 20000
 
+/**
+ * Keeps legacy numeric-id validation at the explicit manual-input boundary only.
+ */
+function validateManualAccountIdentity(
+  userId: string,
+  siteType: AccountSiteType,
+): AccountSaveResponse | null {
+  const identity = normalizeAccountIdentity(userId)
+  if (!identity || !isValidManualAccountIdentity(identity, siteType)) {
+    return {
+      success: false,
+      message: t("messages:errors.validation.userIdNumeric"),
+    }
+  }
+
+  return null
+}
+
 const isCreatedApiToken = (value: unknown): value is ApiToken =>
   !!value &&
   typeof value === "object" &&
   typeof (value as Partial<ApiToken>).id === "number" &&
   typeof (value as Partial<ApiToken>).key === "string"
+
+/**
+ * Pins analytics metadata to the final site type selected for account handling.
+ */
+function withFinalAutoDetectSiteType(
+  autoDetectContext: AutoDetectAnalyticsContext | undefined,
+  siteType: AccountSiteType,
+): AutoDetectAnalyticsContext {
+  return {
+    ...(autoDetectContext ?? {}),
+    siteType,
+  }
+}
+
+/**
+ * Maps machine-readable auto-detect service errors into analytics-safe failure reasons.
+ */
+function getAutoDetectFailureReasonByErrorCode(
+  errorCode?: AutoDetectErrorCode,
+): AutoDetectFailureReason | undefined {
+  switch (errorCode) {
+    case AUTO_DETECT_ERROR_CODES.CURRENT_TAB_CONTENT_SCRIPT_UNAVAILABLE:
+      return AUTO_DETECT_FAILURE_REASONS.CurrentTabContentScriptUnavailable
+    case AUTO_DETECT_ERROR_CODES.SITE_TYPE_DETECTION_FAILED:
+      return AUTO_DETECT_FAILURE_REASONS.SiteTypeDetectionFailed
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Preserves the failing completion step while keeping the original error available for UI classification.
+ */
+class AutoDetectCompletionError extends Error {
+  constructor(
+    readonly reason: AutoDetectFailureReason,
+    cause: unknown,
+  ) {
+    super(getErrorMessage(cause))
+    this.name = "AutoDetectCompletionError"
+    this.cause = cause
+  }
+}
+
+/**
+ * Resolves the most specific auto-detect completion reason available for analytics.
+ */
+function getAutoDetectCompletionFailureReason(
+  error: unknown,
+): AutoDetectFailureReason {
+  return error instanceof AutoDetectCompletionError
+    ? error.reason
+    : AUTO_DETECT_FAILURE_REASONS.UnexpectedException
+}
+
+/**
+ * Returns local user-facing guidance for known completion failures.
+ */
+function getAutoDetectCompletionFailureMessage(
+  reason: AutoDetectFailureReason,
+  fallbackErrorMessage: string,
+) {
+  switch (reason) {
+    case AUTO_DETECT_FAILURE_REASONS.TokenFetchFailed:
+      return t("messages:operations.detection.getAccessTokenFailedDetailed")
+    case AUTO_DETECT_FAILURE_REASONS.SiteStatusFetchFailed:
+      return t("messages:operations.detection.getSiteStatusFailedDetailed")
+    default:
+      return t("accountDialog:messages.autoDetectFailed", {
+        error: fallbackErrorMessage,
+      })
+  }
+}
 
 /**
  * Create a localized timeout error for manual account data fetching.
@@ -97,6 +205,51 @@ async function withTimeout<T>(
     if (timeoutId !== undefined) {
       clearTimeout(timeoutId)
     }
+  }
+}
+
+/**
+ * Extracts the matched current-tab context from successful auto-detect data.
+ */
+function getAutoDetectFetchContext(
+  detectResultData: NonNullable<
+    Awaited<ReturnType<typeof autoDetectSmart>>["data"]
+  >,
+): ApiServiceFetchContext | undefined {
+  const fetchContext = detectResultData.fetchContext
+  if (fetchContext?.kind === API_SERVICE_FETCH_CONTEXT_KINDS.BROWSER_CONTEXT) {
+    return fetchContext
+  }
+
+  if (fetchContext?.kind === API_SERVICE_FETCH_CONTEXT_KINDS.CURRENT_TAB) {
+    if (
+      typeof fetchContext.tabId === "number" &&
+      typeof fetchContext.origin === "string" &&
+      fetchContext.origin.trim()
+    ) {
+      return fetchContext
+    }
+  }
+
+  if (fetchContext?.incognito === true || fetchContext?.cookieStoreId) {
+    return fetchContext
+  }
+
+  return undefined
+}
+
+/**
+ * Builds the service-layer request used by auto-detect completion.
+ */
+function createAutoDetectApiRequest(params: {
+  baseUrl: string
+  auth: ApiServiceRequest["auth"]
+  fetchContext?: ApiServiceFetchContext
+}): ApiServiceRequest {
+  return {
+    baseUrl: params.baseUrl,
+    auth: params.auth,
+    ...(params.fetchContext ? { fetchContext: params.fetchContext } : {}),
   }
 }
 
@@ -141,6 +294,8 @@ export async function autoDetectAccount(
     }
   }
 
+  let autoDetectContext: AutoDetectAnalyticsContext | undefined
+
   try {
     try {
       await sendRuntimeMessage({
@@ -156,6 +311,7 @@ export async function autoDetectAccount(
 
     // 使用智能自动识别服务
     const detectResult = await autoDetectSmart(url.trim())
+    autoDetectContext = detectResult.autoDetectContext
 
     if (!detectResult.success || !detectResult.data) {
       const errorMsg =
@@ -165,12 +321,21 @@ export async function autoDetectAccount(
         analyzeAutoDetectError(errorMsg)
       return {
         success: false,
-        message: errorMsg,
+        message: detailedError.message || errorMsg,
         detailedError,
+        autoDetectContext,
+        autoDetectFailureReason:
+          getAutoDetectFailureReasonByErrorCode(detectResult.errorCode) ??
+          AUTO_DETECT_FAILURE_REASONS.UserDataMissing,
       }
     }
 
     const { userId, siteType, sub2apiAuth } = detectResult.data
+    autoDetectContext = withFinalAutoDetectSiteType(
+      detectResult.autoDetectContext,
+      siteType,
+    )
+    const autoDetectFetchContext = getAutoDetectFetchContext(detectResult.data)
     const isSub2Api = siteType === SITE_TYPES.SUB2API
     const isAIHubMix = siteType === SITE_TYPES.AIHUBMIX
     const effectiveAuthType =
@@ -182,13 +347,15 @@ export async function autoDetectAccount(
       : effectiveAuthType
 
     if (!userId) {
-      const detailedError = analyzeAutoDetectError(
-        t("messages:operations.detection.getUserIdFailed"),
-      )
       return {
         success: false,
-        message: t("messages:operations.detection.getUserIdFailed"),
-        detailedError,
+        message: t("messages:operations.detection.getUserIdFailedDetailed"),
+        detailedError: {
+          type: AutoDetectErrorType.INVALID_RESPONSE,
+          message: t("messages:operations.detection.getUserIdFailedDetailed"),
+        },
+        autoDetectContext,
+        autoDetectFailureReason: AUTO_DETECT_FAILURE_REASONS.UserIdMissing,
       }
     }
 
@@ -209,45 +376,101 @@ export async function autoDetectAccount(
         username: detectedUsername,
         access_token: accessToken,
       })
+    } else if (
+      isAIHubMix &&
+      typeof detectResult.data.accessToken === "string"
+    ) {
+      const detectedUsername =
+        typeof detectResult.data.user?.username === "string"
+          ? detectResult.data.user.username.trim()
+          : ""
+
+      tokenPromise = Promise.resolve({
+        username: detectedUsername,
+        access_token: detectResult.data.accessToken.trim(),
+      })
     } else if (effectiveAuthType === AuthTypeEnum.Cookie) {
-      tokenPromise = getApiService(siteType).fetchUserInfo({
-        baseUrl: url,
-        auth: {
-          authType: AuthTypeEnum.Cookie,
-          userId,
-        },
-      })
+      tokenPromise = getApiService(siteType).fetchUserInfo(
+        createAutoDetectApiRequest({
+          baseUrl: url,
+          fetchContext: autoDetectFetchContext,
+          auth: {
+            authType: AuthTypeEnum.Cookie,
+            userId,
+          },
+        }),
+      )
     } else if (effectiveAuthType === AuthTypeEnum.AccessToken) {
-      tokenPromise = getApiService(siteType).getOrCreateAccessToken({
-        baseUrl: url,
-        auth: {
-          authType: AuthTypeEnum.Cookie,
-          userId,
-        },
-      })
+      tokenPromise = getApiService(siteType).getOrCreateAccessToken(
+        createAutoDetectApiRequest({
+          baseUrl: url,
+          fetchContext: autoDetectFetchContext,
+          auth: {
+            authType: AuthTypeEnum.Cookie,
+            userId,
+          },
+        }),
+      )
     } else {
       // none 或其他情况
       tokenPromise = Promise.resolve(null)
     }
 
-    const siteStatusPromise = getApiService(siteType).fetchSiteStatus({
-      baseUrl: url,
-      auth: {
-        authType: detectionAuthType || AuthTypeEnum.None,
-      },
+    const fetchSiteStatusFallback = () =>
+      getApiService(siteType).fetchSiteStatus(
+        createAutoDetectApiRequest({
+          baseUrl: url,
+          fetchContext: autoDetectFetchContext,
+          auth: {
+            authType: detectionAuthType || AuthTypeEnum.None,
+          },
+        }),
+      )
+
+    const siteStatusPromise: Promise<SiteStatusInfo | null> =
+      fetchSiteStatusFallback()
+    const classifiedSiteStatusPromise = siteStatusPromise.catch((error) => {
+      throw new AutoDetectCompletionError(
+        AUTO_DETECT_FAILURE_REASONS.SiteStatusFetchFailed,
+        error,
+      )
     })
+
+    const fetchSupportCheckInFallback = () =>
+      getApiService(siteType).fetchSupportCheckIn(
+        createAutoDetectApiRequest({
+          baseUrl: url,
+          fetchContext: autoDetectFetchContext,
+          auth: {
+            authType: AuthTypeEnum.None,
+          },
+        }),
+      )
+
+    const checkSupportPromise: Promise<boolean | undefined> =
+      classifiedSiteStatusPromise.then((siteStatus) =>
+        typeof siteStatus?.checkin_enabled === "boolean"
+          ? siteStatus.checkin_enabled
+          : fetchSupportCheckInFallback().catch((error) => {
+              logger.warn("Auto-detect check-in support probe failed", {
+                siteType,
+                error: getErrorMessage(error),
+              })
+              return false
+            }),
+      )
 
     // 并行执行 token 获取和 site 状态获取（降低端到端等待）
     const [tokenInfo, siteStatus, checkSupport, siteName] = await Promise.all([
-      tokenPromise,
-      siteStatusPromise,
-      getApiService(siteType).fetchSupportCheckIn({
-        baseUrl: url,
-        auth: {
-          authType: AuthTypeEnum.None,
-        },
+      tokenPromise.catch((error) => {
+        throw new AutoDetectCompletionError(
+          AUTO_DETECT_FAILURE_REASONS.TokenFetchFailed,
+          error,
+        )
       }),
-      siteStatusPromise.then((resolvedSiteStatus) =>
+      classifiedSiteStatusPromise,
+      checkSupportPromise,
+      classifiedSiteStatusPromise.then((resolvedSiteStatus) =>
         getSiteName(url, siteType, resolvedSiteStatus),
       ),
     ])
@@ -255,19 +478,31 @@ export async function autoDetectAccount(
     const { username: detectedUsername, access_token } = tokenInfo
 
     // 验证获取到的用户信息是否完整
+    const isUsernameMissing = !isSub2Api && !detectedUsername
+    const isAccessTokenMissing =
+      (effectiveAuthType === AuthTypeEnum.AccessToken || isAIHubMix) &&
+      !access_token
+
     if (
       // Sub2API 默认可能返回空 username（""），此时不应阻止账号识别；但 AccessToken 仍然必须存在
-      (!isSub2Api && !detectedUsername) ||
-      ((effectiveAuthType === AuthTypeEnum.AccessToken || isAIHubMix) &&
-        !access_token)
+      isUsernameMissing ||
+      isAccessTokenMissing
     ) {
-      const detailedError = analyzeAutoDetectError(
-        t("messages:operations.detection.getInfoFailed"),
-      )
+      const failureReason = isAccessTokenMissing
+        ? AUTO_DETECT_FAILURE_REASONS.AccessTokenMissing
+        : AUTO_DETECT_FAILURE_REASONS.UsernameMissing
+      const message = isAccessTokenMissing
+        ? t("messages:operations.detection.getAccessTokenFailedDetailed")
+        : t("messages:operations.detection.getUsernameFailedDetailed")
       return {
         success: false,
-        message: t("messages:operations.detection.getInfoFailed"),
-        detailedError,
+        message,
+        detailedError: {
+          type: AutoDetectErrorType.INVALID_RESPONSE,
+          message,
+        },
+        autoDetectContext,
+        autoDetectFailureReason: failureReason,
       }
     }
 
@@ -301,10 +536,19 @@ export async function autoDetectAccount(
         },
         siteType: siteType,
         ...(isSub2Api && sub2apiAuth ? { sub2apiAuth } : {}),
+        ...(autoDetectFetchContext
+          ? { fetchContext: autoDetectFetchContext }
+          : {}),
+        autoDetectContext,
       },
     }
   } catch (error) {
     const errorMessage = getErrorMessage(error)
+    const autoDetectFailureReason = getAutoDetectCompletionFailureReason(error)
+    const message = getAutoDetectCompletionFailureMessage(
+      autoDetectFailureReason,
+      errorMessage,
+    )
     logger.error(
       t("messages:autodetect.failed", { error: errorMessage }),
       error,
@@ -312,10 +556,10 @@ export async function autoDetectAccount(
     const detailedError = analyzeAutoDetectError(error)
     return {
       success: false,
-      message: t("accountDialog:messages.autoDetectFailed", {
-        error: errorMessage,
-      }),
+      message,
       detailedError,
+      autoDetectContext,
+      autoDetectFailureReason,
     }
   }
 }
@@ -368,6 +612,10 @@ export function isValidAccount({
 }
 
 type TagIdsInput = string[] | undefined
+
+export interface ValidateAndSaveAccountOptions {
+  skipAutoProvisionKeyOnAccountAdd?: boolean
+}
 
 /**
  * Normalizes a tag id list originating from UI widgets into a de-duped string
@@ -508,7 +756,7 @@ export async function resolveSub2ApiQuickCreateResolution(
  * @param siteName - Display name for the account.
  * @param username - Username retrieved from the remote site.
  * @param accessToken - Auth token required for API calls.
- * @param userId - Numeric user id in string form.
+ * @param userId - Site-scoped account identity entered by the user.
  * @param exchangeRate - Recharge exchange rate configured in UI.
  * @param notes - Free-form notes provided by user.
  * @param tagIds - Optional tag ids originating from the tag picker.
@@ -533,7 +781,9 @@ export async function validateAndSaveAccount(
   cookieAuthSessionCookie: string,
   manualBalanceUsd?: string,
   excludeFromTotalBalance = false,
+  excludeFromTodayIncome = false,
   sub2apiAuth?: Sub2ApiAuthConfig,
+  options: ValidateAndSaveAccountOptions = {},
 ): Promise<AccountSaveResponse> {
   const sessionCookieHeader =
     authType === AuthTypeEnum.Cookie
@@ -562,13 +812,12 @@ export async function validateAndSaveAccount(
     }
   }
 
-  const parsedUserId = parseInt(userId.trim())
-  if (isNaN(parsedUserId)) {
-    return {
-      success: false,
-      message: t("messages:errors.validation.userIdNumeric"),
-    }
-  }
+  const accountIdentity = normalizeAccountIdentity(userId) ?? ""
+  const identityValidationError = validateManualAccountIdentity(
+    accountIdentity,
+    normalizedSiteType,
+  )
+  if (identityValidationError) return identityValidationError
 
   let shouldAutoProvisionKeyOnAccountAdd =
     DEFAULT_PREFERENCES.autoProvisionKeyOnAccountAdd ?? false
@@ -604,7 +853,7 @@ export async function validateAndSaveAccount(
       baseUrl: requestBaseUrl,
       siteType: normalizedSiteType,
       authType,
-      userId: parsedUserId,
+      userId: accountIdentity,
     })
     const freshAccountData = await withTimeout(
       getApiService(normalizedSiteType).fetchAccountData({
@@ -614,7 +863,7 @@ export async function validateAndSaveAccount(
         includeTodayCashflow,
         auth: {
           authType,
-          userId: parsedUserId,
+          userId: accountIdentity,
           accessToken: accessToken.trim(),
           cookie:
             authType === AuthTypeEnum.Cookie
@@ -631,7 +880,10 @@ export async function validateAndSaveAccount(
 
     const normalizedTagIds = normalizeTagIdsInput(tagIds)
 
-    const accountData: Omit<SiteAccount, "id" | "created_at" | "updated_at"> = {
+    const accountData: Omit<
+      SiteAccount,
+      "id" | "created_at" | "updated_at" | "user_updated_at"
+    > = {
       site_name: siteName.trim(),
       site_url: storageSiteUrl,
       health: { status: SiteHealthStatus.Healthy }, // 成功获取数据说明状态正常
@@ -639,6 +891,7 @@ export async function validateAndSaveAccount(
       authType: authType,
       disabled: false,
       excludeFromTotalBalance: excludeFromTotalBalance === true,
+      excludeFromTodayIncome: excludeFromTodayIncome === true,
       cookieAuth:
         authType === AuthTypeEnum.Cookie
           ? { sessionCookie: sessionCookieHeader.trim() }
@@ -650,7 +903,7 @@ export async function validateAndSaveAccount(
       tagIds: normalizedTagIds,
       checkIn: freshAccountData.checkIn,
       account_info: {
-        id: parsedUserId,
+        id: accountIdentity,
         access_token: accessToken.trim(),
         username: username.trim(),
         quota: manualQuota ?? freshAccountData.quota,
@@ -670,10 +923,12 @@ export async function validateAndSaveAccount(
       siteType: normalizedSiteType,
     })
 
-    void autoProvisionKeyOnAccountAdd(
-      accountId,
-      shouldAutoProvisionKeyOnAccountAdd,
-    )
+    if (!options.skipAutoProvisionKeyOnAccountAdd) {
+      void autoProvisionKeyOnAccountAdd(
+        accountId,
+        shouldAutoProvisionKeyOnAccountAdd,
+      )
+    }
 
     return {
       success: true,
@@ -690,7 +945,7 @@ export async function validateAndSaveAccount(
 
     const partialAccountData: Omit<
       SiteAccount,
-      "id" | "created_at" | "updated_at"
+      "id" | "created_at" | "updated_at" | "user_updated_at"
     > = {
       site_name: siteName.trim(),
       site_url: storageSiteUrl,
@@ -698,6 +953,7 @@ export async function validateAndSaveAccount(
       authType: authType,
       disabled: false,
       excludeFromTotalBalance: excludeFromTotalBalance === true,
+      excludeFromTodayIncome: excludeFromTodayIncome === true,
       cookieAuth:
         authType === AuthTypeEnum.Cookie
           ? { sessionCookie: sessionCookieHeader.trim() }
@@ -713,7 +969,7 @@ export async function validateAndSaveAccount(
         reason: getErrorMessage(error),
       },
       account_info: {
-        id: parsedUserId,
+        id: accountIdentity,
         access_token: accessToken.trim(),
         username: username.trim(),
         quota: manualQuota ?? 0,
@@ -735,10 +991,12 @@ export async function validateAndSaveAccount(
         siteType,
       })
 
-      void autoProvisionKeyOnAccountAdd(
-        accountId,
-        shouldAutoProvisionKeyOnAccountAdd,
-      )
+      if (!options.skipAutoProvisionKeyOnAccountAdd) {
+        void autoProvisionKeyOnAccountAdd(
+          accountId,
+          shouldAutoProvisionKeyOnAccountAdd,
+        )
+      }
 
       return {
         success: true,
@@ -770,7 +1028,7 @@ export async function validateAndSaveAccount(
  * @param siteName - Updated display name.
  * @param username - Updated username.
  * @param accessToken - Updated auth token.
- * @param userId - Updated user id string.
+ * @param userId - Updated site-scoped account identity.
  * @param exchangeRate - Updated recharge rate string.
  * @param notes - Updated notes.
  * @param tagIds - Updated tag id collection.
@@ -796,6 +1054,7 @@ export async function validateAndUpdateAccount(
   cookieAuthSessionCookie: string,
   manualBalanceUsd?: string,
   excludeFromTotalBalance = false,
+  excludeFromTodayIncome = false,
   sub2apiAuth?: Sub2ApiAuthConfig,
 ): Promise<AccountSaveResponse> {
   const sessionCookieHeader =
@@ -825,13 +1084,12 @@ export async function validateAndUpdateAccount(
     }
   }
 
-  const parsedUserId = parseInt(userId.trim())
-  if (isNaN(parsedUserId)) {
-    return {
-      success: false,
-      message: t("messages:errors.validation.userIdNumeric"),
-    }
-  }
+  const accountIdentity = normalizeAccountIdentity(userId) ?? ""
+  const identityValidationError = validateManualAccountIdentity(
+    accountIdentity,
+    normalizedSiteType,
+  )
+  if (identityValidationError) return identityValidationError
 
   const manualQuota = parseManualQuotaFromUsd(manualBalanceUsd)
   const normalizedManualBalanceUsd =
@@ -853,7 +1111,7 @@ export async function validateAndUpdateAccount(
       baseUrl: requestBaseUrl,
       siteType: normalizedSiteType,
       authType,
-      userId: parsedUserId,
+      userId: accountIdentity,
     })
     const includeTodayCashflow =
       (await userPreferences.getPreferences()).showTodayCashflow ?? true
@@ -866,7 +1124,7 @@ export async function validateAndUpdateAccount(
       includeTodayCashflow,
       auth: {
         authType,
-        userId: parsedUserId,
+        userId: accountIdentity,
         accessToken: accessToken.trim(),
         cookie:
           authType === AuthTypeEnum.Cookie
@@ -877,13 +1135,16 @@ export async function validateAndUpdateAccount(
 
     const normalizedTagIds = normalizeTagIdsInput(tagIds)
 
-    const updateData: Partial<Omit<SiteAccount, "id" | "created_at">> = {
+    const updateData: Partial<
+      Omit<SiteAccount, "id" | "created_at" | "updated_at" | "user_updated_at">
+    > = {
       site_name: siteName.trim(),
       site_url: storageSiteUrl,
       health: { status: SiteHealthStatus.Healthy }, // 成功获取数据说明状态正常
       site_type: normalizedSiteType,
       authType: authType,
       excludeFromTotalBalance: excludeFromTotalBalance === true,
+      excludeFromTodayIncome: excludeFromTodayIncome === true,
       cookieAuth:
         authType === AuthTypeEnum.Cookie
           ? { sessionCookie: sessionCookieHeader.trim() }
@@ -895,7 +1156,7 @@ export async function validateAndUpdateAccount(
       tagIds: normalizedTagIds,
       checkIn: freshAccountData.checkIn,
       account_info: {
-        id: parsedUserId,
+        id: accountIdentity,
         access_token: accessToken.trim(),
         username: username.trim(),
         quota: manualQuota ?? freshAccountData.quota,
@@ -908,7 +1169,9 @@ export async function validateAndUpdateAccount(
       last_sync_time: Date.now(),
     }
 
-    const success = await accountStorage.updateAccount(accountId, updateData)
+    const success = await accountStorage.updateAccount(accountId, updateData, {
+      userTimestampMode: AccountUpdateUserTimestampMode.Touch,
+    })
     if (!success) {
       return {
         success: false,
@@ -943,6 +1206,7 @@ export async function validateAndUpdateAccount(
       site_type: normalizedSiteType,
       authType: authType,
       excludeFromTotalBalance: excludeFromTotalBalance === true,
+      excludeFromTodayIncome: excludeFromTodayIncome === true,
       cookieAuth:
         authType === AuthTypeEnum.Cookie
           ? { sessionCookie: sessionCookieHeader.trim() }
@@ -958,7 +1222,7 @@ export async function validateAndUpdateAccount(
         reason: getErrorMessage(error),
       },
       account_info: {
-        id: parsedUserId,
+        id: accountIdentity,
         access_token: accessToken.trim(),
         username: username.trim(),
         ...(manualQuota === undefined ? {} : { quota: manualQuota }),
@@ -970,6 +1234,7 @@ export async function validateAndUpdateAccount(
     const success = await accountStorage.updateAccount(
       accountId,
       partialUpdateData,
+      { userTimestampMode: AccountUpdateUserTimestampMode.Touch },
     )
 
     if (!success) {
@@ -1258,7 +1523,8 @@ async function autoProvisionKeyOnAccountAdd(
       typeof displaySiteData?.siteType !== "string" ||
       displaySiteData.siteType.trim().length === 0 ||
       displaySiteData.authType === AuthTypeEnum.None ||
-      !Number.isFinite(displaySiteData.userId) ||
+      typeof displaySiteData.userId !== "string" ||
+      displaySiteData.userId.trim().length === 0 ||
       (displaySiteData.authType === AuthTypeEnum.AccessToken && !hasToken) ||
       (displaySiteData.authType === AuthTypeEnum.Cookie &&
         !hasToken &&

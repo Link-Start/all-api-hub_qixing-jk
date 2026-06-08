@@ -82,6 +82,7 @@
   },
   "metrics": {
     "balance": "残高",
+    "estimatedIncome": "推定収入",
     "income": "収入",
     "net": "純増減",
     "outcome": "支出"
@@ -110,6 +111,8 @@
     "enabledHint": "無効にすると、スナップショットは記録されず、定期取得も停止します。",
     "endOfDayCapture": "日次終了時の記録",
     "endOfDayCaptureHint": "{{time}} 付近でベストエフォートの日次記録を行います（Alarms API が必要です）。",
+    "estimatedTodayIncome": "推定の本日収入を表示",
+    "estimatedTodayIncomeHint": "残高履歴を使って、サイトの収入ログに出ない報酬を推定します。前日の基準スナップショットがない場合は利用できません。",
     "retentionDays": "保持日数"
   },
   "summary": {
@@ -120,6 +123,7 @@
       "account": "アカウント",
       "cashflowCoverage": "キャッシュフローのカバー率",
       "endBalance": "期末残高",
+      "estimatedIncomeTotal": "推定収入合計",
       "incomeTotal": "総収入",
       "outcomeTotal": "総支出",
       "rangeNet": "期間純増減",

@@ -107,7 +107,8 @@
   },
   "filteredTotals": {
     "balance": "Balance",
-    "consumption": "Today's consumption"
+    "consumption": "Today's consumption",
+    "income": "Today's income"
   },
   "healthStatus": {
     "apiError": "API error",
@@ -178,12 +179,30 @@
     "noResults": "No matching accounts found",
     "placeholder": "Enter site information or account information to search"
   },
+  "sponsor": {
+    "actions": {
+      "continueAddAccount": "Continue adding this account",
+      "openApiCredentialProfilesFallback": "Add this provider's API key as an API credential",
+      "openBookmarkManagerFallback": "Bookmark provider instead of adding an account",
+      "visitProvider": "Visit provider"
+    },
+    "recommendedProviders": "Recommended providers",
+    "supportStatus": {
+      "fallbackApiCredentialProfiles": "Add as credential",
+      "fallbackBookmark": "Bookmark first",
+      "fallbackBookmarkAndApi": "Bookmark / add credential",
+      "supported": "Can be added directly",
+      "unsupported": "May require manual setup"
+    }
+  },
   "stats": {
     "completion": "Completion",
+    "estimatedTodayIncome": "Estimated income",
     "prompt": "Prompt",
     "todayConsumption": "Today's Consumption",
     "todayIncome": "Today's Income",
-    "totalBalance": "Total Balance"
+    "totalBalance": "Total Balance",
+    "trustedTodayIncome": "Trusted income"
   },
   "title": "Account Management"
 }

@@ -3,6 +3,9 @@ import {
   SIDEPANEL_PAGE_PATH,
 } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { getPopupViewTestId, POPUP_TEST_IDS } from "~/entrypoints/popup/testIds"
+import { API_CREDENTIAL_PROFILES_TEST_IDS } from "~/features/ApiCredentialProfiles/testIds"
+import { SITE_BOOKMARKS_TEST_IDS } from "~/features/SiteBookmarks/testIds"
 import {
   createDefaultAccountStorageConfig,
   normalizeAccountStorageConfigForWrite,
@@ -69,7 +72,7 @@ test("sidepanel switches common saved-item tabs and opens the matching managemen
             site_name: "Sidepanel Account",
             site_url: "https://sidepanel-account.example.com",
             account_info: {
-              id: 31,
+              id: "31",
               username: "sidepanel-user",
               access_token: "sidepanel-token",
             },
@@ -100,7 +103,7 @@ test("sidepanel switches common saved-item tabs and opens the matching managemen
   await expectPermissionOnboardingHidden(page)
 
   await expect(page.getByText("All API Hub", { exact: true })).toBeVisible()
-  await expect(page.getByTestId("popup-view-accounts")).toBeVisible()
+  await expect(page.getByTestId(getPopupViewTestId("accounts"))).toBeVisible()
   await expect(page.getByText("Sidepanel Account")).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Open Side Panel" }),
@@ -119,7 +122,7 @@ test("sidepanel switches common saved-item tabs and opens the matching managemen
   await accountsPage.close()
 
   await page.getByRole("tab", { name: "Bookmarks" }).click()
-  await expect(page.getByTestId("popup-view-bookmarks")).toBeVisible()
+  await expect(page.getByTestId(getPopupViewTestId("bookmarks"))).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Sidepanel Docs" }),
   ).toBeVisible()
@@ -136,9 +139,9 @@ test("sidepanel switches common saved-item tabs and opens the matching managemen
   expect(new URL(bookmarksPage.url()).hash).toBe(`#${MENU_ITEM_IDS.BOOKMARK}`)
   await bookmarksPage.close()
 
-  await page.getByRole("tab", { name: "API Credentials" }).click()
+  await page.getByTestId(POPUP_TEST_IDS.apiCredentialProfilesTab).click()
   await expect(
-    page.getByTestId("api-credential-profiles-popup-view"),
+    page.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.popupView),
   ).toBeVisible()
   await expect(page.getByText("Sidepanel Profile")).toBeVisible()
 
@@ -147,7 +150,7 @@ test("sidepanel switches common saved-item tabs and opens the matching managemen
     path: OPTIONS_PAGE_PATH,
     hash: `#${MENU_ITEM_IDS.API_CREDENTIAL_PROFILES}`,
   })
-  await page.getByRole("button", { name: "API Credential Profiles" }).click()
+  await page.getByTestId(POPUP_TEST_IDS.openApiCredentialProfilesButton).click()
   const profilesPage = await profilesPagePromise
   installExtensionPageGuards(profilesPage)
   await waitForExtensionRoot(profilesPage)
@@ -175,7 +178,7 @@ test("sidepanel opens saved account and bookmark targets in browser tabs", async
             site_name: "Sidepanel Open Account",
             site_url: "https://sidepanel-open-account.example.com",
             account_info: {
-              id: 41,
+              id: "41",
               username: "sidepanel-open-user",
               access_token: "sidepanel-open-token",
             },
@@ -197,7 +200,7 @@ test("sidepanel opens saved account and bookmark targets in browser tabs", async
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await expect(page.getByTestId("popup-view-accounts")).toBeVisible()
+  await expect(page.getByTestId(getPopupViewTestId("accounts"))).toBeVisible()
   await page.getByRole("button", { name: "Sidepanel Open Account" }).click()
   await expectBrowserTabOpened(
     serviceWorker,
@@ -205,7 +208,7 @@ test("sidepanel opens saved account and bookmark targets in browser tabs", async
   )
 
   await page.getByRole("tab", { name: "Bookmarks" }).click()
-  await expect(page.getByTestId("bookmarks-list-view")).toBeVisible()
+  await expect(page.getByTestId(SITE_BOOKMARKS_TEST_IDS.listView)).toBeVisible()
   await page.getByRole("button", { name: "Sidepanel Open Bookmark" }).click()
   await expectBrowserTabOpened(
     serviceWorker,
@@ -244,9 +247,9 @@ test("sidepanel opens model management for a saved API credential profile", asyn
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await page.getByRole("tab", { name: "API Credentials" }).click()
+  await page.getByTestId(POPUP_TEST_IDS.apiCredentialProfilesTab).click()
   await expect(
-    page.getByTestId("api-credential-profiles-popup-view"),
+    page.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.popupView),
   ).toBeVisible()
   await expect(
     page.getByRole("heading", { name: "Sidepanel Model Profile" }),

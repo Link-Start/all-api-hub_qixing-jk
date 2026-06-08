@@ -63,6 +63,11 @@ describe("BalanceDisplay", () => {
     mockUseUserPreferencesContext.mockReturnValue({
       currencyType: "USD",
       showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: false },
+        },
+      },
     })
     mockUseAccountDataContext.mockReturnValue({
       isInitialLoad: false,
@@ -127,14 +132,192 @@ describe("BalanceDisplay", () => {
     const incomeNode = screen.getByTitle("account:list.balance.refreshIncome")
 
     expect(balanceNode).toHaveClass("cursor-pointer")
+    expect(balanceNode).toHaveClass("ml-auto", "text-right")
     expect(consumptionNode).toHaveClass("text-green-500")
+    expect(consumptionNode).toHaveClass("ml-auto", "text-right")
     expect(incomeNode).toHaveClass("text-blue-500")
+    expect(incomeNode).toHaveClass("ml-auto", "text-right")
     expect(consumptionValue).toHaveAttribute("data-end", "4")
     expect(incomeValue).toHaveAttribute("data-end", "3")
 
     await user.click(balanceNode)
 
     expect(handleRefreshAccount).toHaveBeenCalledWith(updatedSite, true)
+  })
+
+  it("renders the account estimated income when enabled and available", async () => {
+    const user = userEvent.setup()
+    const site = buildDisplaySiteData({
+      balance: { USD: 25.25, CNY: 176.75 },
+      todayConsumption: { USD: 3, CNY: 21 },
+      todayIncome: { USD: 2, CNY: 14 },
+      estimatedTodayIncome: { USD: 5.5, CNY: 38.5 },
+    })
+    const updatedSite = buildDisplaySiteData({
+      ...site,
+      estimatedTodayIncome: { USD: 6.5, CNY: 45.5 },
+    })
+    const handleRefreshAccount = vi.fn().mockResolvedValue(undefined)
+
+    mockUseUserPreferencesContext.mockReturnValue({
+      currencyType: "USD",
+      showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    })
+    mockUseAccountActionsContext.mockReturnValue({
+      handleRefreshAccount,
+      refreshingAccountId: null,
+    })
+
+    const { rerender } = render(<BalanceDisplay site={site} />)
+
+    expect(screen.queryByTestId("countup")).toBeNull()
+
+    rerender(<BalanceDisplay site={updatedSite} />)
+
+    const estimatedNode = screen.getByTitle(
+      "account:stats.estimatedTodayIncome",
+    )
+    expect(
+      screen.getByRole("button", {
+        name: "account:stats.estimatedTodayIncome",
+      }),
+    ).toHaveTextContent("~$6.50")
+    expect(estimatedNode).toHaveClass("text-indigo-500")
+    expect(estimatedNode).toHaveTextContent("~$6.50")
+    expect(screen.getAllByTestId("countup").at(-1)).toHaveAttribute(
+      "data-end",
+      "6.5",
+    )
+
+    await user.click(estimatedNode)
+
+    expect(handleRefreshAccount).toHaveBeenCalledWith(updatedSite, true)
+  })
+
+  it("hides account estimated income when the preference is disabled or unavailable", () => {
+    mockUseUserPreferencesContext.mockReturnValue({
+      currencyType: "USD",
+      showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: false },
+        },
+      },
+    })
+
+    const { rerender } = render(
+      <BalanceDisplay
+        site={buildDisplaySiteData({
+          estimatedTodayIncome: { USD: 5.5, CNY: 38.5 },
+        })}
+      />,
+    )
+
+    expect(
+      screen.queryByTitle("account:stats.estimatedTodayIncome"),
+    ).not.toBeInTheDocument()
+
+    mockUseUserPreferencesContext.mockReturnValue({
+      currencyType: "USD",
+      showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    })
+
+    rerender(
+      <BalanceDisplay
+        site={buildDisplaySiteData({ estimatedTodayIncome: null })}
+      />,
+    )
+
+    expect(
+      screen.queryByTitle("account:stats.estimatedTodayIncome"),
+    ).not.toBeInTheDocument()
+  })
+
+  it("renders neutral disabled estimated income without a refresh action", async () => {
+    const user = userEvent.setup()
+    const handleRefreshAccount = vi.fn().mockResolvedValue(undefined)
+
+    mockUseUserPreferencesContext.mockReturnValue({
+      currencyType: "USD",
+      showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    })
+    mockUseAccountActionsContext.mockReturnValue({
+      handleRefreshAccount,
+      refreshingAccountId: null,
+    })
+
+    render(
+      <BalanceDisplay
+        site={buildDisplaySiteData({
+          disabled: true,
+          estimatedTodayIncome: { USD: 0, CNY: 0 },
+        })}
+      />,
+    )
+
+    const disabledValues = screen.getAllByTitle("account:list.site.disabled")
+    const estimatedNode = disabledValues.at(-1)!
+    expect(estimatedNode).toHaveTextContent("~$0.00")
+    expect(estimatedNode).toHaveClass("text-gray-400")
+    expect(
+      screen.queryByRole("button", {
+        name: "account:stats.estimatedTodayIncome",
+      }),
+    ).not.toBeInTheDocument()
+
+    await user.click(estimatedNode)
+
+    expect(handleRefreshAccount).not.toHaveBeenCalled()
+  })
+
+  it("renders a neutral enabled estimated income as a refresh action", async () => {
+    const user = userEvent.setup()
+    const handleRefreshAccount = vi.fn().mockResolvedValue(undefined)
+
+    mockUseUserPreferencesContext.mockReturnValue({
+      currencyType: "USD",
+      showTodayCashflow: true,
+      preferences: {
+        balanceHistory: {
+          estimatedTodayIncome: { enabled: true },
+        },
+      },
+    })
+    mockUseAccountActionsContext.mockReturnValue({
+      handleRefreshAccount,
+      refreshingAccountId: null,
+    })
+
+    const site = buildDisplaySiteData({
+      disabled: false,
+      estimatedTodayIncome: { USD: 0, CNY: 0 },
+    })
+    render(<BalanceDisplay site={site} />)
+
+    const estimatedButton = screen.getByRole("button", {
+      name: "account:stats.estimatedTodayIncome",
+    })
+    expect(estimatedButton).toHaveTextContent("~$0.00")
+    expect(estimatedButton).toHaveClass("text-gray-400")
+
+    await user.click(estimatedButton)
+
+    expect(handleRefreshAccount).toHaveBeenCalledWith(site, true)
   })
 
   it("shows disabled titles and neutral cashflow styling without refreshing disabled accounts", async () => {

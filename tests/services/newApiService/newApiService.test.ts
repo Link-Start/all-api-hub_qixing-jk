@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SITE_TYPES } from "~/constants/siteType"
+import { MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS } from "~/services/managedSites/channelMatch"
 import type { ApiToken, DisplaySiteData, SiteAccount } from "~/types"
 import { AuthTypeEnum, SiteHealthStatus } from "~/types"
 import type {
@@ -75,16 +76,9 @@ vi.mock("~/services/apiService/common", async () => {
   }
 })
 
-vi.mock("~/services/apiService/openaiCompatible", async () => {
-  const actual = await vi.importActual<
-    typeof import("~/services/apiService/openaiCompatible")
-  >("~/services/apiService/openaiCompatible")
-
-  return {
-    ...actual,
-    fetchOpenAICompatibleModelIds: mockFetchOpenAICompatibleModelIds,
-  }
-})
+vi.mock("~/services/aiApi/openaiCompatible", () => ({
+  fetchOpenAICompatibleModelIds: mockFetchOpenAICompatibleModelIds,
+}))
 
 // Mock account storage
 const mockAccountStorageConvertToDisplayData = vi.fn()
@@ -148,7 +142,7 @@ function createMockDisplaySiteData(
     siteType: SITE_TYPES.UNKNOWN,
     baseUrl: "https://api.example.com",
     token: "test-token-123",
-    userId: 1,
+    userId: "1",
     authType: AuthTypeEnum.AccessToken,
     checkIn: { enableDetection: false },
     ...overrides,
@@ -280,6 +274,7 @@ function createMockNewApiChannelListData(channels?: any[]) {
  * Creates a mock SiteAccount entity for integration-style New API tests.
  */
 function createMockSiteAccount(overrides?: Partial<SiteAccount>): SiteAccount {
+  const now = Date.now()
   return {
     id: "account-1",
     site_name: "Test Site",
@@ -292,7 +287,7 @@ function createMockSiteAccount(overrides?: Partial<SiteAccount>): SiteAccount {
     disabled: false,
     excludeFromTotalBalance: false,
     account_info: {
-      id: 1,
+      id: "1",
       access_token: "token-123",
       username: "testuser",
       quota: 100,
@@ -302,12 +297,14 @@ function createMockSiteAccount(overrides?: Partial<SiteAccount>): SiteAccount {
       today_requests_count: 5,
       today_income: 0,
     },
-    last_sync_time: Date.now(),
-    updated_at: Date.now(),
-    created_at: Date.now() - 86400000,
+    last_sync_time: now,
+    updated_at: now,
+    created_at: now - 86400000,
     authType: AuthTypeEnum.AccessToken,
     checkIn: { enableDetection: false },
     ...overrides,
+    user_updated_at: overrides?.user_updated_at ?? overrides?.updated_at ?? now,
+    excludeFromTodayIncome: overrides?.excludeFromTodayIncome === true,
   }
 }
 
@@ -824,6 +821,11 @@ describe("newApiService", () => {
       const { fetchChannelSecretKey } = await import(
         "~/services/managedSites/providers/newApi"
       )
+      const config = {
+        baseUrl: "https://new-api.example.com/api/v1",
+        adminToken: "ignored-admin-token",
+        userId: "managed-user",
+      }
 
       mockGetPreferences.mockResolvedValueOnce(
         createMockUserPreferencesWithNewApi({
@@ -839,14 +841,9 @@ describe("newApiService", () => {
       )
       fetchNewApiChannelKeyMock.mockResolvedValueOnce("resolved-secret")
 
-      await expect(
-        fetchChannelSecretKey(
-          "https://new-api.example.com/api/v1",
-          "ignored-admin-token",
-          "managed-user",
-          99,
-        ),
-      ).resolves.toBe("resolved-secret")
+      await expect(fetchChannelSecretKey(config, 99)).resolves.toBe(
+        "resolved-secret",
+      )
 
       expect(fetchNewApiChannelKeyMock).toHaveBeenCalledWith({
         baseUrl: "https://new-api.example.com/api/v1",
@@ -862,6 +859,11 @@ describe("newApiService", () => {
       const { fetchChannelSecretKey } = await import(
         "~/services/managedSites/providers/newApi"
       )
+      const config = {
+        baseUrl: "https://other.example.com/api/v1",
+        adminToken: "ignored-admin-token",
+        userId: "managed-user",
+      }
 
       mockGetPreferences.mockResolvedValueOnce(
         createMockUserPreferencesWithNewApi({
@@ -877,12 +879,7 @@ describe("newApiService", () => {
       )
       fetchNewApiChannelKeyMock.mockResolvedValueOnce("resolved-secret")
 
-      await fetchChannelSecretKey(
-        "https://other.example.com/api/v1",
-        "ignored-admin-token",
-        "managed-user",
-        100,
-      )
+      await fetchChannelSecretKey(config, 100)
 
       expect(fetchNewApiChannelKeyMock).toHaveBeenCalledWith({
         baseUrl: "https://other.example.com/api/v1",
@@ -891,6 +888,138 @@ describe("newApiService", () => {
         password: "",
         totpSecret: "",
         channelId: 100,
+      })
+    })
+  })
+
+  describe("hydrateComparableChannelKeys", () => {
+    it("should preserve visible New API candidate keys without fetching", async () => {
+      const { hydrateComparableChannelKeys } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const config = {
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+
+      const result = await hydrateComparableChannelKeys(config, [
+        createMockNewApiChannel({
+          id: 11,
+          key: "sk-visible",
+        }),
+      ])
+
+      expect(fetchNewApiChannelKeyMock).not.toHaveBeenCalled()
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 11,
+          key: "sk-visible",
+        }),
+      ])
+    })
+
+    it("should hydrate hidden New API candidate keys for comparison", async () => {
+      const { hydrateComparableChannelKeys } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const config = {
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+      fetchNewApiChannelKeyMock.mockResolvedValueOnce("sk-revealed")
+
+      const result = await hydrateComparableChannelKeys(config, [
+        createMockNewApiChannel({
+          id: 12,
+          key: "",
+          base_url: "https://api.example.com/v1",
+          models: "gpt-4o",
+        }),
+      ])
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 12,
+          key: "sk-revealed",
+        }),
+      ])
+    })
+
+    it("should map New API verification requirements during hydration", async () => {
+      const { hydrateComparableChannelKeys } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const { MatchResolutionUnresolvedError } = await import(
+        "~/services/managedSites/channelMatch"
+      )
+      const {
+        NEW_API_CHANNEL_KEY_ERROR_KINDS,
+        NewApiChannelKeyRequirementError,
+      } = await import("~/services/managedSites/providers/newApiSession")
+      const config = {
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+      fetchNewApiChannelKeyMock.mockRejectedValueOnce(
+        new NewApiChannelKeyRequirementError(
+          NEW_API_CHANNEL_KEY_ERROR_KINDS.SECURE_VERIFICATION_REQUIRED,
+        ),
+      )
+
+      await expect(
+        hydrateComparableChannelKeys(config, [
+          createMockNewApiChannel({ id: 13, key: "" }),
+        ]),
+      ).rejects.toMatchObject({
+        name: MatchResolutionUnresolvedError.name,
+        reason:
+          MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.VERIFICATION_REQUIRED,
+      })
+    })
+
+    it("should map unexpected New API hydration failures to unresolved key resolution", async () => {
+      const { hydrateComparableChannelKeys } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const { MatchResolutionUnresolvedError } = await import(
+        "~/services/managedSites/channelMatch"
+      )
+      const config = {
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+      fetchNewApiChannelKeyMock.mockRejectedValueOnce(
+        new Error("backend unavailable"),
+      )
+
+      await expect(
+        hydrateComparableChannelKeys(config, [
+          createMockNewApiChannel({ id: 14, key: "" }),
+        ]),
+      ).rejects.toMatchObject({
+        name: MatchResolutionUnresolvedError.name,
+        reason:
+          MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
       })
     })
   })
@@ -1106,6 +1235,33 @@ describe("newApiService", () => {
       expect(result.modelPrefillFetchFailed).toBe(true)
     })
 
+    it("should use the AIHubMix API origin when preparing managed-site channel data", async () => {
+      const { prepareChannelFormData } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const account = createMockDisplaySiteData({
+        siteType: SITE_TYPES.AIHUBMIX,
+        baseUrl: "https://console.aihubmix.com",
+      })
+      const token = createMockApiToken()
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+      mockFetchOpenAICompatibleModelIds.mockResolvedValueOnce([
+        "gpt-aihubmix-mini",
+      ])
+      mockFetchSiteUserGroups.mockResolvedValueOnce(["default"])
+
+      const result = await prepareChannelFormData(account, token)
+
+      expect(mockFetchOpenAICompatibleModelIds).toHaveBeenCalledWith({
+        baseUrl: "https://aihubmix.com",
+        apiKey: token.key,
+      })
+      expect(result.base_url).toBe("https://aihubmix.com")
+    })
+
     it("should keep models empty when only account-level fallback models exist", async () => {
       const { prepareChannelFormData } = await import(
         "~/services/managedSites/providers/newApi"
@@ -1195,9 +1351,11 @@ describe("newApiService", () => {
     it("uses the New API site override for channel mutations", async () => {
       const { createChannel, deleteChannel, searchChannel, updateChannel } =
         await import("~/services/managedSites/providers/newApi")
-      const baseUrl = "https://new-api.example.com"
-      const adminToken = "admin-token"
-      const userId = 1
+      const config = {
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }
       const createChannelData: CreateChannelPayload = {
         mode: "single",
         channel: {
@@ -1220,25 +1378,53 @@ describe("newApiService", () => {
       mockUpdateChannel.mockResolvedValueOnce({ success: true })
       mockDeleteChannel.mockResolvedValueOnce({ success: true })
 
-      await searchChannel(baseUrl, adminToken, userId, "test")
-      await createChannel(baseUrl, adminToken, userId, createChannelData)
-      await updateChannel(baseUrl, adminToken, userId, updateChannelData)
-      await deleteChannel(baseUrl, adminToken, userId, 7)
+      await searchChannel(config, "test")
+      await createChannel(config, createChannelData)
+      await updateChannel(config, updateChannelData)
+      await deleteChannel(config, 7)
 
       expect(mockSearchChannel).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl }),
+        expect.objectContaining({
+          baseUrl: config.baseUrl,
+          auth: {
+            authType: AuthTypeEnum.AccessToken,
+            accessToken: config.adminToken,
+            userId: config.userId,
+          },
+        }),
         "test",
       )
       expect(mockCreateChannel).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl }),
+        expect.objectContaining({
+          baseUrl: config.baseUrl,
+          auth: {
+            authType: AuthTypeEnum.AccessToken,
+            accessToken: config.adminToken,
+            userId: config.userId,
+          },
+        }),
         createChannelData,
       )
       expect(mockUpdateChannel).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl }),
+        expect.objectContaining({
+          baseUrl: config.baseUrl,
+          auth: {
+            authType: AuthTypeEnum.AccessToken,
+            accessToken: config.adminToken,
+            userId: config.userId,
+          },
+        }),
         updateChannelData,
       )
       expect(mockDeleteChannel).toHaveBeenCalledWith(
-        expect.objectContaining({ baseUrl }),
+        expect.objectContaining({
+          baseUrl: config.baseUrl,
+          auth: {
+            authType: AuthTypeEnum.AccessToken,
+            accessToken: config.adminToken,
+            userId: config.userId,
+          },
+        }),
         7,
       )
     })
@@ -1369,271 +1555,6 @@ describe("newApiService", () => {
   })
 
   // ========================================================================
-  // findMatchingChannel
-  // ========================================================================
-
-  describe("findMatchingChannel", () => {
-    it("should find matching channel by base_url and models", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-      const matchingChannel = createMockNewApiChannel({
-        base_url: "https://api.example.com",
-        models: "gpt-4,gpt-3.5-turbo",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([matchingChannel]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        "https://api.example.com",
-        ["gpt-4", "gpt-3.5-turbo"],
-      )
-
-      expect(result).toEqual(matchingChannel)
-    })
-
-    it("should refine match by key when channel key is available", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-
-      const accountBaseUrl = "https://api.example.com"
-      const channel1 = createMockNewApiChannel({
-        id: 1,
-        base_url: accountBaseUrl,
-        models: "gpt-4",
-        key: "sk-key-a",
-      })
-      const channel2 = createMockNewApiChannel({
-        id: 2,
-        base_url: accountBaseUrl,
-        models: "gpt-4",
-        key: "sk-key-b",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([channel1, channel2]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        accountBaseUrl,
-        ["gpt-4"],
-        "sk-key-b",
-      )
-
-      expect(result?.id).toBe(2)
-    })
-
-    it("should not match when key mismatches and is comparable", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-
-      const accountBaseUrl = "https://api.example.com"
-      const channel = createMockNewApiChannel({
-        base_url: accountBaseUrl,
-        models: "gpt-4",
-        key: "sk-key-a",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([channel]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        accountBaseUrl,
-        ["gpt-4"],
-        "sk-key-b",
-      )
-
-      expect(result).toBeNull()
-    })
-
-    it("should not match when channel key is redacted", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-
-      const accountBaseUrl = "https://api.example.com"
-      const channel = createMockNewApiChannel({
-        base_url: accountBaseUrl,
-        models: "gpt-4",
-        key: "sk-****",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([channel]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        accountBaseUrl,
-        ["gpt-4"],
-        "sk-key-a",
-      )
-
-      expect(result).toBeNull()
-    })
-
-    it("should return null when no matching channel found", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-      const differentChannel = createMockNewApiChannel({
-        base_url: "https://different.example.com",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([differentChannel]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        "https://api.example.com",
-        ["gpt-4"],
-      )
-
-      expect(result).toBeNull()
-    })
-
-    it("should return null when search returns null", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-
-      mockSearchChannel.mockResolvedValueOnce(null)
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        "https://api.example.com",
-        ["gpt-4"],
-      )
-
-      expect(result).toBeNull()
-    })
-
-    it("should compare models correctly", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-      const channel1 = createMockNewApiChannel({
-        base_url: "https://api.example.com",
-        models: "gpt-4,gpt-3.5-turbo",
-      })
-      const channel2 = createMockNewApiChannel({
-        id: 2,
-        base_url: "https://api.example.com",
-        models: "gpt-4",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([channel1, channel2]),
-      )
-
-      const result = await findMatchingChannel(
-        "https://new-api.example.com",
-        "admin-token",
-        "user-123",
-        "https://api.example.com",
-        ["gpt-4"],
-      )
-
-      expect(result?.id).toBe(2)
-    })
-
-    it("should surface an unresolved match when hidden-key comparison requires verification", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-      const { MatchResolutionUnresolvedError } = await import(
-        "~/services/managedSites/channelMatch"
-      )
-      const {
-        NEW_API_CHANNEL_KEY_ERROR_KINDS,
-        NewApiChannelKeyRequirementError,
-      } = await import("~/services/managedSites/providers/newApiSession")
-
-      const hiddenKeyChannel = createMockNewApiChannel({
-        id: 3,
-        base_url: "https://api.example.com",
-        models: "gpt-4",
-        key: "",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([hiddenKeyChannel]),
-      )
-      fetchNewApiChannelKeyMock.mockRejectedValueOnce(
-        new NewApiChannelKeyRequirementError(
-          NEW_API_CHANNEL_KEY_ERROR_KINDS.SECURE_VERIFICATION_REQUIRED,
-        ),
-      )
-
-      await expect(
-        findMatchingChannel(
-          "https://new-api.example.com",
-          "admin-token",
-          "user-123",
-          "https://api.example.com",
-          ["gpt-4"],
-          "sk-key-a",
-        ),
-      ).rejects.toBeInstanceOf(MatchResolutionUnresolvedError)
-    })
-
-    it("should surface an unresolved match when hidden-key comparison fails unexpectedly", async () => {
-      const { findMatchingChannel } = await import(
-        "~/services/managedSites/providers/newApi"
-      )
-      const { MatchResolutionUnresolvedError } = await import(
-        "~/services/managedSites/channelMatch"
-      )
-
-      const hiddenKeyChannel = createMockNewApiChannel({
-        id: 4,
-        base_url: "https://api.example.com",
-        models: "gpt-4",
-        key: "",
-      })
-
-      mockSearchChannel.mockResolvedValueOnce(
-        createMockNewApiChannelListData([hiddenKeyChannel]),
-      )
-      fetchNewApiChannelKeyMock.mockRejectedValueOnce(
-        new Error("backend unavailable"),
-      )
-
-      await expect(
-        findMatchingChannel(
-          "https://new-api.example.com",
-          "admin-token",
-          "user-123",
-          "https://api.example.com",
-          ["gpt-4"],
-          "sk-key-a",
-        ),
-      ).rejects.toBeInstanceOf(MatchResolutionUnresolvedError)
-    })
-  })
-
-  // ========================================================================
   // importToNewApi
   // ========================================================================
 
@@ -1664,6 +1585,7 @@ describe("newApiService", () => {
         name: "Existing Channel",
         base_url: account.baseUrl,
         models: "gpt-4",
+        key: "sk-test-key-123",
       })
 
       mockGetPreferences.mockResolvedValueOnce(
@@ -1676,9 +1598,12 @@ describe("newApiService", () => {
 
       const result = await importToNewApi(account, token)
 
-      expect(result.success).toBe(false)
-      // The i18next mock returns the key, but we need to check if the message indicates a channel exists
-      expect(result.message).toBeTruthy()
+      expect(result).toEqual({
+        success: false,
+        message: expect.stringContaining("channelExists"),
+      })
+      expect(mockSearchChannel).toHaveBeenCalledTimes(1)
+      expect(mockCreateChannel).not.toHaveBeenCalled()
     })
 
     it("should import successfully when all conditions met", async () => {
@@ -1701,6 +1626,52 @@ describe("newApiService", () => {
 
       expect(result.success).toBe(true)
       expect(result.message).toBeTruthy()
+    })
+
+    it("should match existing AIHubMix channels by API origin during direct import", async () => {
+      const { importToNewApi } = await import(
+        "~/services/managedSites/providers/newApi"
+      )
+      const account = createMockDisplaySiteData({
+        siteType: SITE_TYPES.AIHUBMIX,
+        baseUrl: "https://console.aihubmix.com",
+      })
+      const token = createMockApiToken({
+        key: "sk-aihubmix-key",
+        models: "gpt-aihubmix-mini",
+      })
+
+      const existingChannel = createMockNewApiChannel({
+        name: "Existing AIHubMix Channel",
+        base_url: "https://aihubmix.com",
+        models: "gpt-aihubmix-mini",
+        key: "sk-aihubmix-key",
+      })
+
+      mockGetPreferences.mockResolvedValueOnce(
+        createMockUserPreferencesWithNewApi(),
+      )
+      mockFetchOpenAICompatibleModelIds.mockResolvedValueOnce([
+        "gpt-aihubmix-mini",
+      ])
+      mockSearchChannel.mockResolvedValueOnce(
+        createMockNewApiChannelListData([existingChannel]),
+      )
+
+      const result = await importToNewApi(account, token)
+
+      expect(result).toEqual({
+        success: false,
+        message: expect.stringContaining("channelExists"),
+      })
+      expect(mockSearchChannel).toHaveBeenCalledWith(
+        expect.objectContaining({
+          baseUrl: "https://new-api.example.com",
+        }),
+        "https://aihubmix.com",
+      )
+      expect(mockSearchChannel).toHaveBeenCalledTimes(1)
+      expect(mockCreateChannel).not.toHaveBeenCalled()
     })
 
     it("should stop importing when duplicate resolution requires verification", async () => {
@@ -1738,12 +1709,12 @@ describe("newApiService", () => {
 
       expect(result).toEqual({
         success: false,
-        message: "messages:newapi.channelMatchUnresolved",
+        message: expect.stringContaining("channelMatchUnresolved"),
       })
       expect(mockCreateChannel).not.toHaveBeenCalled()
     })
 
-    it("should stop importing when hidden-key lookup fails unexpectedly during duplicate resolution", async () => {
+    it("should return import failure when hidden-key lookup fails unexpectedly during duplicate resolution", async () => {
       const { importToNewApi } = await import(
         "~/services/managedSites/providers/newApi"
       )
@@ -1772,7 +1743,7 @@ describe("newApiService", () => {
 
       expect(result).toEqual({
         success: false,
-        message: "messages:newapi.channelMatchUnresolved",
+        message: "key-resolution-failed",
       })
       expect(mockCreateChannel).not.toHaveBeenCalled()
     })

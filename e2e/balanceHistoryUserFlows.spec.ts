@@ -1,5 +1,6 @@
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { BALANCE_HISTORY_TEST_IDS } from "~/features/BalanceHistory/testIds"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import {
   getDayKeyFromUnixSeconds,
@@ -108,7 +109,7 @@ test("filters balance history by tag/account and persists the selected currency"
       site_url: "https://balance-a.example.com",
       tagIds: ["production"],
       account_info: {
-        id: 11,
+        id: "11",
         username: "balance-user-a",
         access_token: "balance-token-a",
       },
@@ -119,7 +120,7 @@ test("filters balance history by tag/account and persists the selected currency"
       site_url: "https://balance-b.example.com",
       tagIds: ["sandbox"],
       account_info: {
-        id: 12,
+        id: "12",
         username: "balance-user-b",
         access_token: "balance-token-b",
       },
@@ -147,8 +148,13 @@ test("filters balance history by tag/account and persists the selected currency"
   await expect(
     page.getByRole("heading", { name: "Balance History" }),
   ).toBeVisible()
-  await expect(page.getByText("Overview")).toBeVisible()
-  await expect(page.getByText("Account summary")).toBeVisible()
+  const main = page.getByRole("main")
+  await expect(
+    main.getByTestId(BALANCE_HISTORY_TEST_IDS.overview),
+  ).toBeVisible()
+  await expect(
+    main.getByTestId(BALANCE_HISTORY_TEST_IDS.accountSummary),
+  ).toBeVisible()
   await expect(page.getByRole("button", { name: "Production" })).toBeVisible()
   await expect(
     page.getByRole("button", { name: "Balance Hub A", exact: true }),

@@ -22,6 +22,14 @@ const { mockTotalListHeightChanged, modelItemSpy } = vi.hoisted(() => ({
   modelItemSpy: vi.fn(),
 }))
 
+const TEST_IDS = vi.hoisted(() => ({
+  emptyState: "empty-state",
+  virtuoso: "virtuoso",
+  virtuosoList: "virtuoso-list",
+  virtuosoItem: "virtuoso-item",
+  modelItem: "model-item",
+}))
+
 vi.mock("react-i18next", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-i18next")>()
 
@@ -35,7 +43,7 @@ vi.mock("react-i18next", async (importOriginal) => {
 
 vi.mock("~/components/ui", () => ({
   EmptyState: ({ title }: { title: string }) => (
-    <div data-testid="empty-state">{title}</div>
+    <div data-testid={TEST_IDS.emptyState}>{title}</div>
   ),
 }))
 
@@ -65,11 +73,11 @@ vi.mock("react-virtuoso", () => ({
     mockTotalListHeightChanged.current = totalListHeightChanged
 
     return (
-      <div data-testid="virtuoso" className={className} style={style}>
-        <List data-testid="virtuoso-list">
+      <div data-testid={TEST_IDS.virtuoso} className={className} style={style}>
+        <List data-testid={TEST_IDS.virtuosoList}>
           {data.map((item, index) => (
             <Item
-              data-testid="virtuoso-item"
+              data-testid={TEST_IDS.virtuosoItem}
               key={
                 computeItemKey?.(index, item) ??
                 `${item.model.model_name}-${index}`
@@ -90,7 +98,7 @@ vi.mock("~/features/ModelList/components/ModelItem", () => ({
 
     return (
       <div
-        data-testid="model-item"
+        data-testid={TEST_IDS.modelItem}
         data-model-id={props.model.model_name}
         data-exchange-rate={String(props.exchangeRate)}
         data-effective-group={props.effectiveGroup ?? ""}
@@ -210,7 +218,7 @@ const createCalculatedModel = (
 
 function getRenderedModelItem(modelId: string) {
   const item = screen
-    .getAllByTestId("model-item")
+    .getAllByTestId(TEST_IDS.modelItem)
     .find((element) => element.getAttribute("data-model-id") === modelId)
 
   if (!item) {
@@ -240,10 +248,10 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    expect(screen.getByTestId("empty-state")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.emptyState)).toHaveTextContent(
       "modelList:noMatchingModels",
     )
-    expect(screen.queryByTestId("virtuoso")).not.toBeInTheDocument()
+    expect(screen.queryByTestId(TEST_IDS.virtuoso)).not.toBeInTheDocument()
   })
 
   it("shrinks the virtual model list container to measured content height", () => {
@@ -264,7 +272,7 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    const virtualList = screen.getByTestId("virtuoso")
+    const virtualList = screen.getByTestId(TEST_IDS.virtuoso)
     const listContainer = virtualList.parentElement
 
     act(() => {
@@ -295,7 +303,7 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    const virtualList = screen.getByTestId("virtuoso")
+    const virtualList = screen.getByTestId(TEST_IDS.virtuoso)
     const listContainer = virtualList.parentElement
 
     act(() => {
@@ -329,7 +337,7 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    const [firstItem, lastItem] = screen.getAllByTestId("virtuoso-item")
+    const [firstItem, lastItem] = screen.getAllByTestId(TEST_IDS.virtuosoItem)
 
     expect(firstItem).not.toHaveClass("my-3")
     expect(firstItem).not.toHaveClass("first:mt-0")
@@ -388,7 +396,9 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    const [accountItem, defaultRateItem] = screen.getAllByTestId("model-item")
+    const [accountItem, defaultRateItem] = screen.getAllByTestId(
+      TEST_IDS.modelItem,
+    )
 
     expect(accountItem).toHaveAttribute("data-source-kind", "account")
     expect(accountItem).toHaveAttribute("data-exchange-rate", "8")
@@ -456,19 +466,19 @@ describe("ModelDisplay", () => {
       />,
     )
 
-    expect(screen.getByTestId("model-item")).toHaveAttribute(
+    expect(screen.getByTestId(TEST_IDS.modelItem)).toHaveAttribute(
       "data-source-kind",
       "profile",
     )
-    expect(screen.getByTestId("model-item")).toHaveAttribute(
+    expect(screen.getByTestId(TEST_IDS.modelItem)).toHaveAttribute(
       "data-effective-group",
       "vip",
     )
-    expect(screen.getByTestId("model-item")).toHaveAttribute(
+    expect(screen.getByTestId(TEST_IDS.modelItem)).toHaveAttribute(
       "data-all-groups",
       "false",
     )
-    expect(screen.getByTestId("model-item")).toHaveAttribute(
+    expect(screen.getByTestId(TEST_IDS.modelItem)).toHaveAttribute(
       "data-summary-status",
       "failed",
     )

@@ -25,15 +25,26 @@ import {
   EmptyState,
   TagFilter,
 } from "~/components/ui"
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
 import { useAccountDataContext } from "~/features/AccountManagement/hooks/AccountDataContext"
 import { useBookmarkDialogContext } from "~/features/SiteBookmarks/hooks/BookmarkDialogStateContext"
 import { useIsDesktop, useIsSmallScreen } from "~/hooks/useMediaQuery"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { SiteBookmark } from "~/types"
 import { createTab } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
 import { closeIfPopup } from "~/utils/navigation"
 
+import { SITE_BOOKMARKS_TEST_IDS } from "../testIds"
 import BookmarkSearchInput from "./BookmarkSearchInput"
 import SortableBookmarkListItem from "./SortableBookmarkListItem"
 
@@ -332,6 +343,13 @@ export default function BookmarksList({
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return
     const target = deleteTarget
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BookmarkManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteBookmark,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
 
     try {
       const success = await accountStorage.deleteBookmark(target.id)
@@ -342,7 +360,11 @@ export default function BookmarksList({
         t("messages:toast.success.bookmarkDeleted", { name: target.name }),
       )
       await loadAccountData()
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
       toast.error(
         t("messages:toast.error.operationFailed", {
           error: getErrorMessage(error),
@@ -355,17 +377,27 @@ export default function BookmarksList({
 
   if (resolvedBookmarks.length === 0) {
     return (
-      <div data-testid="bookmarks-list-view">
-        <EmptyState
-          icon={<InboxIcon className="h-12 w-12" />}
-          title={t("bookmark:emptyState")}
-          action={{
-            label: t("bookmark:addFirstBookmark"),
-            onClick: openAddBookmark,
-            variant: "default",
-            icon: <PlusIcon className="h-4 w-4" />,
-          }}
-        />
+      <div data-testid={SITE_BOOKMARKS_TEST_IDS.listView}>
+        <ProductAnalyticsScope
+          entrypoint={PRODUCT_ANALYTICS_ENTRYPOINTS.Options}
+          featureId={PRODUCT_ANALYTICS_FEATURE_IDS.BookmarkManagement}
+          surfaceId={
+            PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementEmptyState
+          }
+        >
+          <EmptyState
+            icon={<InboxIcon className="h-12 w-12" />}
+            title={t("bookmark:emptyState")}
+            action={{
+              label: t("bookmark:addFirstBookmark"),
+              onClick: openAddBookmark,
+              variant: "default",
+              icon: <PlusIcon className="h-4 w-4" />,
+              testId: SITE_BOOKMARKS_TEST_IDS.emptyStateAddButton,
+              analyticsAction: PRODUCT_ANALYTICS_ACTION_IDS.CreateBookmark,
+            }}
+          />
+        </ProductAnalyticsScope>
       </div>
     )
   }
@@ -391,7 +423,7 @@ export default function BookmarksList({
   )
 
   return (
-    <div data-testid="bookmarks-list-view">
+    <div data-testid={SITE_BOOKMARKS_TEST_IDS.listView}>
       <Card>
         <CardContent padding={"none"} spacing={"none"}>
           <div className="dark:border-dark-bg-tertiary dark:bg-dark-bg-primary border-b border-gray-200 bg-white px-3 py-2 sm:px-5 sm:py-3">
@@ -441,6 +473,7 @@ export default function BookmarksList({
         })}
         cancelLabel={t("common:actions.cancel")}
         confirmLabel={t("common:actions.delete")}
+        confirmButtonTestId={SITE_BOOKMARKS_TEST_IDS.deleteConfirmButton}
         onConfirm={() => {
           void handleConfirmDelete()
         }}

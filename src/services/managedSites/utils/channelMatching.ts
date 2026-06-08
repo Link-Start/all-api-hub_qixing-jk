@@ -1,4 +1,12 @@
 import {
+  type AccountSiteType,
+  type ManagedSiteType,
+} from "~/constants/siteType"
+import {
+  formatOptionalSkPrefixTokenComparableKey,
+  hasOptionalSkPrefixSiteTokenSemantics,
+} from "~/services/apiService/common/apiKey"
+import {
   MANAGED_SITE_CHANNEL_KEY_MATCH_REASONS,
   MANAGED_SITE_CHANNEL_MATCH_LEVELS,
   MANAGED_SITE_CHANNEL_MATCH_REASONS,
@@ -18,6 +26,7 @@ interface FindManagedSiteChannelByComparableInputsParams {
   accountBaseUrl: string
   models: string[]
   key?: string
+  keyComparisonMode?: ManagedSiteChannelKeyComparisonMode
 }
 
 interface FindManagedSiteChannelsByBaseUrlParams {
@@ -42,6 +51,7 @@ interface InspectManagedSiteChannelKeyMatchParams {
   accountBaseUrl: string
   key?: string
   exactChannel?: ManagedSiteChannel | null
+  keyComparisonMode?: ManagedSiteChannelKeyComparisonMode
 }
 
 interface InspectManagedSiteChannelModelsMatchParams {
@@ -73,10 +83,48 @@ const MODEL_MATCH_REASON_PRIORITY: Record<
 const toNormalizedModelList = (models: string[] | string): string[] =>
   normalizeList(Array.isArray(models) ? models : parseDelimitedList(models))
 
-const toChannelKeyCandidates = (channel: ManagedSiteChannel): string[] =>
+export const MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES = {
+  EXACT: "exact",
+  OPTIONAL_SK_PREFIX: "optional-sk-prefix",
+} as const
+
+type ManagedSiteChannelKeyComparisonMode =
+  (typeof MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES)[keyof typeof MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES]
+
+/**
+ * Selects channel-key identity comparison semantics from source-confirmed
+ * upstream behavior plus the One/New API compatibility buckets documented in
+ * AGENTS.md.
+ */
+export function getManagedSiteChannelKeyComparisonMode(
+  siteType?: AccountSiteType | ManagedSiteType | string,
+): ManagedSiteChannelKeyComparisonMode {
+  return hasOptionalSkPrefixSiteTokenSemantics(siteType)
+    ? MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES.OPTIONAL_SK_PREFIX
+    : MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES.EXACT
+}
+
+const toComparableChannelKey = (
+  key: string,
+  mode: ManagedSiteChannelKeyComparisonMode,
+): string => {
+  const trimmed = key.trim()
+  if (
+    mode === MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES.OPTIONAL_SK_PREFIX &&
+    trimmed.startsWith("sk-")
+  ) {
+    return formatOptionalSkPrefixTokenComparableKey(trimmed)
+  }
+  return trimmed
+}
+
+const toChannelKeyCandidates = (
+  channel: ManagedSiteChannel,
+  mode: ManagedSiteChannelKeyComparisonMode,
+): string[] =>
   (channel.key ?? "")
     .split(/[\n,]/)
-    .map((item) => item.trim())
+    .map((key) => toComparableChannelKey(key, mode))
     .filter(Boolean)
 
 const isSubset = (subset: string[], superset: string[]) =>
@@ -175,7 +223,12 @@ export function findManagedSiteChannelByComparableInputs(
   params: FindManagedSiteChannelByComparableInputsParams,
 ): ManagedSiteChannel | null {
   const { channels, accountBaseUrl, models, key } = params
-  const normalizedDesiredKey = (key ?? "").trim()
+  const keyComparisonMode =
+    params.keyComparisonMode ?? MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES.EXACT
+  const normalizedDesiredKey = toComparableChannelKey(
+    key ?? "",
+    keyComparisonMode,
+  )
   const shouldMatchKey = normalizedDesiredKey.length > 0
   const comparableChannels = findManagedSiteChannelsByBaseUrlAndModels({
     channels,
@@ -189,12 +242,9 @@ export function findManagedSiteChannelByComparableInputs(
         return true
       }
 
-      const candidates = (channel.key ?? "")
-        .split(/[\n,]/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-
-      return candidates.includes(normalizedDesiredKey)
+      return toChannelKeyCandidates(channel, keyComparisonMode).includes(
+        normalizedDesiredKey,
+      )
     }) ?? null
   )
 }
@@ -206,7 +256,12 @@ export function findManagedSiteChannelByComparableInputs(
 export function inspectManagedSiteChannelKeyMatch(
   params: InspectManagedSiteChannelKeyMatchParams,
 ): ManagedSiteChannelKeyAssessment {
-  const normalizedDesiredKey = (params.key ?? "").trim()
+  const keyComparisonMode =
+    params.keyComparisonMode ?? MANAGED_SITE_CHANNEL_KEY_COMPARISON_MODES.EXACT
+  const normalizedDesiredKey = toComparableChannelKey(
+    params.key ?? "",
+    keyComparisonMode,
+  )
 
   if (!normalizedDesiredKey) {
     return {
@@ -242,7 +297,9 @@ export function inspectManagedSiteChannelKeyMatch(
 
   const matchedChannel =
     urlBucket.find((channel) =>
-      toChannelKeyCandidates(channel).includes(normalizedDesiredKey),
+      toChannelKeyCandidates(channel, keyComparisonMode).includes(
+        normalizedDesiredKey,
+      ),
     ) ?? null
 
   if (matchedChannel) {
@@ -255,7 +312,7 @@ export function inspectManagedSiteChannelKeyMatch(
   }
 
   const hasComparableChannelKey = urlBucket.some(
-    (channel) => toChannelKeyCandidates(channel).length > 0,
+    (channel) => toChannelKeyCandidates(channel, keyComparisonMode).length > 0,
   )
 
   if (!hasComparableChannelKey) {

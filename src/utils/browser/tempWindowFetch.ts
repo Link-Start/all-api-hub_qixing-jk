@@ -8,12 +8,12 @@ import {
   API_ERROR_CODES,
   ApiError,
   type ApiErrorCode,
-} from "~/services/apiService/common/errors"
-import type { ApiResponse } from "~/services/apiService/common/type"
+} from "~/services/apiTransport/errors"
 import {
   extractDataFromApiResponseBody,
   isHttpUrl,
-} from "~/services/apiService/common/utils"
+} from "~/services/apiTransport/response"
+import type { ApiResponse } from "~/services/apiTransport/type"
 import {
   COOKIE_INTERCEPTOR_PERMISSIONS,
   hasCookieInterceptorPermissions,
@@ -23,6 +23,7 @@ import {
   TempWindowFallbackPreferences,
   userPreferences,
 } from "~/services/preferences/userPreferences"
+import { AuthTypeEnum } from "~/types"
 import {
   TEMP_WINDOW_HEALTH_STATUS_CODES,
   type TempWindowHealthStatusCode,
@@ -235,9 +236,7 @@ export async function getTempWindowFallbackBlockStatus(
 export async function tempWindowFetch(
   params: TempWindowFetchParams,
 ): Promise<TempWindowFetch> {
-  const suppressMinimize =
-    params.suppressMinimize ??
-    (typeof window !== "undefined" && isExtensionPopup())
+  const suppressMinimize = params.suppressMinimize ?? isExtensionPopup()
 
   const payload: TempWindowFetchParams = {
     ...params,
@@ -283,9 +282,7 @@ export async function tempWindowFetch(
 export async function tempWindowTurnstileFetch(
   params: TempWindowTurnstileFetchParams,
 ): Promise<TempWindowTurnstileFetch> {
-  const suppressMinimize =
-    params.suppressMinimize ??
-    (typeof window !== "undefined" && isExtensionPopup())
+  const suppressMinimize = params.suppressMinimize ?? isExtensionPopup()
 
   const payload: TempWindowTurnstileFetchParams = {
     ...params,
@@ -338,9 +335,7 @@ export async function tempWindowGetRenderedTitle(params: {
   const payload = {
     action: RuntimeActionIds.TempWindowGetRenderedTitle,
     ...params,
-    suppressMinimize:
-      params.suppressMinimize ??
-      (typeof window !== "undefined" && isExtensionPopup()),
+    suppressMinimize: params.suppressMinimize ?? isExtensionPopup(),
   }
 
   // Make sure works normally in all contexts, including background
@@ -418,6 +413,19 @@ export function matchesTempWindowFallbackAllowlist(
 }
 
 /**
+ * Allows 401 fallback only for cookie-auth requests that can replay a stored account cookie.
+ */
+function isCookieAuthUnauthorizedFallback(
+  error: ApiError,
+  context: TempWindowFallbackContext,
+): boolean {
+  if (context.authType !== AuthTypeEnum.Cookie) return false
+  if (!context.cookieAuthSessionCookie?.trim()) return false
+
+  return error.statusCode === 401 || error.code === API_ERROR_CODES.HTTP_401
+}
+
+/**
  * Mutates an {@link ApiError} to preserve its original code and attach a more
  * specific failure reason.
  *
@@ -470,6 +478,10 @@ export async function executeWithTempWindowFallback<T>(
   context: TempWindowFallbackContext,
   primaryRequest: () => Promise<T | ApiResponse<T>>,
 ): Promise<T | ApiResponse<T>> {
+  if (context.forceTempWindow) {
+    return await fetchViaTempWindow<T>(context)
+  }
+
   try {
     return await primaryRequest()
   } catch (error) {
@@ -499,7 +511,10 @@ async function shouldUseTempWindowFallback(
     return false
   }
 
-  if (!matchesTempWindowFallbackAllowlist(error, context.tempWindowFallback)) {
+  if (
+    !matchesTempWindowFallbackAllowlist(error, context.tempWindowFallback) &&
+    !isCookieAuthUnauthorizedFallback(error, context)
+  ) {
     logSkipTempWindowFallback(
       "Error does not match any temp window fallback codes or statuses.",
       context,
@@ -532,11 +547,7 @@ async function shouldUseTempWindowFallback(
   }
 
   try {
-    if (
-      typeof window !== "undefined" &&
-      isProtectionBypassFirefoxEnv() &&
-      isExtensionPopup()
-    ) {
+    if (isProtectionBypassFirefoxEnv() && isExtensionPopup()) {
       logSkipTempWindowFallback(
         "Running in Firefox popup; temp window fallback is forcibly disabled to avoid closing the popup.",
         context,
@@ -662,9 +673,11 @@ async function fetchViaTempWindow<T>(
     accountId: context.accountId,
     authType: context.authType,
     cookieAuthSessionCookie: context.cookieAuthSessionCookie,
+    useIncognito: context.useIncognito,
+    cookieStoreId: context.cookieStoreId,
   }
 
-  logger.info("Using temp window fetch fallback", {
+  logger.debug("Using temp window fetch fallback", {
     endpoint: context.endpoint,
     url: context.url,
   })

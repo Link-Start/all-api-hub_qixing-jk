@@ -1,9 +1,11 @@
 import {
+  AIHUBMIX_API_ORIGIN,
   AIHUBMIX_HOSTNAMES,
   AIHUBMIX_WEB_ORIGIN,
   SITE_TYPES,
   type AccountSiteType,
 } from "~/constants/siteType"
+import { sanitizeOriginUrl } from "~/utils/core/url"
 import { normalizeUrlForOriginKey } from "~/utils/core/urlParsing"
 
 const AIHUBMIX_HOSTNAME_SET: ReadonlySet<string> = new Set(AIHUBMIX_HOSTNAMES)
@@ -54,6 +56,44 @@ export function normalizeAccountSiteUrlForStorage(params: {
 }
 
 /**
+ * Resolves the API origin to use when an account is exported into a managed-site
+ * upstream channel. AIHubMix adapters pin token-authenticated API traffic to
+ * `https://aihubmix.com`; the console origin is only the account UI entrypoint.
+ *
+ * Source: https://docs.aihubmix.com/en/api/Aihubmix-Integration documents
+ * OpenAI-compatible calls with `base_url="https://aihubmix.com/v1"`.
+ */
+export function normalizeAccountSiteUrlForManagedChannel(params: {
+  siteType?: AccountSiteType | string
+  url: string
+}): string {
+  if (
+    params.siteType === SITE_TYPES.AIHUBMIX ||
+    isAIHubMixSiteUrl(params.url)
+  ) {
+    return AIHUBMIX_API_ORIGIN
+  }
+
+  return params.url.trim()
+}
+
+/**
+ * Returns an account copy with the upstream URL normalized for managed-channel
+ * import flows.
+ */
+export function normalizeAccountForManagedChannel<
+  TAccount extends { siteType?: AccountSiteType | string; baseUrl: string },
+>(account: TAccount): TAccount {
+  return {
+    ...account,
+    baseUrl: normalizeAccountSiteUrlForManagedChannel({
+      siteType: account.siteType,
+      url: account.baseUrl,
+    }),
+  }
+}
+
+/**
  * Produces a stable origin key for duplicate-account scans and warnings.
  */
 export function normalizeAccountSiteUrlForOriginKey(params: {
@@ -68,4 +108,45 @@ export function normalizeAccountSiteUrlForOriginKey(params: {
   }
 
   return normalizeUrlForOriginKey(params.url, { lowerCase: true })
+}
+
+/**
+ * Produces the scannable origin key used by duplicate-site detection.
+ */
+export function normalizeAccountSiteUrlForDuplicateCheck(params: {
+  siteType?: AccountSiteType | string
+  url: string
+}): string | undefined {
+  if (
+    params.siteType === SITE_TYPES.AIHUBMIX &&
+    (!params.url.trim() || isAIHubMixSiteUrl(params.url))
+  ) {
+    return AIHUBMIX_WEB_ORIGIN.toLowerCase()
+  }
+
+  if (isAIHubMixSiteUrl(params.url)) {
+    return AIHUBMIX_WEB_ORIGIN.toLowerCase()
+  }
+
+  return sanitizeOriginUrl(params.url)?.toLowerCase()
+}
+
+/**
+ * Compares account site URLs using the same canonical origin key used by
+ * duplicate-account scans and add-flow warnings.
+ */
+export function isSameAccountSiteOrigin(
+  left: {
+    siteType?: AccountSiteType | string
+    url: string
+  },
+  right: {
+    siteType?: AccountSiteType | string
+    url: string
+  },
+): boolean {
+  const leftKey = normalizeAccountSiteUrlForDuplicateCheck(left)
+  const rightKey = normalizeAccountSiteUrlForDuplicateCheck(right)
+
+  return Boolean(leftKey && rightKey && leftKey === rightKey)
 }

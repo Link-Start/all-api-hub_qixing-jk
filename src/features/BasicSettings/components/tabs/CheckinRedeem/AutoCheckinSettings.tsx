@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
 
+import { ResponsiveToggleGroup } from "~/components/ResponsiveButtonGroup"
 import { SettingSection } from "~/components/SettingSection"
 import {
   Card,
@@ -14,10 +15,16 @@ import {
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { DEFAULT_PREFERENCES } from "~/services/preferences/userPreferences"
+import { trackProductAnalyticsActionStarted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import {
   AUTO_CHECKIN_SCHEDULE_MODE,
   AutoCheckinPreferences,
-  AutoCheckinScheduleMode,
 } from "~/types/autoCheckin"
 import { createLogger } from "~/utils/core/logger"
 import { pushWithinOptionsPage } from "~/utils/navigation"
@@ -27,6 +34,15 @@ import { pushWithinOptionsPage } from "~/utils/navigation"
  */
 const logger = createLogger("AutoCheckinSettings")
 
+const AUTO_CHECKIN_SETTINGS_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinActionBar,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+} as const
+
+/**
+ * Applies partial preference updates before reporting the resulting strategy.
+ */
 /**
  * Basic settings panel for configuring auto check-in (window, schedule, retries, navigation).
  */
@@ -79,6 +95,10 @@ export default function AutoCheckinSettings() {
   }
 
   const handleNavigateToExecution = () => {
+    void trackProductAnalyticsActionStarted({
+      ...AUTO_CHECKIN_SETTINGS_ANALYTICS_CONTEXT,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAutoCheckinStatus,
+    })
     pushWithinOptionsPage(`#${MENU_ITEM_IDS.AUTO_CHECKIN}`)
   }
 
@@ -262,27 +282,19 @@ export default function AutoCheckinSettings() {
             title={t("autoCheckin:settings.scheduleModeTitle")}
             description={t("autoCheckin:settings.scheduleModeDesc")}
             rightContent={
-              <div className="flex gap-2">
-                {scheduleModes.map((mode) => (
-                  <button
-                    key={mode.value}
-                    type="button"
-                    onClick={() =>
-                      savePreferences({
-                        scheduleMode: mode.value as AutoCheckinScheduleMode,
-                      })
-                    }
-                    disabled={isSaving}
-                    className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors ${
-                      preferences.scheduleMode === mode.value
-                        ? "border-blue-500 bg-blue-50 text-blue-600 dark:border-blue-400 dark:bg-blue-400/10 dark:text-blue-200"
-                        : "border-gray-300 text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:text-gray-300"
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                ))}
-              </div>
+              <ResponsiveToggleGroup
+                aria-label={t("autoCheckin:settings.scheduleModeTitle")}
+                value={preferences.scheduleMode}
+                onValueChange={(scheduleMode) => {
+                  void savePreferences({ scheduleMode })
+                }}
+                options={scheduleModes.map((mode) => ({
+                  value: mode.value,
+                  label: mode.label,
+                  ariaLabel: mode.label,
+                  disabled: isSaving,
+                }))}
+              />
             }
           />
 

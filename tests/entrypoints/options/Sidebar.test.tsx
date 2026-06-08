@@ -71,8 +71,40 @@ describe("Options Sidebar", () => {
     })
 
     expect(
-      within(nav).getByRole("button", { name: "ui:navigation.basic" }),
+      within(nav).getByRole("button", { name: "ui:navigation.overview" }),
     ).toBeInTheDocument()
+
+    expect(
+      within(nav)
+        .getAllByRole("button")
+        .slice(0, 10)
+        .map((button) => button.textContent),
+    ).toEqual([
+      "ui:navigation.overview",
+      "ui:navigation.basic",
+      "ui:navigation.account",
+      "ui:navigation.apiCredentialProfiles",
+      "ui:navigation.bookmark",
+      "ui:navigation.models",
+      "ui:navigation.keys",
+      "ui:navigation.autoCheckin",
+      "ui:navigation.siteAnnouncements",
+      "ui:navigation.balanceHistory",
+    ])
+
+    expect(
+      within(nav).getByText("ui:navigation.categories.general"),
+    ).toBeInTheDocument()
+    expect(
+      within(nav).getByText("ui:navigation.categories.api"),
+    ).toBeInTheDocument()
+    expect(
+      within(nav).getByText("ui:navigation.categories.automation"),
+    ).toBeInTheDocument()
+    expect(
+      within(nav).getByText("ui:navigation.categories.insights"),
+    ).toBeInTheDocument()
+
     expect(
       within(nav).getByRole("button", { name: "ui:navigation.autoCheckin" }),
     ).toBeInTheDocument()
@@ -130,6 +162,9 @@ describe("Options Sidebar", () => {
 
     expect(
       within(nav).queryByRole("button", { name: "ui:navigation.autoCheckin" }),
+    ).toBeNull()
+    expect(
+      within(nav).queryByText("ui:navigation.categories.general"),
     ).toBeNull()
     expect(
       within(nav).getByRole("button", {

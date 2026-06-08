@@ -11,6 +11,7 @@ import {
 import {
   buildApiToken,
   buildDisplaySiteData,
+  buildManagedSiteChannel,
 } from "~~/tests/test-utils/factories"
 
 const mockResolveDisplayAccountTokenForSecret = vi.fn()
@@ -75,7 +76,7 @@ const buildService = (
     messagesKey: "newapi",
     getConfig: vi.fn().mockResolvedValue({
       baseUrl: "https://target.example.com",
-      token: "admin-token",
+      adminToken: "admin-token",
       userId: "1",
     }),
     prepareChannelFormData: vi.fn(async (account, token) => ({
@@ -110,7 +111,6 @@ const buildService = (
     checkValidConfig: vi.fn(),
     fetchAvailableModels: vi.fn(),
     buildChannelName: vi.fn(),
-    findMatchingChannel: vi.fn(),
     autoConfigToManagedSite: vi.fn(),
     ...overrides,
   }) as ManagedSiteService
@@ -184,6 +184,18 @@ describe("managed-site token batch export", () => {
       failedCount: 0,
     })
     expect(service.createChannel).toHaveBeenCalledTimes(1)
+    expect(service.createChannel).toHaveBeenCalledWith(
+      {
+        baseUrl: "https://target.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      },
+      expect.objectContaining({
+        channel: expect.objectContaining({
+          key: "token-secret",
+        }),
+      }),
+    )
   })
 
   it("reports channel creation failures without marking the item created", async () => {
@@ -585,6 +597,68 @@ describe("managed-site token batch export", () => {
       expect(preview.items[0].warningCodes).toContain(expectedWarning)
     },
   )
+
+  it("warns instead of marking ready when exact duplicate verification is unavailable", async () => {
+    vi.resetModules()
+    vi.doUnmock("~/services/managedSites/channelMatchResolver")
+
+    try {
+      const {
+        MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS,
+        MatchResolutionUnresolvedError,
+      } = await import("~/services/managedSites/channelMatch")
+
+      const hydrateComparableChannelKeys = vi.fn(async () => {
+        throw new MatchResolutionUnresolvedError(
+          MANAGED_SITE_CHANNEL_MATCH_UNRESOLVED_REASONS.KEY_RESOLUTION_FAILED,
+        )
+      })
+      const service = buildService({
+        searchChannel: vi.fn().mockResolvedValue({
+          items: [
+            buildManagedSiteChannel({
+              id: 77,
+              key: "",
+              base_url: "https://upstream.example.com/v1",
+              models: "gpt-4o",
+            }),
+          ],
+          total: 1,
+          type_counts: {},
+        }),
+        hydrateComparableChannelKeys,
+      })
+      mockGetManagedSiteService.mockResolvedValue(service)
+
+      const { prepareManagedSiteTokenBatchExportPreview } = await import(
+        "~/services/managedSites/tokenBatchExport"
+      )
+
+      const preview = await prepareManagedSiteTokenBatchExportPreview({
+        items: [
+          {
+            account: buildDisplaySiteData({
+              baseUrl: "https://upstream.example.com/",
+            }),
+            token: buildAccountToken(),
+          },
+        ],
+      })
+
+      expect(hydrateComparableChannelKeys).toHaveBeenCalled()
+      expect(preview.items[0]).toMatchObject({
+        status: MANAGED_SITE_TOKEN_BATCH_EXPORT_PREVIEW_STATUSES.WARNING,
+        warningCodes: [
+          MANAGED_SITE_TOKEN_BATCH_EXPORT_WARNING_CODES.EXACT_VERIFICATION_UNAVAILABLE,
+        ],
+      })
+    } finally {
+      vi.doMock("~/services/managedSites/channelMatchResolver", () => ({
+        resolveManagedSiteChannelMatch: mockResolveManagedSiteChannelMatch,
+      }))
+      vi.resetModules()
+    }
+  })
 
   it("blocks the preview when secret resolution fails", async () => {
     const service = buildService()

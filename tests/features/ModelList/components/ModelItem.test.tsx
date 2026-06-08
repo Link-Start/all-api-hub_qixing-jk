@@ -7,9 +7,19 @@ import ModelItem from "~/features/ModelList/components/ModelItem"
 import { MODEL_LIST_GROUP_SELECTION_SCOPES } from "~/features/ModelList/groupSelectionScopes"
 import type { ModelPricing } from "~/services/apiService/common/type"
 import type { CalculatedPrice } from "~/services/models/utils/modelPricing"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 
 const { loggerWarnSpy } = vi.hoisted(() => ({
   loggerWarnSpy: vi.fn(),
+}))
+
+const { trackProductAnalyticsActionStartedMock } = vi.hoisted(() => ({
+  trackProductAnalyticsActionStartedMock: vi.fn(),
 }))
 
 vi.mock("react-hot-toast", () => ({
@@ -26,6 +36,11 @@ vi.mock("~/utils/core/logger", () => ({
     warn: loggerWarnSpy,
     error: vi.fn(),
   }),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionStarted: (...args: any[]) =>
+    trackProductAnalyticsActionStartedMock(...args),
 }))
 
 vi.mock("react-i18next", async (importOriginal) => {
@@ -74,7 +89,19 @@ vi.mock(
 )
 
 vi.mock("~/features/ModelList/components/ModelItem/ModelItemPricing", () => ({
-  ModelItemPricing: () => <div data-testid="model-pricing" />,
+  ModelItemPricing: ({
+    showPricing,
+    showRatioColumn,
+  }: {
+    showPricing: boolean
+    showRatioColumn: boolean
+  }) => (
+    <div
+      data-testid="model-pricing"
+      data-show-pricing={String(showPricing)}
+      data-show-ratio-column={String(showRatioColumn)}
+    />
+  ),
 }))
 
 vi.mock("~/features/ModelList/components/ModelItem/ModelItemDetails", () => ({
@@ -87,14 +114,17 @@ vi.mock(
     ModelItemExpandButton: ({
       isExpanded,
       onToggleExpand,
+      analyticsAction,
     }: {
       isExpanded: boolean
       onToggleExpand: () => void
+      analyticsAction?: unknown
     }) => (
       <button
         type="button"
         data-testid="expand-button"
         data-expanded={String(isExpanded)}
+        data-analytics-action={JSON.stringify(analyticsAction)}
         onClick={onToggleExpand}
       >
         expand
@@ -140,6 +170,7 @@ function createDefaultProps() {
       },
       capabilities: {
         supportsPricing: true,
+        supportsRatioDisplay: true,
         supportsGroupFiltering: true,
         supportsAccountSummary: false,
         supportsTokenCompatibility: false,
@@ -154,6 +185,7 @@ function createDefaultProps() {
 describe("ModelItem", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it("falls back to the default group label when an unavailable model has no selected or effective group", () => {
@@ -182,6 +214,52 @@ describe("ModelItem", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("suppresses the ratio column when either the row or display capabilities do not support ratios", () => {
+    const props = createDefaultProps()
+
+    render(
+      <ModelItem
+        {...props}
+        showRatioColumn={true}
+        source={{
+          ...props.source,
+          capabilities: {
+            ...props.source.capabilities,
+            supportsRatioDisplay: false,
+          },
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId("model-pricing")).toHaveAttribute(
+      "data-show-ratio-column",
+      "false",
+    )
+  })
+
+  it("suppresses pricing when display capabilities disable account pricing", () => {
+    render(
+      <ModelItem
+        {...createDefaultProps()}
+        displayCapabilities={{
+          supportsPricing: false,
+          supportsRatioDisplay: true,
+          supportsGroupFiltering: true,
+          supportsAccountSummary: true,
+          supportsTokenCompatibility: true,
+          supportsCredentialVerification: true,
+          supportsBatchCredentialVerification: true,
+          supportsCliVerification: true,
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId("model-pricing")).toHaveAttribute(
+      "data-show-pricing",
+      "false",
+    )
+  })
+
   it("uses internal expansion state when expansion props are omitted", async () => {
     const user = userEvent.setup()
 
@@ -199,6 +277,15 @@ describe("ModelItem", () => {
     expect(screen.getByTestId("expand-button")).toHaveAttribute(
       "data-expanded",
       "true",
+    )
+    expect(screen.getByTestId("expand-button")).toHaveAttribute(
+      "data-analytics-action",
+      JSON.stringify({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.ToggleModelDetails,
+        surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListRowActions,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      }),
     )
   })
 
@@ -290,4 +377,13 @@ describe("ModelItem", () => {
       }
     },
   )
+
+  it("suppresses expansion prop mismatch warnings in custom production build modes", () => {
+    vi.stubEnv("MODE", "staging")
+    vi.stubEnv("PROD", true)
+
+    render(<ModelItem {...createDefaultProps()} isExpanded={true} />)
+
+    expect(loggerWarnSpy).not.toHaveBeenCalled()
+  })
 })

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { DIALOG_MODES } from "~/constants/dialogModes"
 import ActionButtons from "~/features/AccountManagement/components/AccountDialog/ActionButtons"
+import { ACCOUNT_POST_SAVE_WORKFLOW_STEPS } from "~/services/accounts/accountPostSaveWorkflow"
 import { render, screen } from "~~/tests/test-utils/render"
 
 describe("AccountDialog ActionButtons", () => {
@@ -20,6 +21,7 @@ describe("AccountDialog ActionButtons", () => {
     onClose: vi.fn(),
     onAutoConfig: vi.fn().mockResolvedValue(undefined),
     isAutoConfiguring: false,
+    accountPostSaveWorkflowStep: ACCOUNT_POST_SAVE_WORKFLOW_STEPS.Idle,
     formId: "account-form",
   })
 
@@ -142,6 +144,38 @@ describe("AccountDialog ActionButtons", () => {
     await user.click(autoConfigButton)
 
     expect(props.onAutoConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps auto-detect available when add-mode detection falls back to an invalid manual form", async () => {
+    const user = userEvent.setup()
+    const props = createProps()
+    props.phase = "account-form"
+    props.formSource = "manual"
+    props.isFormValid = false
+
+    render(<ActionButtons {...props} />)
+
+    const autoDetectButton = await screen.findByRole("button", {
+      name: "accountDialog:mode.autoDetect",
+    })
+    const manualAddButton = await screen.findByRole("button", {
+      name: "accountDialog:mode.manualAdd",
+    })
+
+    expect(autoDetectButton).toBeEnabled()
+    expect(manualAddButton).toBeEnabled()
+    expect(
+      screen.queryByRole("button", { name: "common:actions.cancel" }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole("button", {
+        name: "accountDialog:actions.autoConfigAriaLabel",
+      }),
+    ).toBeNull()
+
+    await user.click(autoDetectButton)
+
+    expect(props.onAutoDetect).toHaveBeenCalledTimes(1)
   })
 
   it("disables auto-config and shows the blocking reason when the visible form becomes invalid", async () => {

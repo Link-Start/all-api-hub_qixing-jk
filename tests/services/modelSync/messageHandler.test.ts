@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import {
-  handleManagedSiteModelSyncMessage,
+  getModelSyncChannelUpstreamModelOptions,
+  getModelSyncLastExecution,
+  getModelSyncNextRun,
+  getModelSyncPreferences,
+  getModelSyncProgress,
+  listModelSyncChannels,
   modelSyncScheduler,
+  setupManagedSiteModelSyncMessagingListeners,
+  triggerAllModelSync,
+  triggerFailedOnlyModelSync,
+  triggerSelectedModelSync,
+  updateModelSyncSettings,
 } from "~/services/models/modelSync/scheduler"
 import { managedSiteModelSyncStorage } from "~/services/models/modelSync/storage"
 import {
@@ -16,6 +25,24 @@ import {
   hasAlarmsAPI,
   onAlarm,
 } from "~/utils/browser/browserApi"
+
+const modelSyncMessageHandlers = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      (message: { data: Record<string, unknown> }) => Promise<unknown> | unknown
+    >(),
+)
+const onModelSyncMessageMock = vi.hoisted(() => vi.fn())
+
+vi.mock("~/services/models/modelSync/messaging", () => ({
+  onModelSyncMessage: onModelSyncMessageMock.mockImplementation(
+    (type, handler) => {
+      modelSyncMessageHandlers.set(type, handler)
+      return vi.fn()
+    },
+  ),
+}))
 
 vi.mock("~/services/preferences/userPreferences", () => ({
   DEFAULT_PREFERENCES: {
@@ -76,10 +103,12 @@ const mockedBrowserApi = {
   onAlarm: onAlarm as unknown as ReturnType<typeof vi.fn>,
 }
 
-describe("ManagedSiteModelSync message handling", () => {
+describe("ManagedSiteModelSync operation helpers", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.clearAllMocks()
+    ;(modelSyncScheduler as any).isInitialized = false
+    ;(globalThis as any).__modelSyncMessagingCleanup = null
 
     mockedUserPreferences.getPreferences.mockResolvedValue({
       managedSiteModelSync: {
@@ -133,45 +162,22 @@ describe("ManagedSiteModelSync message handling", () => {
       channels as any,
     )
 
-    const triggerAllResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncTriggerAll },
-      triggerAllResponse,
-    )
-    expect(triggerAllResponse).toHaveBeenCalledWith({
+    await expect(triggerAllModelSync()).resolves.toEqual({
       success: true,
       data: executionResult,
     })
 
-    const triggerSelectedResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      {
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [1],
-      },
-      triggerSelectedResponse,
-    )
-    expect(triggerSelectedResponse).toHaveBeenCalledWith({
+    await expect(triggerSelectedModelSync([1])).resolves.toEqual({
       success: true,
       data: executionResult,
     })
 
-    const triggerFailedResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncTriggerFailedOnly },
-      triggerFailedResponse,
-    )
-    expect(triggerFailedResponse).toHaveBeenCalledWith({
+    await expect(triggerFailedOnlyModelSync()).resolves.toEqual({
       success: true,
       data: failedOnlyResult,
     })
 
-    const lastExecutionResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetLastExecution },
-      lastExecutionResponse,
-    )
-    expect(lastExecutionResponse).toHaveBeenCalledWith({
+    await expect(getModelSyncLastExecution()).resolves.toEqual({
       success: true,
       data: {
         items: [],
@@ -179,58 +185,43 @@ describe("ManagedSiteModelSync message handling", () => {
       },
     })
 
-    const progressResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetProgress },
-      progressResponse,
-    )
-    expect(progressResponse).toHaveBeenCalledWith({
+    expect(getModelSyncProgress()).toEqual({
       success: true,
       data: progress,
     })
 
-    const updateSettingsResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      {
-        action: RuntimeActionIds.ModelSyncUpdateSettings,
-        settings: { enableSync: false },
-      },
-      updateSettingsResponse,
-    )
-    expect(updateSettingsResponse).toHaveBeenCalledWith({ success: true })
+    await expect(
+      updateModelSyncSettings({ enableSync: false }),
+    ).resolves.toEqual({ success: true })
 
-    const preferencesResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetPreferences },
-      preferencesResponse,
-    )
-    expect(preferencesResponse).toHaveBeenCalledWith({
+    await expect(getModelSyncPreferences()).resolves.toEqual({
       success: true,
       data: { enableSync: true, intervalMs: 60_000 },
     })
 
-    const upstreamOptionsResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetChannelUpstreamModelOptions },
-      upstreamOptionsResponse,
-    )
-    expect(upstreamOptionsResponse).toHaveBeenCalledWith({
+    await expect(getModelSyncChannelUpstreamModelOptions()).resolves.toEqual({
       success: true,
       data: ["gpt-4o"],
     })
 
-    const listChannelsResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncListChannels },
-      listChannelsResponse,
-    )
-    expect(listChannelsResponse).toHaveBeenCalledWith({
+    await expect(listModelSyncChannels()).resolves.toEqual({
       success: true,
       data: channels,
     })
   })
 
-  it("returns next-run metadata when an alarm exists and reports unknown actions", async () => {
+  it("rejects selected sync requests without channel ids", async () => {
+    const executeSyncSpy = vi.spyOn(modelSyncScheduler, "executeSync")
+
+    await expect(triggerSelectedModelSync()).resolves.toEqual({
+      success: false,
+      error: "channelIds must be a non-empty array for selected sync",
+    })
+
+    expect(executeSyncSpy).not.toHaveBeenCalled()
+  })
+
+  it("returns next-run metadata when an alarm exists", async () => {
     const scheduledTime = Date.UTC(2026, 2, 28, 4, 0, 0)
     mockedBrowserApi.getAlarm.mockResolvedValue({
       name: "managedSiteModelSync",
@@ -238,46 +229,105 @@ describe("ManagedSiteModelSync message handling", () => {
       periodInMinutes: 30,
     })
 
-    const nextRunResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncGetNextRun },
-      nextRunResponse,
-    )
-
-    expect(nextRunResponse).toHaveBeenCalledWith({
+    await expect(getModelSyncNextRun()).resolves.toEqual({
       success: true,
       data: {
         nextScheduledAt: new Date(scheduledTime).toISOString(),
         periodInMinutes: 30,
       },
     })
-
-    const unknownResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: "unknown-action" },
-      unknownResponse,
-    )
-    expect(unknownResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "Unknown action",
-    })
   })
 
-  it("returns an error response when the scheduler throws", async () => {
+  it("propagates scheduler errors to callers", async () => {
     vi.spyOn(modelSyncScheduler, "executeSync").mockRejectedValue(
       new Error("scheduler exploded"),
     )
 
-    const sendResponse = vi.fn()
-    await handleManagedSiteModelSyncMessage(
-      { action: RuntimeActionIds.ModelSyncTriggerAll },
-      sendResponse,
+    await expect(triggerAllModelSync()).rejects.toThrow("scheduler exploded")
+  })
+
+  it("returns app-owned listener failure copy instead of raw scheduler errors", async () => {
+    const executeSyncSpy = vi.spyOn(modelSyncScheduler, "executeSync")
+
+    setupManagedSiteModelSyncMessagingListeners()
+    const selectedHandler = modelSyncMessageHandlers.get(
+      "modelSync:triggerSelected",
+    )
+    await expect(selectedHandler?.({ data: {} })).resolves.toEqual({
+      success: false,
+      error: "channelIds must be a non-empty array for selected sync",
+    })
+    expect(executeSyncSpy).not.toHaveBeenCalled()
+
+    executeSyncSpy.mockRejectedValue(new Error("upstream token secret leaked"))
+    const triggerAllHandler = modelSyncMessageHandlers.get(
+      "modelSync:triggerAll",
     )
 
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(triggerAllHandler?.({ data: {} })).resolves.toEqual({
       success: false,
-      error: "scheduler exploded",
+      error: "settings:messages.runtimeRequestFailed",
     })
+  })
+
+  it("wires typed model sync messages through registered listeners", async () => {
+    const executionResult = {
+      items: [{ channelId: 1, channelName: "Alpha", ok: true }],
+      statistics: { total: 1, successCount: 1, failureCount: 0 },
+    }
+    const failedOnlyResult = {
+      items: [{ channelId: 2, channelName: "Beta", ok: false }],
+      statistics: { total: 1, successCount: 0, failureCount: 1 },
+    }
+    const progress = { isRunning: false, total: 1, completed: 1, failed: 0 }
+    const channels = { items: [{ id: 1, name: "Alpha" }], total: 1 }
+    vi.spyOn(modelSyncScheduler, "executeSync").mockResolvedValue(
+      executionResult as any,
+    )
+    vi.spyOn(modelSyncScheduler, "executeFailedOnly").mockResolvedValue(
+      failedOnlyResult as any,
+    )
+    vi.spyOn(modelSyncScheduler, "getProgress").mockReturnValue(progress as any)
+    vi.spyOn(modelSyncScheduler, "updateSettings").mockResolvedValue(undefined)
+    vi.spyOn(modelSyncScheduler, "listChannels").mockResolvedValue(
+      channels as any,
+    )
+
+    setupManagedSiteModelSyncMessagingListeners()
+
+    expect([...modelSyncMessageHandlers.keys()]).toEqual([
+      "modelSync:getNextRun",
+      "modelSync:triggerAll",
+      "modelSync:triggerSelected",
+      "modelSync:triggerFailedOnly",
+      "modelSync:getLastExecution",
+      "modelSync:getProgress",
+      "modelSync:updateSettings",
+      "modelSync:getPreferences",
+      "modelSync:getChannelUpstreamModelOptions",
+      "modelSync:listChannels",
+    ])
+    await expect(
+      modelSyncMessageHandlers.get("modelSync:triggerSelected")?.({
+        data: { channelIds: [1] },
+      }),
+    ).resolves.toEqual({ success: true, data: executionResult })
+    await expect(
+      modelSyncMessageHandlers.get("modelSync:triggerFailedOnly")?.({
+        data: {},
+      }),
+    ).resolves.toEqual({ success: true, data: failedOnlyResult })
+    await expect(
+      modelSyncMessageHandlers.get("modelSync:getProgress")?.({ data: {} }),
+    ).resolves.toEqual({ success: true, data: progress })
+    await expect(
+      modelSyncMessageHandlers.get("modelSync:updateSettings")?.({
+        data: { settings: { enableSync: false } },
+      }),
+    ).resolves.toEqual({ success: true })
+    await expect(
+      modelSyncMessageHandlers.get("modelSync:listChannels")?.({ data: {} }),
+    ).resolves.toEqual({ success: true, data: channels })
   })
 })
 

@@ -6,6 +6,11 @@ import {
   UpdateLogDialogProvider,
   useUpdateLogDialogContext,
 } from "~/components/dialogs/UpdateLogDialog"
+import { UPDATE_LOG_DIALOG_TEST_IDS } from "~/components/dialogs/UpdateLogDialog/testIds"
+
+const TEST_IDS = {
+  dialogState: "dialog-state",
+} as const
 
 vi.mock(
   "~/components/dialogs/UpdateLogDialog/components/UpdateLogDialog",
@@ -34,7 +39,7 @@ function ContextHarness() {
 
   return (
     <div>
-      <div data-testid="dialog-state">{JSON.stringify(state)}</div>
+      <div data-testid={TEST_IDS.dialogState}>{JSON.stringify(state)}</div>
       <button
         type="button"
         onClick={() => {
@@ -77,25 +82,25 @@ describe("UpdateLogDialogContext", () => {
       </UpdateLogDialogProvider>,
     )
 
-    expect(screen.getByTestId("dialog-state")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.dialogState)).toHaveTextContent(
       JSON.stringify({ isOpen: false, version: null }),
     )
 
     fireEvent.click(screen.getByRole("button", { name: "open blank" }))
 
-    expect(screen.getByTestId("dialog-state")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.dialogState)).toHaveTextContent(
       JSON.stringify({ isOpen: false, version: null }),
     )
 
     fireEvent.click(screen.getByRole("button", { name: "open trimmed" }))
 
-    expect(screen.getByTestId("dialog-state")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.dialogState)).toHaveTextContent(
       JSON.stringify({ isOpen: true, version: "2.39.0" }),
     )
 
     fireEvent.click(screen.getByRole("button", { name: "close state" }))
 
-    expect(screen.getByTestId("dialog-state")).toHaveTextContent(
+    expect(screen.getByTestId(TEST_IDS.dialogState)).toHaveTextContent(
       JSON.stringify({ isOpen: false, version: "2.39.0" }),
     )
   })
@@ -108,19 +113,23 @@ describe("UpdateLogDialogContext", () => {
       </UpdateLogDialogProvider>,
     )
 
-    expect(screen.queryByTestId("update-log-dialog")).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root),
+    ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "open trimmed" }))
 
-    expect(screen.getByTestId("update-log-dialog")).toHaveAttribute(
+    expect(screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root)).toHaveAttribute(
       "data-open",
       "true",
     )
-    expect(screen.getByTestId("update-log-dialog")).toHaveTextContent("2.39.0")
+    expect(
+      screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root),
+    ).toHaveTextContent("2.39.0")
 
     fireEvent.click(screen.getByRole("button", { name: "close dialog" }))
 
-    expect(screen.getByTestId("update-log-dialog")).toHaveAttribute(
+    expect(screen.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.root)).toHaveAttribute(
       "data-open",
       "false",
     )

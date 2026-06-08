@@ -7,6 +7,7 @@ const I18N_RELEVANT_PATHS = new Set([
   "i18next.config.ts",
   "package.json",
   "pnpm-lock.yaml",
+  "scripts/run-i18n-check-if-staged.mjs",
 ])
 
 /**
@@ -91,3 +92,6 @@ if (!shouldRunI18nCheck(stagedFiles)) {
 
 console.log("🌐 Running staged i18n extract check...")
 runPnpm(["run", "i18n:extract:ci"])
+
+console.log("🌐 Running staged i18n status check...")
+runPnpm(["run", "i18n:status"])

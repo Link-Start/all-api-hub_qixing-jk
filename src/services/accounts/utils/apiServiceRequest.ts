@@ -1,4 +1,5 @@
 import { getApiService } from "~/services/apiService"
+import { formatOptionalSkPrefixSiteToken } from "~/services/apiService/common/apiKey"
 import type { ApiServiceRequest } from "~/services/apiService/common/type"
 import { AuthTypeEnum, type ApiToken, type DisplaySiteData } from "~/types"
 import { createLogger } from "~/utils/core/logger"
@@ -131,15 +132,10 @@ export async function resolveDisplayAccountTokenForSecret<
 ): Promise<TToken> {
   const { service, request } = createDisplayAccountApiContext(account)
   const resolvedKey = await service.resolveApiTokenKey(request, token)
-
-  if (resolvedKey === token.key) {
-    return token
-  }
-
-  return {
-    ...token,
-    key: resolvedKey,
-  }
+  return formatOptionalSkPrefixSiteToken(
+    resolvedKey === token.key ? token : { ...token, key: resolvedKey },
+    account.siteType,
+  )
 }
 
 /**
@@ -163,7 +159,7 @@ export const canManageDisplayAccountTokens = (
     !hasNonEmptyString(account.id) ||
     !hasNonEmptyString(account.baseUrl) ||
     !hasNonEmptyString(account.siteType) ||
-    !Number.isFinite(account.userId)
+    !hasNonEmptyString(account.userId)
   ) {
     return false
   }

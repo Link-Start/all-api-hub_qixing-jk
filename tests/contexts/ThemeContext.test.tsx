@@ -19,6 +19,11 @@ vi.mock("~/contexts/UserPreferencesContext", () => ({
   useUserPreferencesContext: () => mockPreferencesContext.current,
 }))
 
+const TEST_IDS = {
+  themeMode: "theme-mode",
+  resolvedTheme: "resolved-theme",
+} as const
+
 type MatchMediaListener = (event: MediaQueryListEvent) => void
 
 function createMatchMediaController(initialMatches = false) {
@@ -59,8 +64,8 @@ const Probe = ({ children }: { children?: ReactNode }) => {
 
   return (
     <div>
-      <div data-testid="theme-mode">{context.themeMode}</div>
-      <div data-testid="resolved-theme">{context.resolvedTheme}</div>
+      <div data-testid={TEST_IDS.themeMode}>{context.themeMode}</div>
+      <div data-testid={TEST_IDS.resolvedTheme}>{context.resolvedTheme}</div>
       <button onClick={() => context.setThemeMode("dark")}>set-dark</button>
       {children}
     </div>
@@ -101,15 +106,17 @@ describe("ThemeContext", () => {
       </ThemeProvider>,
     )
 
-    expect(screen.getByTestId("theme-mode")).toHaveTextContent("system")
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark")
+    expect(screen.getByTestId(TEST_IDS.themeMode)).toHaveTextContent("system")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
 
     act(() => {
       media.emit(false)
     })
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("light")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent(
+      "light",
+    )
     expect(document.documentElement.classList.contains("dark")).toBe(false)
 
     unmount()
@@ -133,14 +140,16 @@ describe("ThemeContext", () => {
       </ThemeProvider>,
     )
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("light")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent(
+      "light",
+    )
     expect(document.documentElement.classList.contains("dark")).toBe(false)
 
     act(() => {
       media.emit(true)
     })
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
   })
 
@@ -159,7 +168,9 @@ describe("ThemeContext", () => {
       </ThemeProvider>,
     )
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("light")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent(
+      "light",
+    )
     expect(document.documentElement.classList.contains("dark")).toBe(false)
 
     await act(async () => {
@@ -175,7 +186,7 @@ describe("ThemeContext", () => {
       </ThemeProvider>,
     )
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
   })
 
@@ -193,13 +204,13 @@ describe("ThemeContext", () => {
       </ThemeProvider>,
     )
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent("dark")
 
     act(() => {
       media.emit(false)
     })
 
-    expect(screen.getByTestId("resolved-theme")).toHaveTextContent("dark")
+    expect(screen.getByTestId(TEST_IDS.resolvedTheme)).toHaveTextContent("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
   })
 })

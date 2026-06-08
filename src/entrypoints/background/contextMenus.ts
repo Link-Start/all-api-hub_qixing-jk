@@ -3,6 +3,23 @@ import {
   userPreferences,
   type UserPreferences,
 } from "~/services/preferences/userPreferences"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import {
+  createContextMenu,
+  getBrowserI18nMessage,
+  hasContextMenusAPI,
+  onContextMenuClicked,
+  removeContextMenu,
+  sendTabMessage,
+} from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
 
 /**
@@ -13,37 +30,65 @@ const logger = createLogger("ContextMenus")
 const REDEMPTION_MENU_ID = "redemption-assist-context-menu"
 const API_CHECK_MENU_ID = "ai-api-check-context-menu"
 
-let clickListenerInstalled = false
+let cleanupContextMenuClickListener: (() => void) | null = null
 
-const handleContextMenuClick = async (info: any, tab: any) => {
+const handleContextMenuClick = async (
+  info: browser.contextMenus.OnClickData,
+  tab?: browser.tabs.Tab,
+) => {
   if (!tab?.id) return
 
   const selectionText = (info.selectionText || "").trim()
   const pageUrl = info.pageUrl || tab.url || ""
+  const isRedemptionMenu = info.menuItemId === REDEMPTION_MENU_ID
+  const isApiCheckMenu = info.menuItemId === API_CHECK_MENU_ID
+  const tracker = isRedemptionMenu
+    ? startProductAnalyticsAction({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.TriggerRedemptionAssistFromContextMenu,
+        surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundContextMenu,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      })
+    : isApiCheckMenu
+      ? startProductAnalyticsAction({
+          featureId: PRODUCT_ANALYTICS_FEATURE_IDS.WebAiApiCheck,
+          actionId:
+            PRODUCT_ANALYTICS_ACTION_IDS.TriggerApiCredentialCheckFromContextMenu,
+          surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundContextMenu,
+          entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+        })
+      : undefined
 
   try {
-    if (info.menuItemId === REDEMPTION_MENU_ID) {
+    if (isRedemptionMenu) {
       if (!selectionText) {
         logger.warn("No selection text for redemption assist trigger")
+        tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Skipped)
         return
       }
 
-      await browser.tabs.sendMessage(tab.id, {
+      await sendTabMessage(tab.id, {
         action: RuntimeActionIds.RedemptionAssistContextMenuTrigger,
         selectionText,
         pageUrl,
       })
+      tracker?.complete()
     }
 
-    if (info.menuItemId === API_CHECK_MENU_ID) {
-      await browser.tabs.sendMessage(tab.id, {
+    if (isApiCheckMenu) {
+      await sendTabMessage(tab.id, {
         action: RuntimeActionIds.ApiCheckContextMenuTrigger,
         selectionText,
         pageUrl,
       })
+      tracker?.complete()
     }
   } catch (error) {
     logger.error("Failed to forward context menu trigger", error)
+    tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+    })
   }
 }
 
@@ -51,17 +96,18 @@ const handleContextMenuClick = async (info: any, tab: any) => {
  * Ensures the context menu click listener is installed, with best-effort error handling.
  */
 function ensureContextMenuClickListener() {
-  if (!browser?.contextMenus) {
+  if (!hasContextMenusAPI()) {
     return
   }
 
-  if (clickListenerInstalled) {
+  if (cleanupContextMenuClickListener) {
     return
   }
 
   try {
-    browser.contextMenus.onClicked.addListener(handleContextMenuClick)
-    clickListenerInstalled = true
+    cleanupContextMenuClickListener = onContextMenuClicked(
+      handleContextMenuClick,
+    )
   } catch (error) {
     logger.error("Failed to install context menu click listener", error)
   }
@@ -71,7 +117,7 @@ function ensureContextMenuClickListener() {
  * Refreshes the right-click context menu entries based on the latest user preferences.
  */
 export async function refreshContextMenus(preferences: UserPreferences) {
-  if (!browser?.contextMenus) {
+  if (!hasContextMenusAPI()) {
     logger.warn("contextMenus API unavailable")
     return
   }
@@ -80,11 +126,11 @@ export async function refreshContextMenus(preferences: UserPreferences) {
 
   try {
     const redemptionTitle =
-      browser.i18n?.getMessage("context_menu_redeem_selection") ||
+      getBrowserI18nMessage("context_menu_redeem_selection") ||
       "使用兑换助手兑换选中文本"
 
     const apiCheckTitle =
-      browser.i18n?.getMessage("context_menu_ai_api_check") ||
+      getBrowserI18nMessage("context_menu_ai_api_check") ||
       "快速测试 AI API 的功能可用性"
 
     const shouldShowRedemptionAssistMenu =
@@ -96,11 +142,11 @@ export async function refreshContextMenus(preferences: UserPreferences) {
       (preferences.webAiApiCheck?.contextMenu?.enabled ?? true)
 
     // Best-effort cleanup: remove only the menus we own to avoid breaking other features.
-    await browser.contextMenus.remove(REDEMPTION_MENU_ID).catch(() => {})
-    await browser.contextMenus.remove(API_CHECK_MENU_ID).catch(() => {})
+    await removeContextMenu(REDEMPTION_MENU_ID).catch(() => {})
+    await removeContextMenu(API_CHECK_MENU_ID).catch(() => {})
 
     if (shouldShowRedemptionAssistMenu) {
-      browser.contextMenus.create({
+      createContextMenu({
         id: REDEMPTION_MENU_ID,
         title: redemptionTitle,
         contexts: ["selection"],
@@ -108,7 +154,7 @@ export async function refreshContextMenus(preferences: UserPreferences) {
     }
 
     if (shouldShowApiCheckMenu) {
-      browser.contextMenus.create({
+      createContextMenu({
         id: API_CHECK_MENU_ID,
         title: apiCheckTitle,
         contexts: ["page", "selection"],

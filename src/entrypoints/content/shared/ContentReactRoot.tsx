@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react"
 
-import "~/utils/i18n"
 import "~/styles/style.css"
 
 import { ApiCheckModalHost } from "~/entrypoints/content/webAiApiCheck/components/ApiCheckModalHost"
@@ -14,6 +13,12 @@ import { RedemptionToaster } from "../redemptionAssist/components/RedemptionToas
  * Unified logger scoped to redemption assist content UI root rendering.
  */
 const logger = createLogger("ContentReactRoot")
+
+const stopHostPageKeyboardShortcuts = (
+  event: React.KeyboardEvent<HTMLDivElement>,
+) => {
+  event.stopPropagation()
+}
 
 export const ContentReactRoot: React.FC = () => {
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>("light")
@@ -65,7 +70,11 @@ export const ContentReactRoot: React.FC = () => {
     resolvedTheme === "dark" ? "dark text-foreground bg-background" : ""
 
   return (
-    <div className={wrapperClassName}>
+    <div
+      className={wrapperClassName}
+      onKeyDown={stopHostPageKeyboardShortcuts}
+      onKeyUp={stopHostPageKeyboardShortcuts}
+    >
       <ApiCheckModalHost />
       <RedemptionToaster />
     </div>

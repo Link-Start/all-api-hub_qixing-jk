@@ -45,6 +45,28 @@ describe("AutoCheckin ResultsTable troubleshooting hints", () => {
     ).toBeInTheDocument()
   })
 
+  it("shows manual verification hint when protected check-in requires opening the site first", async () => {
+    render(
+      <ResultsTable
+        results={[
+          {
+            accountId: "account-5",
+            accountName: "Account 5",
+            status: CHECKIN_RESULT_STATUS.FAILED,
+            rawMessage: "Turnstile token not available",
+            timestamp: 0,
+          },
+        ]}
+      />,
+    )
+
+    expect(
+      await screen.findByText(
+        "autoCheckin:execution.hints.manualVerificationRequired",
+      ),
+    ).toBeInTheDocument()
+  })
+
   it("shows site-type troubleshooting for skipped no-provider results", async () => {
     render(
       <ResultsTable

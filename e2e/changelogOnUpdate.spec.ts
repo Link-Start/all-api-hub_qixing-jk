@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from "@playwright/test"
 
+import { UPDATE_LOG_DIALOG_TEST_IDS } from "~/components/dialogs/UpdateLogDialog/testIds"
 import { OPTIONS_PAGE_PATH, POPUP_PAGE_PATH } from "~/constants/extensionPages"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import { CURRENT_PREFERENCES_VERSION } from "~/services/preferences/migrations/preferencesMigration"
@@ -12,7 +13,7 @@ import {
   setPlasmoStorageValue,
 } from "~~/e2e/utils/extensionState"
 
-const UPDATE_LOG_DIALOG_SELECTOR = '[data-testid="update-log-dialog"]'
+const UPDATE_LOG_DIALOG_SELECTOR = `[data-testid="${UPDATE_LOG_DIALOG_TEST_IDS.root}"]`
 
 /**
  * search through open pages in the context to find one that has the update log dialog, which may be opened in either popup or options contexts, and return it for interaction in testing
@@ -148,7 +149,9 @@ test("shows update log inline once on first UI open after update", async ({
     )
     .toBe(0)
 
-  await dialogPage.getByTestId("update-log-dialog-auto-open-toggle").click()
+  await dialogPage
+    .getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle)
+    .click()
   await expect
     .poll(async () => {
       const raw = await getPlasmoStorageRawValue<unknown>(
@@ -167,7 +170,9 @@ test("shows update log inline once on first UI open after update", async ({
     })
     .toBe(false)
 
-  await dialogPage.getByTestId("update-log-dialog-auto-open-toggle").click()
+  await dialogPage
+    .getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.autoOpenToggle)
+    .click()
   await expect
     .poll(async () => {
       const raw = await getPlasmoStorageRawValue<unknown>(
@@ -186,7 +191,7 @@ test("shows update log inline once on first UI open after update", async ({
     })
     .toBe(true)
 
-  await dialogPage.getByTestId("update-log-dialog-close").click()
+  await dialogPage.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.closeButton).click()
   await expect(dialogPage.locator(UPDATE_LOG_DIALOG_SELECTOR)).toHaveCount(0)
 
   await dialogPage.reload()
@@ -248,7 +253,7 @@ test("shows update log inline in popup once on first UI open after update", asyn
     )
     .toBe(0)
 
-  await dialogPage.getByTestId("update-log-dialog-close").click()
+  await dialogPage.getByTestId(UPDATE_LOG_DIALOG_TEST_IDS.closeButton).click()
   await expect(dialogPage.locator(UPDATE_LOG_DIALOG_SELECTOR)).toHaveCount(0)
 
   await dialogPage.reload()

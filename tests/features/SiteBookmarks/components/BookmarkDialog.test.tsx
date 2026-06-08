@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import BookmarkDialog from "~/features/SiteBookmarks/components/BookmarkDialog"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { SiteBookmark } from "~/types"
 import { fireEvent, render, screen, waitFor } from "~~/tests/test-utils/render"
 
@@ -13,6 +21,9 @@ const {
   updateBookmarkMock,
   toastSuccessMock,
   toastErrorMock,
+  startProductAnalyticsActionMock,
+  completeProductAnalyticsActionMock,
+  trackProductAnalyticsActionStartedMock,
 } = vi.hoisted(() => ({
   addBookmarkMock: vi.fn().mockResolvedValue("bookmark-1"),
   getActiveTabMock: vi.fn(),
@@ -20,6 +31,9 @@ const {
   updateBookmarkMock: vi.fn().mockResolvedValue(true),
   toastSuccessMock: vi.fn(),
   toastErrorMock: vi.fn(),
+  startProductAnalyticsActionMock: vi.fn(),
+  completeProductAnalyticsActionMock: vi.fn(),
+  trackProductAnalyticsActionStartedMock: vi.fn(),
 }))
 
 vi.mock("~/services/accounts/accountStorage", () => ({
@@ -63,6 +77,44 @@ vi.mock("~/features/AccountManagement/components/TagPicker", () => ({
   TagPicker: () => <div data-testid="tag-picker" />,
 }))
 
+vi.mock("~/services/productAnalytics/actions", () => ({
+  startProductAnalyticsAction: (...args: any[]) =>
+    startProductAnalyticsActionMock(...args),
+  trackProductAnalyticsActionStarted: (...args: any[]) =>
+    trackProductAnalyticsActionStartedMock(...args),
+}))
+
+const expectBookmarkActionTracked = (
+  actionId: (typeof PRODUCT_ANALYTICS_ACTION_IDS)[keyof typeof PRODUCT_ANALYTICS_ACTION_IDS],
+  surfaceId: (typeof PRODUCT_ANALYTICS_SURFACE_IDS)[keyof typeof PRODUCT_ANALYTICS_SURFACE_IDS],
+) => {
+  expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+    featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BookmarkManagement,
+    actionId,
+    surfaceId,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  })
+}
+
+const expectBookmarkActionCompleted = (
+  actionId: (typeof PRODUCT_ANALYTICS_ACTION_IDS)[keyof typeof PRODUCT_ANALYTICS_ACTION_IDS],
+  result: (typeof PRODUCT_ANALYTICS_RESULTS)[keyof typeof PRODUCT_ANALYTICS_RESULTS],
+  options: {
+    errorCategory?: (typeof PRODUCT_ANALYTICS_ERROR_CATEGORIES)[keyof typeof PRODUCT_ANALYTICS_ERROR_CATEGORIES]
+  } = {},
+) => {
+  expectBookmarkActionTracked(
+    actionId,
+    PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementDialog,
+  )
+  expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+    result,
+    ...(options.errorCategory
+      ? [{ errorCategory: options.errorCategory }]
+      : []),
+  )
+}
+
 beforeEach(() => {
   vi.useRealTimers()
   addBookmarkMock.mockClear()
@@ -76,6 +128,12 @@ beforeEach(() => {
   updateBookmarkMock.mockClear()
   toastSuccessMock.mockClear()
   toastErrorMock.mockClear()
+  startProductAnalyticsActionMock.mockReset()
+  completeProductAnalyticsActionMock.mockReset()
+  trackProductAnalyticsActionStartedMock.mockReset()
+  startProductAnalyticsActionMock.mockReturnValue({
+    complete: completeProductAnalyticsActionMock,
+  })
   loadAccountDataMock.mockReset()
 })
 
@@ -114,6 +172,7 @@ describe("BookmarkDialog", () => {
     ).toBeInTheDocument()
 
     expect(addBookmarkMock).not.toHaveBeenCalled()
+    expect(completeProductAnalyticsActionMock).not.toHaveBeenCalled()
   })
 
   it("creates a bookmark in add mode", async () => {
@@ -142,6 +201,10 @@ describe("BookmarkDialog", () => {
       await screen.findByRole("button", { name: "bookmark:actions.add" }),
     )
 
+    expectBookmarkActionTracked(
+      PRODUCT_ANALYTICS_ACTION_IDS.CreateBookmark,
+      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementDialog,
+    )
     await waitFor(() => {
       expect(addBookmarkMock).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -154,6 +217,10 @@ describe("BookmarkDialog", () => {
     })
 
     expect(loadAccountDataMock).toHaveBeenCalledTimes(1)
+    expectBookmarkActionCompleted(
+      PRODUCT_ANALYTICS_ACTION_IDS.CreateBookmark,
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "messages:toast.success.bookmarkAdded",
     )
@@ -169,6 +236,10 @@ describe("BookmarkDialog", () => {
       }),
     )
 
+    expectBookmarkActionTracked(
+      PRODUCT_ANALYTICS_ACTION_IDS.UseCurrentPageForBookmark,
+      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementDialog,
+    )
     await waitFor(() => {
       expect(
         screen.getByDisplayValue("https://example.com/console"),
@@ -372,6 +443,10 @@ describe("BookmarkDialog", () => {
       await screen.findByRole("button", { name: "common:actions.save" }),
     )
 
+    expectBookmarkActionTracked(
+      PRODUCT_ANALYTICS_ACTION_IDS.UpdateBookmark,
+      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsBookmarkManagementDialog,
+    )
     await waitFor(() => {
       expect(updateBookmarkMock).toHaveBeenCalledWith(
         "b1",
@@ -382,9 +457,169 @@ describe("BookmarkDialog", () => {
     })
 
     expect(loadAccountDataMock).toHaveBeenCalledTimes(1)
+    expectBookmarkActionCompleted(
+      PRODUCT_ANALYTICS_ACTION_IDS.UpdateBookmark,
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(toastSuccessMock).toHaveBeenCalledWith(
       "messages:toast.success.bookmarkUpdated",
     )
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it("tracks create completion failure when bookmark persistence rejects", async () => {
+    addBookmarkMock.mockRejectedValue(new Error("storage unavailable"))
+    const onClose = vi.fn()
+
+    render(
+      <BookmarkDialog
+        isOpen={true}
+        mode="add"
+        bookmark={null}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.change(
+      await screen.findByPlaceholderText("bookmark:form.namePlaceholder"),
+      { target: { value: "Docs" } },
+    )
+
+    fireEvent.change(
+      await screen.findByPlaceholderText("bookmark:form.urlPlaceholder"),
+      { target: { value: "https://example.com/docs" } },
+    )
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "bookmark:actions.add" }),
+    )
+
+    await waitFor(() => {
+      expect(addBookmarkMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Docs",
+          url: "https://example.com/docs",
+          notes: "",
+          tagIds: [],
+        }),
+      )
+    })
+
+    expectBookmarkActionCompleted(
+      PRODUCT_ANALYTICS_ACTION_IDS.CreateBookmark,
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
+    expect(loadAccountDataMock).not.toHaveBeenCalled()
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "messages:toast.error.operationFailed",
+    )
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("tracks update completion failure when bookmark persistence returns false", async () => {
+    updateBookmarkMock.mockResolvedValue(false)
+    const onClose = vi.fn()
+    const bookmark: SiteBookmark = {
+      id: "b1",
+      name: "Old",
+      url: "https://example.com/old",
+      tagIds: [],
+      notes: "",
+      created_at: 0,
+      updated_at: 0,
+    }
+
+    render(
+      <BookmarkDialog
+        isOpen={true}
+        mode="edit"
+        bookmark={bookmark}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "common:actions.save" }),
+    )
+
+    await waitFor(() => {
+      expect(updateBookmarkMock).toHaveBeenCalledWith(
+        "b1",
+        expect.objectContaining({
+          name: "Old",
+          url: "https://example.com/old",
+          notes: "",
+          tagIds: [],
+        }),
+      )
+    })
+
+    expectBookmarkActionCompleted(
+      PRODUCT_ANALYTICS_ACTION_IDS.UpdateBookmark,
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
+    expect(loadAccountDataMock).not.toHaveBeenCalled()
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "messages:toast.error.operationFailed",
+    )
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("tracks update completion failure when bookmark persistence rejects", async () => {
+    updateBookmarkMock.mockRejectedValue(new Error("storage unavailable"))
+    const onClose = vi.fn()
+    const bookmark: SiteBookmark = {
+      id: "b1",
+      name: "Old",
+      url: "https://example.com/old",
+      tagIds: [],
+      notes: "",
+      created_at: 0,
+      updated_at: 0,
+    }
+
+    render(
+      <BookmarkDialog
+        isOpen={true}
+        mode="edit"
+        bookmark={bookmark}
+        onClose={onClose}
+      />,
+    )
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "common:actions.save" }),
+    )
+
+    await waitFor(() => {
+      expect(updateBookmarkMock).toHaveBeenCalledWith(
+        "b1",
+        expect.objectContaining({
+          name: "Old",
+          url: "https://example.com/old",
+          notes: "",
+          tagIds: [],
+        }),
+      )
+    })
+
+    expectBookmarkActionCompleted(
+      PRODUCT_ANALYTICS_ACTION_IDS.UpdateBookmark,
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
+    expect(loadAccountDataMock).not.toHaveBeenCalled()
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "messages:toast.error.operationFailed",
+    )
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

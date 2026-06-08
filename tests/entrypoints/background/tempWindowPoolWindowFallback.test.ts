@@ -2,11 +2,41 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { API_ERROR_CODES } from "~/services/apiService/common/errors"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_STATUS_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { AuthTypeEnum } from "~/types"
 import {
   AUTH_MODE,
   COOKIE_SESSION_OVERRIDE_HEADER_NAME,
 } from "~/utils/browser/cookieHelper"
+
+const {
+  trackProductAnalyticsActionCompletedMock,
+  recordTempWindowFetchResultMock,
+  recordTempWindowTurnstileFetchResultMock,
+} = vi.hoisted(() => ({
+  trackProductAnalyticsActionCompletedMock: vi.fn(),
+  recordTempWindowFetchResultMock: vi.fn(),
+  recordTempWindowTurnstileFetchResultMock: vi.fn(),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionCompleted:
+    trackProductAnalyticsActionCompletedMock,
+}))
+
+vi.mock("~/services/productAnalytics/shieldBypassSummary", () => ({
+  recordShieldBypassTempWindowFetchResult: recordTempWindowFetchResultMock,
+  recordShieldBypassTempWindowTurnstileFetchResult:
+    recordTempWindowTurnstileFetchResultMock,
+}))
 
 const originalBrowser = (globalThis as any).browser
 
@@ -108,6 +138,9 @@ describe("tempWindowPool window fallback", () => {
     tabsQueryMock = vi.fn().mockResolvedValue([])
     tempContextMode = "window"
     defaultTempContextMode = "window"
+    trackProductAnalyticsActionCompletedMock.mockReset()
+    recordTempWindowFetchResultMock.mockReset()
+    recordTempWindowTurnstileFetchResultMock.mockReset()
 
     vi.useFakeTimers()
     vi.resetModules()
@@ -231,6 +264,20 @@ describe("tempWindowPool window fallback", () => {
         data: "ok",
       },
     })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Healthy,
+      },
+    })
+    expect(recordTempWindowFetchResultMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
     expect(createWindowMock).toHaveBeenCalledTimes(1)
     expect(createTabMock).toHaveBeenCalledWith("https://example.com", false)
 
@@ -504,6 +551,48 @@ describe("tempWindowPool window fallback", () => {
         hasTurnstile: false,
       },
     })
+  })
+
+  it("requires incognito access before opening a temp fetch context", async () => {
+    isAllowedIncognitoAccessMock.mockResolvedValueOnce(false)
+
+    const { handleTempWindowFetch } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    await handleTempWindowFetch(
+      {
+        originUrl: "https://example.com",
+        fetchUrl: "https://example.com/api/models",
+        fetchOptions: { method: "GET" },
+        useIncognito: true,
+        requestId: "req-fetch-incognito-access-denied",
+      },
+      sendResponse,
+    )
+
+    expect(createWindowMock).not.toHaveBeenCalled()
+    expect(createTabMock).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: "messages:background.incognitoAccessRequired",
+    })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Permission,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+      },
+    })
+    expect(recordTempWindowFetchResultMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+    )
   })
 
   it("falls back to the default saved temp-context mode when user preferences are missing that field", async () => {
@@ -788,6 +877,14 @@ describe("tempWindowPool window fallback", () => {
     await request
 
     expect(getSiteTypeMock).toHaveBeenCalledWith("https://example.com/account")
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      508,
+      expect.objectContaining({
+        action: RuntimeActionIds.ContentGetUserFromLocalStorage,
+        url: "https://example.com/account",
+        siteType: "new-api",
+      }),
+    )
     expect(sendResponse).toHaveBeenCalledWith({
       success: true,
       data: {
@@ -801,6 +898,166 @@ describe("tempWindowPool window fallback", () => {
 
     await vi.advanceTimersByTimeAsync(2500)
     expect(removeTabOrWindowMock).toHaveBeenCalledWith(508)
+  })
+
+  it("uses an incognito temp context for incognito auto-detect requests", async () => {
+    tempContextMode = "window"
+    createWindowMock.mockResolvedValueOnce({ id: 608, tabs: [{ id: 609 }] })
+    tabsQueryMock.mockResolvedValueOnce([{ id: 609 }])
+
+    const { handleAutoDetectSite } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleAutoDetectSite(
+      {
+        url: "https://example.com/account",
+        requestId: "req-auto-detect-incognito",
+        useIncognito: true,
+      },
+      sendResponse,
+    )
+
+    await vi.advanceTimersByTimeAsync(500)
+    await request
+
+    expect(isAllowedIncognitoAccessMock).toHaveBeenCalled()
+    expect(createWindowMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://example.com/account",
+        incognito: true,
+      }),
+    )
+    expect(createTabMock).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        siteType: "new-api",
+        userId: "user-1",
+        user: "alice",
+        accessToken: "access-token",
+        siteTypeHint: "new-api",
+      },
+    })
+  })
+
+  it("does not minimize auto-detect temp windows when minimization is suppressed", async () => {
+    tempContextMode = "window"
+    createWindowMock.mockResolvedValueOnce({ id: 610, tabs: [{ id: 611 }] })
+    tabsQueryMock.mockResolvedValueOnce([{ id: 611 }])
+
+    const { handleAutoDetectSite } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleAutoDetectSite(
+      {
+        url: "https://aihubmix.com",
+        requestId: "req-auto-detect-suppress-minimize",
+        suppressMinimize: true,
+      },
+      sendResponse,
+    )
+
+    await vi.advanceTimersByTimeAsync(500)
+    await request
+
+    expect(createWindowMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://aihubmix.com",
+        focused: false,
+      }),
+    )
+    expect((globalThis as any).browser.windows.update).not.toHaveBeenCalledWith(
+      610,
+      {
+        state: "minimized",
+      },
+    )
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        siteType: "new-api",
+        userId: "user-1",
+        user: "alice",
+        accessToken: "access-token",
+        siteTypeHint: "new-api",
+      },
+    })
+  })
+
+  it("does not minimize composite auto-detect temp windows when minimization is suppressed", async () => {
+    tempContextMode = "composite"
+    createWindowMock.mockResolvedValueOnce({ id: 612, tabs: [{ id: 613 }] })
+    tabsQueryMock.mockResolvedValueOnce([{ id: 613 }])
+
+    const { handleAutoDetectSite } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleAutoDetectSite(
+      {
+        url: "https://aihubmix.com",
+        requestId: "req-auto-detect-composite-suppress-minimize",
+        suppressMinimize: true,
+      },
+      sendResponse,
+    )
+
+    await vi.advanceTimersByTimeAsync(500)
+    await request
+
+    expect(createWindowMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://aihubmix.com",
+        focused: false,
+        type: "normal",
+      }),
+    )
+    expect((globalThis as any).browser.windows.update).not.toHaveBeenCalledWith(
+      612,
+      {
+        state: "minimized",
+      },
+    )
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        siteType: "new-api",
+        userId: "user-1",
+        user: "alice",
+        accessToken: "access-token",
+        siteTypeHint: "new-api",
+      },
+    })
+  })
+
+  it("rejects incognito auto-detect requests when incognito access is unavailable", async () => {
+    isAllowedIncognitoAccessMock.mockResolvedValueOnce(false)
+
+    const { handleAutoDetectSite } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    await handleAutoDetectSite(
+      {
+        url: "https://example.com/account",
+        requestId: "req-auto-detect-incognito-denied",
+        useIncognito: true,
+      },
+      sendResponse,
+    )
+
+    expect(createWindowMock).not.toHaveBeenCalled()
+    expect(createTabMock).not.toHaveBeenCalled()
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: "messages:background.incognitoAccessRequired",
+    })
   })
 
   it("returns a safe null result when site detection succeeds but no user data can be read", async () => {
@@ -852,7 +1109,6 @@ describe("tempWindowPool window fallback", () => {
 
   it("surfaces auto-detect failures when site-type detection throws", async () => {
     tempContextMode = "tab"
-    createTabMock.mockResolvedValueOnce({ id: 510 })
     getSiteTypeMock.mockRejectedValueOnce(new Error("site-type lookup failed"))
 
     const { handleAutoDetectSite } = await import(
@@ -877,7 +1133,8 @@ describe("tempWindowPool window fallback", () => {
     })
 
     await vi.advanceTimersByTimeAsync(2500)
-    expect(removeTabOrWindowMock).toHaveBeenCalledWith(510)
+    expect(createTabMock).not.toHaveBeenCalled()
+    expect(removeTabOrWindowMock).not.toHaveBeenCalled()
   })
 
   it("returns a safe null auto-detect result when temp-context user data lookup throws", async () => {
@@ -1424,6 +1681,70 @@ describe("tempWindowPool window fallback", () => {
       error: "No response from temp window fetch",
     })
     expect(removeTabOrWindowMock).toHaveBeenCalledWith(505)
+  })
+
+  it("classifies downstream unsuccessful temp fetch responses by status and code", async () => {
+    tempContextMode = "tab"
+    createTabMock.mockResolvedValueOnce({ id: 510 })
+    sendMessageMock.mockImplementation(
+      async (_tabId: number, message: { action: string }) => {
+        switch (message.action) {
+          case RuntimeActionIds.ContentShowShieldBypassUi:
+            return undefined
+          case RuntimeActionIds.ContentCheckCapGuard:
+          case RuntimeActionIds.ContentCheckCloudflareGuard:
+            return { success: true, passed: true }
+          case RuntimeActionIds.ContentPerformTempWindowFetch:
+            return {
+              success: false,
+              status: 429,
+              code: API_ERROR_CODES.HTTP_429,
+              error: "rate limited",
+            }
+          default:
+            throw new Error(`Unexpected action: ${message.action}`)
+        }
+      },
+    )
+
+    const { handleTempWindowFetch } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleTempWindowFetch(
+      {
+        originUrl: "https://example.com",
+        fetchUrl: "https://example.com/api/rate-limited",
+        fetchOptions: { method: "GET" },
+        requestId: "req-rate-limited",
+      },
+      sendResponse,
+    )
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await request
+    await vi.advanceTimersByTimeAsync(2500)
+
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      status: 429,
+      code: API_ERROR_CODES.HTTP_429,
+      error: "rate limited",
+    })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.RateLimit,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+      },
+    })
+    expect(removeTabOrWindowMock).toHaveBeenCalledWith(510)
   })
 
   it("waits for protection guards to pass before issuing the temp fetch", async () => {
@@ -2010,6 +2331,56 @@ describe("tempWindowPool window fallback", () => {
     })
   })
 
+  it("reads WAF cookies from the requested cookie store for temp fetches", async () => {
+    tempContextMode = "tab"
+    createTabMock.mockResolvedValueOnce({ id: 616 })
+    getCookieHeaderForUrlMock.mockResolvedValueOnce("cf_clearance=incognito")
+    applyTempWindowCookieRuleMock.mockResolvedValueOnce(1_000_616)
+
+    const { handleTempWindowFetch } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleTempWindowFetch(
+      {
+        originUrl: "https://example.com",
+        fetchUrl: "https://example.com/api/token-auth-cookie-store",
+        fetchOptions: {
+          method: "GET",
+          credentials: "omit",
+        },
+        authType: AuthTypeEnum.AccessToken,
+        requestId: "req-token-auth-cookie-store",
+        cookieStoreId: "1-incognito",
+      },
+      sendResponse,
+    )
+    await vi.advanceTimersByTimeAsync(1000)
+    await request
+
+    expect(getCookieHeaderForUrlMock).toHaveBeenCalledWith(
+      "https://example.com/api/token-auth-cookie-store",
+      {
+        includeSession: false,
+        storeId: "1-incognito",
+      },
+    )
+    expect(applyTempWindowCookieRuleMock).toHaveBeenCalledWith({
+      tabId: 616,
+      url: "https://example.com/api/token-auth-cookie-store",
+      cookieHeader: "cf_clearance=incognito",
+    })
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: true,
+      data: {
+        success: true,
+        message: "",
+        data: "ok",
+      },
+    })
+  })
+
   it("keeps token-auth fetch credentials omitted when the WAF cookie rule cannot be installed", async () => {
     tempContextMode = "tab"
     createTabMock.mockResolvedValueOnce({ id: 607 })
@@ -2406,6 +2777,9 @@ describe("tempWindowPool window fallback", () => {
         hasTurnstile: true,
       },
     })
+    expect(recordTempWindowTurnstileFetchResultMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Success,
+    )
   })
 
   it("adds Firefox token-auth headers during turnstile fetches without cookie overrides", async () => {
@@ -2656,6 +3030,21 @@ describe("tempWindowPool window fallback", () => {
         action: RuntimeActionIds.ContentPerformTempWindowFetch,
       }),
     )
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Timeout,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+      },
+    })
+    expect(recordTempWindowTurnstileFetchResultMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+    )
     await new Promise((resolve) => setTimeout(resolve, 2500))
     expect(removeTabOrWindowMock).toHaveBeenCalledWith(809)
     expect(removeTempWindowCookieRuleMock).not.toHaveBeenCalled()
@@ -2729,7 +3118,112 @@ describe("tempWindowPool window fallback", () => {
       url: "https://example.com/api/checkin?turnstile=token-xyz",
       cookieHeader: "cf_clearance=1",
     })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Network,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+      },
+    })
+    expect(recordTempWindowTurnstileFetchResultMock).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+    )
+
+    const analyticsCallsJson = JSON.stringify(
+      trackProductAnalyticsActionCompletedMock.mock.calls,
+    )
+    expect(analyticsCallsJson).not.toContain("token-xyz")
+    expect(analyticsCallsJson).not.toContain("turnstile=token-xyz")
+    expect(analyticsCallsJson).not.toContain(
+      "https://example.com/api/checkin?turnstile=token-xyz",
+    )
+    expect(analyticsCallsJson).not.toContain("cf_clearance=1")
     expect(removeTempWindowCookieRuleMock).toHaveBeenCalledWith(1_000_810)
     expect(removeTabOrWindowMock).toHaveBeenCalledWith(810)
+  })
+
+  it("classifies downstream unsuccessful turnstile temp fetch responses by status and code", async () => {
+    tempContextMode = "tab"
+    createTabMock.mockResolvedValueOnce({ id: 813 })
+    sendMessageMock.mockImplementation(
+      async (_tabId: number, message: { action: string }) => {
+        switch (message.action) {
+          case RuntimeActionIds.ContentShowShieldBypassUi:
+            return undefined
+          case RuntimeActionIds.ContentCheckCapGuard:
+          case RuntimeActionIds.ContentCheckCloudflareGuard:
+            return { success: true, passed: true }
+          case RuntimeActionIds.ContentWaitForTurnstileToken:
+            return {
+              success: true,
+              status: "token_obtained",
+              token: "token-xyz",
+              detection: {
+                hasTurnstile: true,
+              },
+            }
+          case RuntimeActionIds.ContentPerformTempWindowFetch:
+            return {
+              success: false,
+              status: 401,
+              code: API_ERROR_CODES.HTTP_401,
+              error: "unauthorized",
+            }
+          default:
+            throw new Error(`Unexpected action: ${message.action}`)
+        }
+      },
+    )
+
+    const { handleTempWindowTurnstileFetch } = await import(
+      "~/entrypoints/background/tempWindowPool"
+    )
+
+    const sendResponse = vi.fn()
+    const request = handleTempWindowTurnstileFetch(
+      {
+        originUrl: "https://example.com",
+        pageUrl: "https://example.com/checkin",
+        fetchUrl: "https://example.com/api/auth-required",
+        fetchOptions: {
+          method: "POST",
+        },
+        requestId: "req-turnstile-auth-required",
+      },
+      sendResponse,
+    )
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await request
+    await vi.advanceTimersByTimeAsync(2500)
+
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      status: 401,
+      code: API_ERROR_CODES.HTTP_401,
+      error: "unauthorized",
+      turnstile: {
+        status: "token_obtained",
+        hasTurnstile: true,
+      },
+    })
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunTempWindowTurnstileFetch,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundShieldBypassTempContext,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth,
+      insights: {
+        statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+      },
+    })
+    expect(removeTabOrWindowMock).toHaveBeenCalledWith(813)
   })
 })

@@ -1,7 +1,9 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { accountStorage } from "~/services/accounts/accountStorage"
 import { notifyTaskResult } from "~/services/notifications/taskNotificationService"
 import { userPreferences } from "~/services/preferences/userPreferences"
+import { UsageHistoryMessageTypes } from "~/services/runtimeMessaging/messageTypes"
+import { createRuntimeMessageFailure } from "~/services/runtimeMessaging/result"
+import type { RuntimeMessageResponse } from "~/services/runtimeMessaging/result"
 import {
   getTaskNotificationStatusFromCounts,
   TASK_NOTIFICATION_STATUSES,
@@ -15,6 +17,7 @@ import {
 import {
   clearAlarm,
   createAlarm,
+  getAlarm,
   hasAlarmsAPI,
   onAlarm,
 } from "~/utils/browser/browserApi"
@@ -22,6 +25,13 @@ import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 
 import { USAGE_HISTORY_ALARM_NAME } from "./constants"
+import {
+  onUsageHistoryMessage,
+  type UsageHistorySyncNowRequest,
+  type UsageHistorySyncNowResponse,
+  type UsageHistoryUpdateSettingsRequest,
+  type UsageHistoryUpdateSettingsResponse,
+} from "./messaging"
 import { usageHistoryStorage } from "./storage"
 import {
   syncUsageHistoryForAccount,
@@ -116,8 +126,19 @@ class UsageHistoryScheduler {
       return
     }
 
+    const intervalMinutes = clampSyncIntervalMinutes(config.syncIntervalMinutes)
+    const existingAlarm = await getAlarm(USAGE_HISTORY_ALARM_NAME)
+
+    if (
+      existingAlarm?.periodInMinutes != null &&
+      Math.abs(existingAlarm.periodInMinutes - intervalMinutes) < 0.001
+    ) {
+      return
+    }
+
+    await clearAlarm(USAGE_HISTORY_ALARM_NAME)
     await createAlarm(USAGE_HISTORY_ALARM_NAME, {
-      periodInMinutes: clampSyncIntervalMinutes(config.syncIntervalMinutes),
+      periodInMinutes: intervalMinutes,
       delayInMinutes: 1,
     })
   }
@@ -295,44 +316,94 @@ class UsageHistoryScheduler {
 
 export const usageHistoryScheduler = new UsageHistoryScheduler()
 
-export const handleUsageHistoryMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
+let usageHistoryMessagingCleanup: (() => void)[] | null = null
+
+/**
+ * Register typed background listeners for usage-history scheduler messages.
+ */
+export function setupUsageHistoryMessagingListeners() {
+  if (usageHistoryMessagingCleanup) {
+    return
+  }
+
+  usageHistoryMessagingCleanup = [
+    onUsageHistoryMessage(UsageHistoryMessageTypes.UpdateSettings, ({ data }) =>
+      resolveUsageHistoryUpdateSettingsMessage(data),
+    ),
+    onUsageHistoryMessage(UsageHistoryMessageTypes.SyncNow, ({ data }) =>
+      resolveUsageHistorySyncNowMessage(data),
+    ),
+    onUsageHistoryMessage(UsageHistoryMessageTypes.Prune, () =>
+      resolveUsageHistoryPruneMessage(),
+    ),
+  ]
+}
+
+/**
+ * Resolve a typed request to persist usage-history scheduler settings.
+ */
+export async function resolveUsageHistoryUpdateSettingsMessage(
+  request: UsageHistoryUpdateSettingsRequest,
+): Promise<UsageHistoryUpdateSettingsResponse> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.UsageHistoryUpdateSettings: {
-        const result = await usageHistoryScheduler.updateSettings(
-          request.settings ?? {},
-        )
-        sendResponse({ success: true, data: result })
-        break
-      }
-
-      case RuntimeActionIds.UsageHistorySyncNow: {
-        const accountIds = Array.isArray(request.accountIds)
-          ? (request.accountIds as string[])
-          : undefined
-        const result = await usageHistoryScheduler.runManualSync(accountIds)
-        sendResponse({ success: true, data: result })
-        break
-      }
-
-      case RuntimeActionIds.UsageHistoryPrune: {
-        const prefs = await userPreferences.getPreferences()
-        const config = prefs.usageHistory ?? DEFAULT_USAGE_HISTORY_PREFERENCES
-        const ok = await usageHistoryStorage.pruneAllAccounts(
-          config.retentionDays,
-        )
-        sendResponse({ success: ok })
-        break
-      }
-
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
-    }
+    const result = await usageHistoryScheduler.updateSettings(
+      request.settings ?? {},
+    )
+    return { success: true, data: result }
   } catch (error) {
     logger.error("Message handling failed", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to run a manual usage-history sync.
+ */
+export async function resolveUsageHistorySyncNowMessage(
+  request?: UsageHistorySyncNowRequest,
+): Promise<UsageHistorySyncNowResponse> {
+  try {
+    if (
+      request &&
+      request.accountIds !== undefined &&
+      !Array.isArray(request.accountIds)
+    ) {
+      return createRuntimeMessageFailure(
+        "accountIds must be an array when provided",
+      )
+    }
+
+    const accountIds = Array.isArray(request?.accountIds)
+      ? request.accountIds
+      : undefined
+    const result = await usageHistoryScheduler.runManualSync(accountIds)
+    if (!result) {
+      return createRuntimeMessageFailure(
+        "Usage-history sync is already running",
+      )
+    }
+    return { success: true, data: result }
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to prune retained usage-history data.
+ */
+export async function resolveUsageHistoryPruneMessage(): Promise<
+  RuntimeMessageResponse<undefined>
+> {
+  try {
+    const prefs = await userPreferences.getPreferences()
+    const config = prefs.usageHistory ?? DEFAULT_USAGE_HISTORY_PREFERENCES
+    const ok = await usageHistoryStorage.pruneAllAccounts(config.retentionDays)
+    return ok
+      ? ({ success: true, data: undefined } as const)
+      : createRuntimeMessageFailure("Failed to prune usage history")
+  } catch (error) {
+    logger.error("Message handling failed", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
   }
 }

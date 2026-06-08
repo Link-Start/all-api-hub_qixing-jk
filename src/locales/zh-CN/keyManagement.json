@@ -17,9 +17,9 @@
     "importToClaudeCodeRouter": "导入到 Claude Code Router",
     "importToCliProxy": "导入到 CLIProxyAPI",
     "importToManagedSite": "导入到 {{site}}",
-    "openApiProfiles": "打开 API 凭证",
+    "openApiProfiles": "打开 API 凭据库",
     "retryFailed": "重试失败账号",
-    "saveToApiProfiles": "保存到 API 凭证",
+    "saveToApiProfiles": "保存到 API 凭据库",
     "showKey": "显示密钥",
     "useInCherry": "在 Cherry Studio 中使用"
   },
@@ -165,10 +165,14 @@
       "verifyNow": "立即验证"
     },
     "badges": {
-      "added": "管理站点：已添加",
-      "checking": "管理站点：检查中",
-      "notAdded": "管理站点：未添加",
-      "unknown": "管理站点：未知"
+      "added": "已添加",
+      "checkFailed": "检查失败",
+      "checking": "检查中",
+      "configMissing": "未配置",
+      "notAdded": "未添加",
+      "requiresConfirmation": "需确认",
+      "unknown": "未知",
+      "verificationUnavailable": "无法完整验证"
     },
     "descriptions": {
       "backendSearchFailed": "管理站点校验暂时无法完成。",
@@ -223,8 +227,8 @@
     "keyCopied": "密钥 {{name}} 已复制到剪贴板",
     "loadFailed": "加载密钥列表失败",
     "revealFailed": "显示密钥失败",
-    "savedToApiProfiles": "已保存 {{name}} 到 API 凭证",
-    "saveToApiProfilesFailed": "保存到 API 凭证失败"
+    "savedToApiProfiles": "已保存 {{name}} 到 API 凭据库",
+    "saveToApiProfilesFailed": "保存到 API 凭据库失败"
   },
   "noKeys": "暂无密钥数据",
   "noMatchingKeys": "没有找到匹配的密钥",

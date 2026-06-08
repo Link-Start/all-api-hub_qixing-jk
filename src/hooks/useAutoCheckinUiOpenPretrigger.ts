@@ -4,15 +4,27 @@ import { useTranslation } from "react-i18next"
 
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
+import { sendAutoCheckinMessage } from "~/services/checkin/autoCheckin/messaging"
 import { DEFAULT_PREFERENCES } from "~/services/preferences/userPreferences"
+import {
+  trackProductAnalyticsActionCompleted,
+  trackProductAnalyticsActionStarted,
+} from "~/services/productAnalytics/actions"
+import { trackAutoCheckinConfigSnapshot } from "~/services/productAnalytics/autoCheckin"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { AutoCheckinMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type {
   AutoCheckinRunResult,
   AutoCheckinRunSummary,
 } from "~/types/autoCheckin"
-import {
-  onRuntimeMessage,
-  sendRuntimeMessage,
-} from "~/utils/browser/browserApi"
+import { AUTO_CHECKIN_RUN_RESULT } from "~/types/autoCheckin"
+import { onRuntimeMessage } from "~/utils/browser/browserApi"
 import { safeRandomUUID } from "~/utils/core/identifier"
 import { createLogger } from "~/utils/core/logger"
 
@@ -20,6 +32,34 @@ import { createLogger } from "~/utils/core/logger"
  * Unified logger scoped to UI-open auto check-in pretrigger hooks.
  */
 const logger = createLogger("AutoCheckinUiOpenPretrigger")
+
+const UI_OPEN_PRETRIGGER_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+  actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunAutoCheckinNow,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAutoCheckinActionBar,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+} as const
+
+/**
+ * Maps a pretrigger response to the fixed product analytics result enum.
+ */
+function toAnalyticsResult(
+  response: {
+    success?: boolean
+    started?: boolean
+    lastRunResult?: AutoCheckinRunResult | null
+  } | null,
+) {
+  if (!response?.success || !response.started) {
+    return PRODUCT_ANALYTICS_RESULTS.Skipped
+  }
+
+  if (response.lastRunResult === AUTO_CHECKIN_RUN_RESULT.FAILED) {
+    return PRODUCT_ANALYTICS_RESULTS.Failure
+  }
+
+  return PRODUCT_ANALYTICS_RESULTS.Success
+}
 
 interface UiOpenPretriggerDialogState {
   isOpen: boolean
@@ -75,6 +115,13 @@ export function useAutoCheckinUiOpenPretrigger(): {
     hasTriggeredRef.current = true
 
     const requestId = safeRandomUUID()
+    void trackProductAnalyticsActionStarted(
+      UI_OPEN_PRETRIGGER_ANALYTICS_CONTEXT,
+    )
+    trackAutoCheckinConfigSnapshot(
+      autoCheckinPreferences,
+      PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    )
 
     const unsubscribe = onRuntimeMessage((message) => {
       if (
@@ -87,9 +134,26 @@ export function useAutoCheckinUiOpenPretrigger(): {
 
     void (async () => {
       try {
-        const response = await sendRuntimeMessage({
-          action: RuntimeActionIds.AutoCheckinPretriggerDailyOnUiOpen,
-          requestId,
+        const response = await sendAutoCheckinMessage(
+          AutoCheckinMessageTypes.PretriggerDailyOnUiOpen,
+          {
+            requestId,
+          },
+        )
+
+        const responseSummary = response.success ? response.summary : undefined
+
+        void trackProductAnalyticsActionCompleted({
+          ...UI_OPEN_PRETRIGGER_ANALYTICS_CONTEXT,
+          result: toAnalyticsResult(response),
+          insights: responseSummary
+            ? {
+                itemCount: responseSummary.totalEligible,
+                successCount: responseSummary.successCount,
+                failureCount: responseSummary.failedCount,
+                skippedCount: responseSummary.skippedCount,
+              }
+            : undefined,
         })
 
         if (!response?.success || !response?.started) {
@@ -104,6 +168,10 @@ export function useAutoCheckinUiOpenPretrigger(): {
         })
       } catch (error) {
         logger.error("UI-open pretrigger request failed", error)
+        void trackProductAnalyticsActionCompleted({
+          ...UI_OPEN_PRETRIGGER_ANALYTICS_CONTEXT,
+          result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        })
       } finally {
         unsubscribe()
       }
@@ -112,7 +180,7 @@ export function useAutoCheckinUiOpenPretrigger(): {
     return () => {
       unsubscribe()
     }
-  }, [shouldAttemptPretrigger, t])
+  }, [autoCheckinPreferences, shouldAttemptPretrigger, t])
 
   return {
     dialog,

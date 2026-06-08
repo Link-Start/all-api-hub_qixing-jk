@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest"
 
 import { DEV_MENU_ITEM_IDS } from "~/constants/devOptionsMenuIds"
-import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
-import { getMenuItemLabel } from "~/features/OptionsMenu/getMenuItemLabel"
+import {
+  MENU_ITEM_IDS,
+  OPTIONS_MENU_CATEGORY_IDS,
+} from "~/constants/optionsMenuIds"
+import {
+  getMenuCategoryLabel,
+  getMenuItemLabel,
+} from "~/features/OptionsMenu/getMenuItemLabel"
 
 describe("getMenuItemLabel", () => {
   const t = (key: string) => key
 
   it("returns the expected translation key for every stable menu item", () => {
+    expect(getMenuItemLabel(t as any, MENU_ITEM_IDS.OVERVIEW)).toBe(
+      "ui:navigation.overview",
+    )
     expect(getMenuItemLabel(t as any, MENU_ITEM_IDS.BASIC)).toBe(
       "ui:navigation.basic",
     )
@@ -56,5 +65,36 @@ describe("getMenuItemLabel", () => {
     expect(() =>
       getMenuItemLabel(t as any, "unknown-menu-item" as any),
     ).toThrow("Unexpected menu item id: unknown-menu-item")
+  })
+})
+
+describe("getMenuCategoryLabel", () => {
+  const t = (key: string) => key
+
+  it("returns the expected translation key for every menu category", () => {
+    expect(
+      getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.GENERAL),
+    ).toBe("ui:navigation.categories.general")
+    expect(getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.API)).toBe(
+      "ui:navigation.categories.api",
+    )
+    expect(
+      getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.AUTOMATION),
+    ).toBe("ui:navigation.categories.automation")
+    expect(
+      getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.INSIGHTS),
+    ).toBe("ui:navigation.categories.insights")
+    expect(
+      getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.SITE_MANAGEMENT),
+    ).toBe("ui:navigation.categories.siteManagement")
+    expect(
+      getMenuCategoryLabel(t as any, OPTIONS_MENU_CATEGORY_IDS.SYSTEM),
+    ).toBe("ui:navigation.categories.system")
+  })
+
+  it("throws for unexpected category ids so categories must be wired explicitly", () => {
+    expect(() =>
+      getMenuCategoryLabel(t as any, "unknown-category" as any),
+    ).toThrow("Unexpected menu category id: unknown-category")
   })
 })

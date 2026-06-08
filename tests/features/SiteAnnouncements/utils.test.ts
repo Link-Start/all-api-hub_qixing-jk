@@ -103,11 +103,21 @@ describe("SiteAnnouncements utils", () => {
             ...record,
             id: "record-2",
             siteKey: "site-2",
-            siteName: "",
+            siteName: "Beta",
             baseUrl: "https://beta.example.com",
             siteType: "sub2api",
             providerId: "sub2api",
             fingerprint: "fp-2",
+          },
+          {
+            ...record,
+            id: "record-3",
+            siteKey: "site-2",
+            siteName: "",
+            baseUrl: "https://beta.example.com",
+            siteType: "sub2api",
+            providerId: "sub2api",
+            fingerprint: "fp-3",
           },
         ],
         [
@@ -119,9 +129,13 @@ describe("SiteAnnouncements utils", () => {
         ],
       ),
     ).toEqual([
-      ["site-3", "Gamma"],
-      ["site-1", "Example"],
-      ["site-2", "https://beta.example.com"],
+      {
+        value: "site-2",
+        label: "Beta",
+        announcementCount: 2,
+      },
+      { value: "site-1", label: "Example", announcementCount: 1 },
+      { value: "site-3", label: "Gamma", announcementCount: 0 },
     ])
     expect(
       buildSiteTypeOptions([

@@ -11,6 +11,14 @@ type HorizontalScrollControlsResult = ReturnType<
   typeof useHorizontalScrollControls<HTMLDivElement>
 >
 
+const TEST_IDS = {
+  scroller: "scroller",
+} as const
+
+function getChildTestId(index: number) {
+  return `child-${index}`
+}
+
 function HorizontalScrollControlsHarness({
   options,
   childCount = 0,
@@ -27,9 +35,9 @@ function HorizontalScrollControlsHarness({
   }, [controls, onReady])
 
   return (
-    <div data-testid="scroller" ref={controls.scrollRef}>
+    <div data-testid={TEST_IDS.scroller} ref={controls.scrollRef}>
       {Array.from({ length: childCount }, (_, index) => (
-        <div key={index} data-testid={`child-${index}`} />
+        <div key={index} data-testid={getChildTestId(index)} />
       ))}
     </div>
   )
@@ -115,7 +123,7 @@ describe("useHorizontalScrollControls", () => {
       />,
     )
 
-    const scroller = getByTestId("scroller")
+    const scroller = getByTestId(TEST_IDS.scroller)
     setScrollMetrics(scroller, {
       clientWidth: 120,
       scrollWidth: 360,
@@ -153,7 +161,7 @@ describe("useHorizontalScrollControls", () => {
       />,
     )
 
-    const scroller = getByTestId("scroller")
+    const scroller = getByTestId(TEST_IDS.scroller)
 
     setScrollMetrics(scroller, {
       clientWidth: 100,
@@ -243,7 +251,7 @@ describe("useHorizontalScrollControls", () => {
       />,
     )
 
-    const scroller = getByTestId("scroller")
+    const scroller = getByTestId(TEST_IDS.scroller)
     setScrollMetrics(scroller, {
       clientWidth: 200,
       scrollWidth: 500,
@@ -283,7 +291,7 @@ describe("useHorizontalScrollControls", () => {
       />,
     )
 
-    const scroller = getByTestId("scroller")
+    const scroller = getByTestId(TEST_IDS.scroller)
     setScrollMetrics(scroller, {
       clientWidth: 200,
       scrollWidth: 600,
@@ -311,8 +319,8 @@ describe("useHorizontalScrollControls", () => {
       value: scrollTo,
     })
 
-    const child0 = getByTestId("child-0")
-    const child1 = getByTestId("child-1")
+    const child0 = getByTestId(getChildTestId(0))
+    const child1 = getByTestId(getChildTestId(1))
     Object.defineProperty(child0, "getBoundingClientRect", {
       configurable: true,
       value: () => ({
@@ -369,7 +377,7 @@ describe("useHorizontalScrollControls", () => {
       />,
     )
 
-    const scroller = getByTestId("scroller")
+    const scroller = getByTestId(TEST_IDS.scroller)
     setScrollMetrics(scroller, {
       clientWidth: 100,
       scrollWidth: 400,
@@ -395,7 +403,7 @@ describe("useHorizontalScrollControls", () => {
       }),
     })
 
-    const child0 = getByTestId("child-0")
+    const child0 = getByTestId(getChildTestId(0))
     Object.defineProperty(child0, "getBoundingClientRect", {
       configurable: true,
       value: () => ({

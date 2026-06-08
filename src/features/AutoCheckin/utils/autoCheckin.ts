@@ -91,6 +91,12 @@ export function isInvalidAccessTokenMessage(message: string): boolean {
 }
 
 const NO_TAB_WITH_ID_REGEX = /no tab with id[: ]\s*\d+/i
+const TURNSTILE_TOKEN_UNAVAILABLE_REGEX =
+  /turnstile[\s\S]*token[\s\S]*(?:not\s+available|unavailable)/i
+const POW_CHALLENGE_NONCE_REGEX = /pow(?=.*challenge)(?=.*nonce)/i
+const TURNSTILE_VERIFICATION_FAILED_REGEX =
+  /turnstile[\s\S]*(?:校验|验证)[\s\S]*失败/i
+const OPEN_SITE_THEN_CHECKIN_REGEX = /打开(?:网站|站点)[\s\S]*签到/
 
 /**
  * Detect a "No tab with id: N" error, usually emitted when a temporary
@@ -101,8 +107,24 @@ export function isNoTabWithIdMessage(message: string): boolean {
   return NO_TAB_WITH_ID_REGEX.test(message)
 }
 
+/**
+ * Detect protected check-in failures that usually require opening the site
+ * page first so the browser can complete verification and establish a session.
+ */
+function isManualVerificationRequiredMessage(message: string): boolean {
+  if (!message) return false
+
+  return (
+    TURNSTILE_TOKEN_UNAVAILABLE_REGEX.test(message) ||
+    POW_CHALLENGE_NONCE_REGEX.test(message) ||
+    TURNSTILE_VERIFICATION_FAILED_REGEX.test(message) ||
+    OPEN_SITE_THEN_CHECKIN_REGEX.test(message)
+  )
+}
+
 type AutoCheckinTroubleshootingHintKey =
   | "execution.hints.invalidAccessToken"
+  | "execution.hints.manualVerificationRequired"
   | "execution.hints.noTabWithId"
   | "execution.hints.siteTypeCheckinUnsupported"
 
@@ -132,6 +154,10 @@ export function resolveAutoCheckinTroubleshootingHintKey(params: {
 
   if (isNoTabWithIdMessage(params.message)) {
     return "execution.hints.noTabWithId"
+  }
+
+  if (isManualVerificationRequiredMessage(params.message)) {
+    return "execution.hints.manualVerificationRequired"
   }
 
   return null

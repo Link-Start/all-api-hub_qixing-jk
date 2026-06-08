@@ -49,14 +49,17 @@ function createConsumeLogItem(
  * Create and persist a minimal New-API test account, returning its generated id.
  */
 async function createTestAccount(baseUrl: string): Promise<string> {
-  const accountData: Omit<SiteAccount, "id" | "created_at" | "updated_at"> = {
+  const accountData: Omit<
+    SiteAccount,
+    "id" | "created_at" | "updated_at" | "user_updated_at"
+  > = {
     site_name: "Example",
     site_url: baseUrl,
     health: { status: SiteHealthStatus.Healthy },
     site_type: "new-api",
     exchange_rate: 7.2,
     account_info: {
-      id: 1,
+      id: "1",
       access_token: "mock-token",
       username: "tester",
       quota: 0,
@@ -71,6 +74,7 @@ async function createTestAccount(baseUrl: string): Promise<string> {
     tagIds: [],
     disabled: false,
     excludeFromTotalBalance: false,
+    excludeFromTodayIncome: false,
     authType: AuthTypeEnum.AccessToken,
     checkIn: { enableDetection: false },
   }

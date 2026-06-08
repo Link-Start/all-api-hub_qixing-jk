@@ -24,6 +24,7 @@ import type {
 } from "~/types/channelModelFilters"
 import { DEFAULT_BALANCE_HISTORY_PREFERENCES } from "~/types/dailyBalanceHistory"
 import { DEFAULT_NEW_API_CONFIG } from "~/types/newApiConfig"
+import { DEFAULT_SITE_ANNOUNCEMENT_PREFERENCES } from "~/types/siteAnnouncements"
 import { SortingCriteriaType } from "~/types/sorting"
 import {
   DEFAULT_TASK_NOTIFICATION_PREFERENCES,
@@ -246,6 +247,113 @@ describe("preferencesMigration", () => {
       expect(result.balanceHistory).toEqual(DEFAULT_BALANCE_HISTORY_PREFERENCES)
     })
 
+    it("defaults estimated today income to disabled when migrating balance history preferences", () => {
+      const migrated = migratePreferences(
+        createV0Preferences({
+          balanceHistory: {
+            enabled: true,
+            endOfDayCapture: { enabled: true },
+            retentionDays: 45,
+          },
+          preferencesVersion: 24,
+        } as any),
+      )
+
+      expect(migrated.balanceHistory).toMatchObject({
+        enabled: true,
+        endOfDayCapture: { enabled: true },
+        retentionDays: 45,
+        estimatedTodayIncome: { enabled: false },
+      })
+      expect(migrated.preferencesVersion).toBe(CURRENT_PREFERENCES_VERSION)
+    })
+
+    it("preserves estimated today income when migrating balance history preferences", () => {
+      const migrated = migratePreferences(
+        createV0Preferences({
+          balanceHistory: {
+            enabled: true,
+            endOfDayCapture: { enabled: true },
+            estimatedTodayIncome: { enabled: true },
+            retentionDays: 45,
+          },
+          preferencesVersion: 24,
+        } as any),
+      )
+
+      expect(migrated.balanceHistory).toMatchObject({
+        enabled: true,
+        endOfDayCapture: { enabled: true },
+        retentionDays: 45,
+        estimatedTodayIncome: { enabled: true },
+      })
+      expect(migrated.preferencesVersion).toBe(CURRENT_PREFERENCES_VERSION)
+    })
+
+    it("migrates v25 Web AI API Check preferences with enhanced auto-detect defaults", () => {
+      const prefs = createV0Preferences({
+        preferencesVersion: 25,
+        webAiApiCheck: {
+          enabled: true,
+          contextMenu: { enabled: true },
+          autoDetect: {
+            enabled: false,
+            urlWhitelist: { patterns: ["^https://stored\\.example"] },
+          },
+        },
+      } as any)
+
+      const result = migratePreferences(prefs)
+
+      expect(result.preferencesVersion).toBe(CURRENT_PREFERENCES_VERSION)
+      expect(result.webAiApiCheck).toMatchObject({
+        enabled: true,
+        contextMenu: { enabled: true },
+        autoDetect: {
+          enabled: false,
+          enhanced: { enabled: true },
+          urlWhitelist: { patterns: ["^https://stored\\.example"] },
+        },
+      })
+    })
+
+    it("preserves an explicit enhanced auto-detect opt-out during v25 migration", () => {
+      const prefs = createV0Preferences({
+        preferencesVersion: 25,
+        webAiApiCheck: {
+          enabled: true,
+          contextMenu: { enabled: true },
+          autoDetect: {
+            enabled: true,
+            enhanced: { enabled: false },
+            urlWhitelist: { patterns: ["^https://stored\\.example"] },
+          },
+        },
+      } as any)
+
+      const result = migratePreferences(prefs)
+
+      expect(result.preferencesVersion).toBe(CURRENT_PREFERENCES_VERSION)
+      expect(result.webAiApiCheck).toMatchObject({
+        enabled: true,
+        contextMenu: { enabled: true },
+        autoDetect: {
+          enabled: true,
+          enhanced: { enabled: false },
+          urlWhitelist: { patterns: ["^https://stored\\.example"] },
+        },
+      })
+    })
+
+    it("defaults site announcement polling to disabled for new preference snapshots", () => {
+      expect(DEFAULT_PREFERENCES.siteAnnouncementNotifications).toEqual(
+        DEFAULT_SITE_ANNOUNCEMENT_PREFERENCES,
+      )
+      expect(DEFAULT_PREFERENCES.siteAnnouncementNotifications?.enabled).toBe(
+        false,
+      )
+    })
+
     it("normalizes invalid balance-history settings during v11->v12 migration", () => {
       const prefs = createV0Preferences({
         preferencesVersion: 11,
@@ -253,6 +361,7 @@ describe("preferencesMigration", () => {
           enabled: "yes" as any,
           endOfDayCapture: { enabled: "no" as any },
           retentionDays: "not-a-number" as any,
+          estimatedTodayIncome: { enabled: false },
         },
       })
 
@@ -269,6 +378,7 @@ describe("preferencesMigration", () => {
           enabled: true,
           endOfDayCapture: { enabled: true },
           retentionDays: 0,
+          estimatedTodayIncome: { enabled: false },
         },
       })
       const highPrefs = createV0Preferences({
@@ -277,6 +387,7 @@ describe("preferencesMigration", () => {
           enabled: true,
           endOfDayCapture: { enabled: false },
           retentionDays: 99999,
+          estimatedTodayIncome: { enabled: false },
         },
       })
 
@@ -1220,6 +1331,26 @@ describe("preferencesMigration", () => {
       expect(result.taskNotifications).toEqual(
         DEFAULT_TASK_NOTIFICATION_PREFERENCES,
       )
+    })
+
+    it("forces site announcement polling off during v23 to v24 migration", () => {
+      const prefs = createV0Preferences({
+        preferencesVersion: 23,
+        siteAnnouncementNotifications: {
+          enabled: true,
+          notificationEnabled: false,
+          intervalMinutes: 120,
+        },
+      })
+
+      const result = migratePreferences(prefs)
+
+      expect(result.preferencesVersion).toBe(CURRENT_PREFERENCES_VERSION)
+      expect(result.siteAnnouncementNotifications).toEqual({
+        enabled: false,
+        notificationEnabled: false,
+        intervalMinutes: 120,
+      })
     })
 
     it("falls back to defaults when stored taskNotifications is a non-object during v18 to v19 migration", () => {

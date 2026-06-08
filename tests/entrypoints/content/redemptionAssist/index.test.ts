@@ -2,9 +2,19 @@ import { waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { RuntimeActionIds } from "~/constants/runtimeActions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 
 const {
+  RedemptionAssistMessageTypes,
   mockCheckPermissionViaMessage,
+  mockSendRedemptionAssistMessage,
   mockSendRuntimeMessage,
   mockDismissToast,
   mockShowAccountSelectToast,
@@ -12,26 +22,54 @@ const {
   mockShowRedeemLoadingToast,
   mockShowRedeemResultToast,
   mockShowRedemptionPromptToast,
+  mockTrackProductAnalyticsActionCompleted,
   logger,
-} = vi.hoisted(() => ({
-  mockCheckPermissionViaMessage: vi.fn(),
-  mockSendRuntimeMessage: vi.fn(),
-  mockDismissToast: vi.fn(),
-  mockShowAccountSelectToast: vi.fn(),
-  mockShowRedeemBatchResultToast: vi.fn(),
-  mockShowRedeemLoadingToast: vi.fn(),
-  mockShowRedeemResultToast: vi.fn(),
-  mockShowRedemptionPromptToast: vi.fn(),
-  logger: {
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
+} = vi.hoisted(() => {
+  const RedemptionAssistMessageTypes = {
+    ShouldPrompt: "redemptionAssist:shouldPrompt",
+    AutoRedeem: "redemptionAssist:autoRedeem",
+    AutoRedeemByUrl: "redemptionAssist:autoRedeemByUrl",
+  } as const
+
+  return {
+    RedemptionAssistMessageTypes,
+    mockCheckPermissionViaMessage: vi.fn(),
+    mockSendRedemptionAssistMessage: vi.fn(),
+    mockSendRuntimeMessage: vi.fn(),
+    mockDismissToast: vi.fn(),
+    mockShowAccountSelectToast: vi.fn(),
+    mockShowRedeemBatchResultToast: vi.fn(),
+    mockShowRedeemLoadingToast: vi.fn(),
+    mockShowRedeemResultToast: vi.fn(),
+    mockShowRedemptionPromptToast: vi.fn(),
+    mockTrackProductAnalyticsActionCompleted: vi.fn(),
+    logger: {
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+  }
+})
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionCompleted: (...args: unknown[]) =>
+    mockTrackProductAnalyticsActionCompleted(...args),
 }))
 
-vi.mock("~/utils/browser/browserApi", () => ({
-  checkPermissionViaMessage: mockCheckPermissionViaMessage,
-  sendRuntimeMessage: mockSendRuntimeMessage,
+vi.mock("~/utils/browser/browserApi", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/utils/browser/browserApi")>()
+
+  return {
+    ...actual,
+    checkPermissionViaMessage: mockCheckPermissionViaMessage,
+    sendRuntimeMessage: mockSendRuntimeMessage,
+  }
+})
+
+vi.mock("~/services/redemption/redemptionAssistMessaging", () => ({
+  RedemptionAssistMessageTypes,
+  sendRedemptionAssistMessage: mockSendRedemptionAssistMessage,
 }))
 
 vi.mock("~/utils/core/logger", () => ({
@@ -123,7 +161,7 @@ describe("setupRedemptionAssistContent", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
     expect(mockShowRedeemResultToast).not.toHaveBeenCalled()
 
     cleanup()
@@ -131,7 +169,7 @@ describe("setupRedemptionAssistContent", () => {
     expect(removeListener).toHaveBeenCalledWith(listener)
   })
 
-  it("logs debug when removing the context-menu listener fails", async () => {
+  it("propagates context-menu listener removal failures through the shared adapter", async () => {
     const removeListenerError = new Error("remove failed")
     ;(globalThis as any).browser = {
       runtime: {
@@ -153,23 +191,19 @@ describe("setupRedemptionAssistContent", () => {
       enableContextMenu: true,
     })
 
-    expect(() => cleanup()).not.toThrow()
-    expect(logger.debug).toHaveBeenCalledWith(
-      "Failed to remove redemption context menu listener",
-      removeListenerError,
-    )
+    expect(() => cleanup()).toThrow(removeListenerError)
   })
 
   it("deduplicates repeated clipboard scans and auto-redeems a single selected code", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistShouldPrompt) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
         return {
           success: true,
           promptableCodes: [codeA],
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -194,23 +228,23 @@ describe("setupRedemptionAssistContent", () => {
     document.dispatchEvent(makeClipboardEvent("copy", codeA))
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-        url: window.location.href,
-        codes: [codeA],
-      })
+      expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+        RedemptionAssistMessageTypes.ShouldPrompt,
+        {
+          url: window.location.href,
+          codes: [codeA],
+        },
+      )
     })
 
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistShouldPrompt,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.ShouldPrompt,
       ),
     ).toHaveLength(1)
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeemByUrl,
       ),
     ).toHaveLength(1)
     expect(mockShowRedemptionPromptToast).toHaveBeenCalledTimes(1)
@@ -220,8 +254,93 @@ describe("setupRedemptionAssistContent", () => {
     expect(mockShowRedeemResultToast).toHaveBeenCalledWith(true, "redeemed")
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
     expect(mockDismissToast).toHaveBeenCalledWith("loading-toast-id")
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        itemCount: 1,
+        selectedCount: 1,
+        successCount: 1,
+        failureCount: 0,
+      },
+    })
 
     cleanup()
+  })
+
+  it("auto-redeems selected text on pointerup and stops after cleanup", async () => {
+    const getSelectionSpy = vi.spyOn(window, "getSelection").mockReturnValue({
+      toString: () => codeA,
+    } as any)
+
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
+        return {
+          success: true,
+          promptableCodes: [codeA],
+        }
+      }
+
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
+        return {
+          data: {
+            success: true,
+            message: "redeemed-from-pointerup",
+          },
+        }
+      }
+
+      return { success: false }
+    })
+
+    const { setupRedemptionAssistContent } = await import(
+      "~/entrypoints/content/redemptionAssist"
+    )
+
+    const cleanup = setupRedemptionAssistContent({
+      enableDetection: true,
+      enableContextMenu: false,
+    })
+
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }))
+
+    await waitFor(() => {
+      expect(mockShowRedeemResultToast).toHaveBeenCalledWith(
+        true,
+        "redeemed-from-pointerup",
+      )
+    })
+
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.ShouldPrompt,
+      {
+        url: window.location.href,
+        codes: [codeA],
+      },
+    )
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: window.location.href,
+        code: codeA,
+      },
+    )
+
+    cleanup()
+    mockSendRedemptionAssistMessage.mockClear()
+    mockShowRedeemResultToast.mockClear()
+    getSelectionSpy.mockReturnValue({
+      toString: () => codeB,
+    } as any)
+
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
+    expect(mockShowRedeemResultToast).not.toHaveBeenCalled()
   })
 
   it("prefers selected text over clipboard reads on click", async () => {
@@ -237,15 +356,15 @@ describe("setupRedemptionAssistContent", () => {
       toString: () => codeA,
     } as any)
 
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistShouldPrompt) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
         return {
           success: true,
           promptableCodes: [codeA],
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -285,16 +404,20 @@ describe("setupRedemptionAssistContent", () => {
 
     expect(mockCheckPermissionViaMessage).not.toHaveBeenCalled()
     expect(readText).not.toHaveBeenCalled()
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-      url: window.location.href,
-      codes: [codeA],
-    })
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-      url: window.location.href,
-      code: codeA,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.ShouldPrompt,
+      {
+        url: window.location.href,
+        codes: [codeA],
+      },
+    )
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: window.location.href,
+        code: codeA,
+      },
+    )
 
     cleanup()
   })
@@ -309,15 +432,15 @@ describe("setupRedemptionAssistContent", () => {
     })
 
     mockCheckPermissionViaMessage.mockResolvedValue(false)
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistShouldPrompt) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
         return {
           success: true,
           promptableCodes: [codeA],
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -347,11 +470,13 @@ describe("setupRedemptionAssistContent", () => {
 
     await waitFor(
       () => {
-        expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-          action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-          url: window.location.href,
-          codes: [codeA],
-        })
+        expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+          RedemptionAssistMessageTypes.ShouldPrompt,
+          {
+            url: window.location.href,
+            codes: [codeA],
+          },
+        )
       },
       { timeout: 2500 },
     )
@@ -379,15 +504,15 @@ describe("setupRedemptionAssistContent", () => {
     })
 
     mockCheckPermissionViaMessage.mockResolvedValue(true)
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistShouldPrompt) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
         return {
           success: true,
           promptableCodes: [codeA],
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -438,7 +563,7 @@ describe("setupRedemptionAssistContent", () => {
   })
 
   it("does not show prompts or redeem when the background vetoes promptable codes", async () => {
-    mockSendRuntimeMessage.mockResolvedValue({
+    mockSendRedemptionAssistMessage.mockResolvedValue({
       success: true,
       promptableCodes: [],
     })
@@ -455,19 +580,20 @@ describe("setupRedemptionAssistContent", () => {
     document.dispatchEvent(makeClipboardEvent("copy", codeA))
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-        url: window.location.href,
-        codes: [codeA],
-      })
+      expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+        RedemptionAssistMessageTypes.ShouldPrompt,
+        {
+          url: window.location.href,
+          codes: [codeA],
+        },
+      )
     })
 
     expect(mockShowRedemptionPromptToast).not.toHaveBeenCalled()
     expect(mockShowRedeemLoadingToast).not.toHaveBeenCalled()
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeemByUrl,
       ),
     ).toHaveLength(0)
 
@@ -476,7 +602,7 @@ describe("setupRedemptionAssistContent", () => {
 
   it("logs an error when detected redemption scanning fails", async () => {
     const backgroundError = new Error("background unavailable")
-    mockSendRuntimeMessage.mockRejectedValue(backgroundError)
+    mockSendRedemptionAssistMessage.mockRejectedValue(backgroundError)
 
     const { setupRedemptionAssistContent } = await import(
       "~/entrypoints/content/redemptionAssist"
@@ -525,7 +651,7 @@ describe("setupRedemptionAssistContent", () => {
     await new Promise((resolve) => setTimeout(resolve, 700))
 
     expect(mockCheckPermissionViaMessage).not.toHaveBeenCalled()
-    expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
     expect(mockShowRedemptionPromptToast).not.toHaveBeenCalled()
 
     cleanup()
@@ -561,7 +687,7 @@ describe("setupRedemptionAssistContent", () => {
       )
     })
 
-    expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
     expect(mockShowRedeemResultToast).not.toHaveBeenCalled()
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
 
@@ -573,7 +699,7 @@ describe("setupRedemptionAssistContent", () => {
       action: "manual",
       selectedCodes: [codeA],
     })
-    mockSendRuntimeMessage.mockResolvedValue({
+    mockSendRedemptionAssistMessage.mockResolvedValue({
       success: true,
       promptableCodes: [codeA],
     })
@@ -590,19 +716,21 @@ describe("setupRedemptionAssistContent", () => {
     document.dispatchEvent(makeClipboardEvent("copy", codeA))
 
     await waitFor(() => {
-      expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-        action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-        url: window.location.href,
-        codes: [codeA],
-      })
+      expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+        RedemptionAssistMessageTypes.ShouldPrompt,
+        {
+          url: window.location.href,
+          codes: [codeA],
+        },
+      )
     })
 
     expect(mockShowRedemptionPromptToast).toHaveBeenCalledTimes(1)
     expect(mockShowRedeemLoadingToast).not.toHaveBeenCalled()
+    expect(mockTrackProductAnalyticsActionCompleted).not.toHaveBeenCalled()
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeemByUrl,
       ),
     ).toHaveLength(0)
 
@@ -614,7 +742,7 @@ describe("setupRedemptionAssistContent", () => {
       action: "auto",
       selectedCodes: [],
     })
-    mockSendRuntimeMessage.mockResolvedValue({
+    mockSendRedemptionAssistMessage.mockResolvedValue({
       success: true,
       promptableCodes: [codeA, codeB],
     })
@@ -637,10 +765,10 @@ describe("setupRedemptionAssistContent", () => {
     expect(mockShowRedeemLoadingToast).not.toHaveBeenCalled()
     expect(mockShowRedeemResultToast).not.toHaveBeenCalled()
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
+    expect(mockTrackProductAnalyticsActionCompleted).not.toHaveBeenCalled()
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeemByUrl,
       ),
     ).toHaveLength(0)
 
@@ -649,8 +777,8 @@ describe("setupRedemptionAssistContent", () => {
 
   it("treats context-menu text as a raw code when extraction finds no standard redemption code", async () => {
     const rawSelection = "invite-code: manual redeem this"
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -688,14 +816,84 @@ describe("setupRedemptionAssistContent", () => {
       )
     })
 
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-      url: "https://example.com/redeem",
-      code: rawSelection,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: "https://example.com/redeem",
+        code: rawSelection,
+      },
+    )
     expect(mockShowRedemptionPromptToast).not.toHaveBeenCalled()
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
     expect(mockDismissToast).toHaveBeenCalledWith("loading-toast-id")
+
+    cleanup()
+  })
+
+  it("tracks failure completion when detected-code prompt redemption fails", async () => {
+    mockShowRedemptionPromptToast.mockResolvedValueOnce({
+      action: "auto",
+      selectedCodes: [codeA],
+    })
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
+        return {
+          success: true,
+          promptableCodes: [codeA],
+        }
+      }
+
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
+        return {
+          data: {
+            success: false,
+            message: "redeem failed",
+          },
+        }
+      }
+
+      return { success: false }
+    })
+
+    const { setupRedemptionAssistContent } = await import(
+      "~/entrypoints/content/redemptionAssist"
+    )
+
+    const cleanup = setupRedemptionAssistContent({
+      enableDetection: true,
+      enableContextMenu: false,
+    })
+
+    document.dispatchEvent(makeClipboardEvent("copy", codeA))
+
+    await waitFor(() => {
+      expect(mockShowRedeemBatchResultToast).toHaveBeenCalledWith(
+        [
+          {
+            code: codeA,
+            preview: "a1b2****c5d6",
+            success: false,
+            message: "redeem failed",
+          },
+        ],
+        expect.any(Function),
+      )
+    })
+
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      insights: {
+        itemCount: 1,
+        selectedCount: 1,
+        successCount: 0,
+        failureCount: 1,
+      },
+    })
 
     cleanup()
   })
@@ -732,14 +930,14 @@ describe("setupRedemptionAssistContent", () => {
     expect(mockShowRedeemLoadingToast).not.toHaveBeenCalled()
     expect(mockShowRedeemResultToast).not.toHaveBeenCalled()
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
-    expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
 
     cleanup()
   })
 
   it("defaults context-menu redemption to the current page url when no pageUrl is provided", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
@@ -776,11 +974,13 @@ describe("setupRedemptionAssistContent", () => {
       )
     })
 
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-      url: window.location.href,
-      code: codeA,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: window.location.href,
+        code: codeA,
+      },
+    )
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
 
     cleanup()
@@ -791,8 +991,8 @@ describe("setupRedemptionAssistContent", () => {
       id: "chosen-account",
       siteName: "Chosen",
     })
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: false,
@@ -805,7 +1005,7 @@ describe("setupRedemptionAssistContent", () => {
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeem) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeem) {
         return {
           data: {
             success: true,
@@ -851,13 +1051,102 @@ describe("setupRedemptionAssistContent", () => {
         title: "redemptionAssist:accountSelect.titleMultiple",
       },
     )
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-      accountId: "chosen-account",
-      code: codeA,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeem,
+      {
+        accountId: "chosen-account",
+        code: codeA,
+      },
+    )
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
     expect(mockDismissToast).toHaveBeenCalledWith("loading-toast-id")
+
+    cleanup()
+  })
+
+  it("maps manual redemption fixed failure codes to validation prompt analytics", async () => {
+    mockShowAccountSelectToast.mockResolvedValueOnce({
+      id: "chosen-account",
+      siteName: "Chosen",
+    })
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
+        return {
+          data: {
+            success: false,
+            code: "MULTIPLE_ACCOUNTS",
+            candidates: [{ id: "chosen-account", siteName: "Chosen" }],
+          },
+        }
+      }
+
+      if (type === RedemptionAssistMessageTypes.AutoRedeem) {
+        return {
+          data: {
+            success: false,
+            code: "NO_ACCOUNTS",
+            message: "No account matched this private code",
+          },
+        }
+      }
+
+      return { data: { success: false } }
+    })
+
+    const { setupRedemptionAssistContent } = await import(
+      "~/entrypoints/content/redemptionAssist"
+    )
+
+    const cleanup = setupRedemptionAssistContent({
+      enableDetection: false,
+      enableContextMenu: true,
+    })
+
+    const addListener = globalThis.browser.runtime.onMessage
+      .addListener as ReturnType<typeof vi.fn>
+    const listener = addListener.mock.calls[0]?.[0]
+
+    listener({
+      action: RuntimeActionIds.RedemptionAssistContextMenuTrigger,
+      selectionText: `${codeA}\n${codeB}`,
+      pageUrl: "https://example.com/redeem",
+    })
+
+    await waitFor(() => {
+      expect(mockShowRedeemBatchResultToast).toHaveBeenCalledWith(
+        [
+          {
+            code: codeA,
+            preview: "a1b2****c5d6",
+            success: false,
+            message: "No account matched this private code",
+          },
+        ],
+        expect.any(Function),
+      )
+    })
+
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      insights: {
+        itemCount: 1,
+        selectedCount: 1,
+        successCount: 0,
+        failureCount: 1,
+      },
+    })
+
+    const analyticsPayloads = JSON.stringify(
+      mockTrackProductAnalyticsActionCompleted.mock.calls,
+    )
+    expect(analyticsPayloads).not.toContain(codeA)
+    expect(analyticsPayloads).not.toContain("chosen-account")
+    expect(analyticsPayloads).not.toContain("No account matched")
 
     cleanup()
   })
@@ -872,10 +1161,10 @@ describe("setupRedemptionAssistContent", () => {
       siteName: "Example",
     })
 
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type, data) => {
       if (
-        message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl &&
-        message.code === codeA
+        type === RedemptionAssistMessageTypes.AutoRedeemByUrl &&
+        data?.code === codeA
       ) {
         return {
           data: {
@@ -889,11 +1178,11 @@ describe("setupRedemptionAssistContent", () => {
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeem) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeem) {
         return {
           data: {
             success: true,
-            message: `manual-${message.code}`,
+            message: `manual-${data?.code}`,
           },
         }
       }
@@ -933,16 +1222,20 @@ describe("setupRedemptionAssistContent", () => {
         title: "redemptionAssist:accountSelect.titleFallback",
       },
     )
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-      accountId: "selected-account",
-      code: codeA,
-    })
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-      accountId: "selected-account",
-      code: codeB,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeem,
+      {
+        accountId: "selected-account",
+        code: codeA,
+      },
+    )
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeem,
+      {
+        accountId: "selected-account",
+        code: codeB,
+      },
+    )
     expect(mockDismissToast).toHaveBeenCalledWith("loading-toast-id")
     expect(mockShowRedeemBatchResultToast).toHaveBeenCalledWith(
       [
@@ -961,6 +1254,27 @@ describe("setupRedemptionAssistContent", () => {
       ],
       expect.any(Function),
     )
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        itemCount: 2,
+        selectedCount: 2,
+        successCount: 2,
+        failureCount: 0,
+      },
+    })
+
+    const analyticsPayloads = JSON.stringify(
+      mockTrackProductAnalyticsActionCompleted.mock.calls,
+    )
+    expect(analyticsPayloads).not.toContain(codeA)
+    expect(analyticsPayloads).not.toContain(codeB)
+    expect(analyticsPayloads).not.toContain("selected-account")
+    expect(analyticsPayloads).not.toContain("https://example.com/redeem")
 
     cleanup()
   })
@@ -970,19 +1284,19 @@ describe("setupRedemptionAssistContent", () => {
       action: "auto",
       selectedCodes: [codeB],
     })
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistShouldPrompt) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type, data) => {
+      if (type === RedemptionAssistMessageTypes.ShouldPrompt) {
         return {
           success: true,
           promptableCodes: [codeA, codeB],
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: true,
-            message: `redeemed-${message.code}`,
+            message: `redeemed-${data?.code}`,
           },
         }
       }
@@ -1015,15 +1329,16 @@ describe("setupRedemptionAssistContent", () => {
         { code: codeB, preview: "b1c2****d5e6" },
       ],
     )
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-      url: window.location.href,
-      code: codeB,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: window.location.href,
+        code: codeB,
+      },
+    )
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeemByUrl,
       ),
     ).toHaveLength(1)
     expect(mockShowRedeemBatchResultToast).not.toHaveBeenCalled()
@@ -1033,8 +1348,8 @@ describe("setupRedemptionAssistContent", () => {
   })
 
   it("prefers the runtime error message when auto redeem fails in the context-menu flow", async () => {
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           error: "background-error",
           data: {
@@ -1091,8 +1406,8 @@ describe("setupRedemptionAssistContent", () => {
       siteName: "Example",
     })
 
-    mockSendRuntimeMessage.mockImplementation(async (message: any) => {
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeemByUrl) {
+    mockSendRedemptionAssistMessage.mockImplementation(async (type) => {
+      if (type === RedemptionAssistMessageTypes.AutoRedeemByUrl) {
         return {
           data: {
             success: false,
@@ -1102,7 +1417,7 @@ describe("setupRedemptionAssistContent", () => {
         }
       }
 
-      if (message.action === RuntimeActionIds.RedemptionAssistAutoRedeem) {
+      if (type === RedemptionAssistMessageTypes.AutoRedeem) {
         return {
           data: {
             success: false,
@@ -1136,11 +1451,13 @@ describe("setupRedemptionAssistContent", () => {
       expect(mockShowRedeemBatchResultToast).toHaveBeenCalledTimes(1)
     })
 
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-      accountId: "selected-account",
-      code: codeA,
-    })
+    expect(mockSendRedemptionAssistMessage).toHaveBeenCalledWith(
+      RedemptionAssistMessageTypes.AutoRedeem,
+      {
+        accountId: "selected-account",
+        code: codeA,
+      },
+    )
     expect(mockShowRedeemBatchResultToast).toHaveBeenCalledWith(
       [
         {
@@ -1162,7 +1479,7 @@ describe("setupRedemptionAssistContent", () => {
       selectedCodes: [codeA],
     })
     mockShowAccountSelectToast.mockResolvedValueOnce(null)
-    mockSendRuntimeMessage.mockResolvedValue({
+    mockSendRedemptionAssistMessage.mockResolvedValue({
       data: {
         success: false,
         code: "MULTIPLE_ACCOUNTS",
@@ -1215,11 +1532,24 @@ describe("setupRedemptionAssistContent", () => {
       expect.any(Function),
     )
     expect(
-      mockSendRuntimeMessage.mock.calls.filter(
-        ([message]) =>
-          message?.action === RuntimeActionIds.RedemptionAssistAutoRedeem,
+      mockSendRedemptionAssistMessage.mock.calls.filter(
+        ([type]) => type === RedemptionAssistMessageTypes.AutoRedeem,
       ),
     ).toHaveLength(0)
+    expect(mockTrackProductAnalyticsActionCompleted).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      insights: {
+        itemCount: 1,
+        selectedCount: 1,
+        successCount: 0,
+        failureCount: 1,
+      },
+    })
 
     cleanup()
   })
@@ -1252,6 +1582,7 @@ describe("setupRedemptionAssistContent", () => {
       "Context menu trigger missing selection",
     )
     expect(mockSendRuntimeMessage).not.toHaveBeenCalled()
+    expect(mockSendRedemptionAssistMessage).not.toHaveBeenCalled()
 
     cleanup()
 

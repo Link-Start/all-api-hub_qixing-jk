@@ -7,22 +7,47 @@ import { useTranslation } from "react-i18next"
 
 import ManagedSiteConfigRequiredState from "~/components/ManagedSiteConfigRequiredState"
 import ManagedSiteTypeSwitcher from "~/components/ManagedSiteTypeSwitcher"
+import { OptionsPageSettingsTitleAction } from "~/components/OptionsPageSettingsTitleAction"
 import { PageHeader } from "~/components/PageHeader"
 import { Button, EmptyState, Input } from "~/components/ui"
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
 import { hasValidManagedSiteConfig } from "~/services/managedSites/managedSiteService"
 import {
   getManagedSiteConfigMissingMessage,
   getManagedSiteMessagesKeyFromSiteType,
+  getManagedSiteUnsupportedModelSyncMessage,
+  supportsManagedSiteModelSync,
 } from "~/services/managedSites/utils/managedSite"
+import { sendModelSyncMessage } from "~/services/models/modelSync/messaging"
+import {
+  startProductAnalyticsAction,
+  trackProductAnalyticsActionCompleted,
+  type ProductAnalyticsActionCompleteOptions,
+  type ProductAnalyticsActionContext,
+  type ProductAnalyticsActionInsights,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+  type ProductAnalyticsResult,
+  type ProductAnalyticsStatusKind,
+} from "~/services/productAnalytics/events"
+import { buildManagedSiteModelSyncDiagnostics } from "~/services/productAnalytics/managedSiteModelSync"
+import { ModelSyncMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type { ManagedSiteChannel } from "~/types/managedSite"
 import type {
   ExecutionItemResult,
   ExecutionProgress,
   ExecutionResult,
 } from "~/types/managedSiteModelSync"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
+import { onRuntimeMessage } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
 import { showWarningToast } from "~/utils/core/toastHelpers"
 
@@ -47,6 +72,83 @@ const TAB_INDEX = {
 
 const hasModelSyncFailures = (execution: ExecutionResult) =>
   execution.statistics.failureCount > 0
+
+const isEmptyModelSyncExecution = (execution: ExecutionResult) =>
+  execution.statistics.total === 0 || execution.items.length === 0
+
+const getModelSyncExecutionAnalyticsResult = (execution: ExecutionResult) => {
+  if (isEmptyModelSyncExecution(execution)) {
+    return PRODUCT_ANALYTICS_RESULTS.Skipped
+  }
+
+  if (hasModelSyncFailures(execution)) {
+    return PRODUCT_ANALYTICS_RESULTS.Failure
+  }
+
+  return PRODUCT_ANALYTICS_RESULTS.Success
+}
+
+const getModelSyncExecutionAnalyticsCompletionOptions = (
+  execution: ExecutionResult,
+): ProductAnalyticsActionCompleteOptions => ({
+  ...(hasModelSyncFailures(execution)
+    ? { errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown }
+    : {}),
+  insights: {
+    itemCount: execution.statistics.total,
+    successCount: execution.statistics.successCount,
+    failureCount: execution.statistics.failureCount,
+  },
+})
+
+const getItemCount = (items?: unknown[]) => items?.length ?? 0
+
+const getStatusKindFromFilterStatus = (
+  status: FilterStatus,
+): ProductAnalyticsStatusKind | undefined =>
+  status === "all" ? undefined : status === "success" ? "healthy" : "error"
+
+const filterExecutionItems = (
+  items: ExecutionItemResult[],
+  status: FilterStatus,
+  keyword: string,
+) =>
+  items.filter((item) => {
+    if (status === "success" && !item.ok) return false
+    if (status === "failed" && item.ok) return false
+
+    if (keyword) {
+      const normalizedKeyword = keyword.toLowerCase()
+      return (
+        item.channelName.toLowerCase().includes(normalizedKeyword) ||
+        item.channelId.toString().includes(normalizedKeyword) ||
+        item.message?.toLowerCase().includes(normalizedKeyword)
+      )
+    }
+
+    return true
+  })
+
+const actionBarAnalyticsScope = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncActionBar,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+}
+const manualPanelAnalyticsScope = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  surfaceId:
+    PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncManualPanel,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+}
+const resultsTableAnalyticsScope = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  surfaceId:
+    PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteModelSyncResultsTable,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+}
+
+const startModelSyncAnalytics = (context: ProductAnalyticsActionContext) =>
+  startProductAnalyticsAction(context)
 
 /**
  * New API Model Sync dashboard showing history, manual runs, progress, and filters.
@@ -73,10 +175,14 @@ export default function ManagedSiteModelSync({
   ])
   const { managedSiteType, preferences } = useUserPreferencesContext()
   const hasInitializedTab = useRef(false)
+  const configMissingTrackedFor = useRef<string | null>(null)
+  const historySearchAnalyticsKey = useRef<string | null>(null)
+  const manualSearchAnalyticsKey = useRef<string | null>(null)
   const isConfigMissing = !hasValidManagedSiteConfig(
     preferences,
     managedSiteType,
   )
+  const isModelSyncUnsupported = !supportsManagedSiteModelSync(managedSiteType)
   const [lastExecution, setLastExecution] = useState<ExecutionResult | null>(
     null,
   )
@@ -102,28 +208,98 @@ export default function ManagedSiteModelSync({
   const [hasAttemptedChannelsLoad, setHasAttemptedChannelsLoad] =
     useState(false)
 
+  const managedSiteAnalyticsInsights = useMemo(
+    () => ({
+      managedSiteType,
+    }),
+    [managedSiteType],
+  )
+
+  const completeModelSyncActionAnalytics = useCallback(
+    (
+      tracker: ReturnType<typeof startProductAnalyticsAction>,
+      result: ProductAnalyticsResult = PRODUCT_ANALYTICS_RESULTS.Success,
+      options: ProductAnalyticsActionCompleteOptions = {},
+    ) => {
+      tracker.complete(result, {
+        ...options,
+        insights: {
+          ...managedSiteAnalyticsInsights,
+          ...options.insights,
+        },
+      })
+    },
+    [managedSiteAnalyticsInsights],
+  )
+
+  const completeModelSyncExecutionAnalytics = useCallback(
+    (
+      tracker: ReturnType<typeof startProductAnalyticsAction>,
+      execution: ExecutionResult,
+      insights?: ProductAnalyticsActionInsights,
+    ) => {
+      const result = getModelSyncExecutionAnalyticsResult(execution)
+      const options = getModelSyncExecutionAnalyticsCompletionOptions(execution)
+
+      completeModelSyncActionAnalytics(tracker, result, {
+        ...options,
+        diagnostics: buildManagedSiteModelSyncDiagnostics({
+          managedSiteType,
+          mode: insights?.mode ?? PRODUCT_ANALYTICS_MODE_IDS.All,
+          sourceKind: insights?.sourceKind,
+          execution,
+        }),
+        insights: {
+          ...options.insights,
+          ...insights,
+        },
+      })
+    },
+    [completeModelSyncActionAnalytics, managedSiteType],
+  )
+
+  const trackInstantModelSyncAction = useCallback(
+    (
+      context: ProductAnalyticsActionContext,
+      insights?: ProductAnalyticsActionInsights,
+    ) => {
+      const tracker = startModelSyncAnalytics(context)
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          insights,
+        },
+      )
+    },
+    [completeModelSyncActionAnalytics],
+  )
+
   const loadLastExecution = useCallback(async () => {
     try {
       setIsLoading(true)
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncGetLastExecution,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.GetLastExecution,
+      )
 
       if (response.success) {
         setLastExecution(response.data)
+        return getItemCount(response.data?.items)
       }
     } catch (error) {
       logger.error("Failed to load last execution", error)
     } finally {
       setIsLoading(false)
     }
+
+    return null
   }, [])
 
   const loadProgress = useCallback(async () => {
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncGetProgress,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.GetProgress,
+      )
 
       if (response.success) {
         setProgress(response.data)
@@ -135,9 +311,9 @@ export default function ManagedSiteModelSync({
 
   const loadNextRun = useCallback(async () => {
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncGetNextRun,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.GetNextRun,
+      )
 
       if (response.success) {
         setNextScheduledAt(response.data?.nextScheduledAt ?? null)
@@ -149,9 +325,9 @@ export default function ManagedSiteModelSync({
 
   const loadPreferences = useCallback(async () => {
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncGetPreferences,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.GetPreferences,
+      )
 
       if (response.success) {
         setIsAutoSyncEnabled(!!response.data?.enableSync)
@@ -163,21 +339,46 @@ export default function ManagedSiteModelSync({
   }, [])
 
   const loadChannels = useCallback(async () => {
+    const tracker = startModelSyncAnalytics({
+      ...manualPanelAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ReloadManagedSiteModelSyncChannels,
+    })
+
     try {
       setIsChannelsLoading(true)
       setChannelsError(null)
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncListChannels,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.ListChannels,
+      )
 
       if (response.success) {
-        setChannels(response.data?.items ?? [])
+        const items = response.data?.items ?? []
+        setChannels(items)
+        completeModelSyncActionAnalytics(
+          tracker,
+          PRODUCT_ANALYTICS_RESULTS.Success,
+          {
+            insights: {
+              itemCount: items.length,
+            },
+          },
+        )
       } else {
         throw new Error(response.error)
       }
     } catch (error: any) {
       const message = error?.message || "Unknown error"
       setChannelsError(message)
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            itemCount: 0,
+          },
+        },
+      )
       toast.error(
         t("messages.error.loadFailed", {
           error: message,
@@ -187,14 +388,58 @@ export default function ManagedSiteModelSync({
       setIsChannelsLoading(false)
       setHasAttemptedChannelsLoad(true)
     }
-  }, [t])
+  }, [completeModelSyncActionAnalytics, t])
+
+  const handleRefresh = async () => {
+    const tracker = startModelSyncAnalytics({
+      ...actionBarAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteModelSyncResults,
+    })
+
+    const itemCount = await loadLastExecution()
+    await Promise.all([loadProgress(), loadNextRun(), loadPreferences()])
+
+    completeModelSyncActionAnalytics(
+      tracker,
+      itemCount === null
+        ? PRODUCT_ANALYTICS_RESULTS.Failure
+        : PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        ...(itemCount === null
+          ? { errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown }
+          : {}),
+        insights: {
+          itemCount: itemCount ?? 0,
+        },
+      },
+    )
+  }
 
   useEffect(() => {
-    if (isConfigMissing) {
+    if (isModelSyncUnsupported) {
       setIsLoading(false)
       return
     }
 
+    if (isConfigMissing) {
+      setIsLoading(false)
+      if (configMissingTrackedFor.current !== managedSiteType) {
+        configMissingTrackedFor.current = managedSiteType
+        void trackProductAnalyticsActionCompleted({
+          ...actionBarAnalyticsScope,
+          actionId:
+            PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteModelSyncConfigRequired,
+          result: PRODUCT_ANALYTICS_RESULTS.Skipped,
+          insights: {
+            managedSiteType,
+            targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ConfigRequired,
+          },
+        })
+      }
+      return
+    }
+
+    configMissingTrackedFor.current = null
     void loadLastExecution()
     void loadProgress()
     void loadNextRun()
@@ -213,12 +458,11 @@ export default function ManagedSiteModelSync({
       }
     }
 
-    browser.runtime.onMessage.addListener(handleMessage)
-    return () => {
-      browser.runtime.onMessage.removeListener(handleMessage)
-    }
+    return onRuntimeMessage(handleMessage)
   }, [
+    completeModelSyncActionAnalytics,
     isConfigMissing,
+    isModelSyncUnsupported,
     loadLastExecution,
     loadNextRun,
     loadPreferences,
@@ -239,8 +483,8 @@ export default function ManagedSiteModelSync({
     setChannels([])
     setChannelsError(null)
     setHasAttemptedChannelsLoad(false)
-    setIsLoading(!isConfigMissing)
-  }, [isConfigMissing, managedSiteType])
+    setIsLoading(!isConfigMissing && !isModelSyncUnsupported)
+  }, [isConfigMissing, isModelSyncUnsupported, managedSiteType])
 
   useEffect(() => {
     if (!progress?.isRunning) {
@@ -262,6 +506,7 @@ export default function ManagedSiteModelSync({
   useEffect(() => {
     if (
       !isConfigMissing &&
+      !isModelSyncUnsupported &&
       selectedTab === TAB_INDEX.manual &&
       channels.length === 0 &&
       !isChannelsLoading &&
@@ -273,13 +518,14 @@ export default function ManagedSiteModelSync({
     channels.length,
     hasAttemptedChannelsLoad,
     isConfigMissing,
+    isModelSyncUnsupported,
     isChannelsLoading,
     loadChannels,
     selectedTab,
   ])
 
   useEffect(() => {
-    if (isConfigMissing) {
+    if (isConfigMissing || isModelSyncUnsupported) {
       return
     }
 
@@ -291,6 +537,7 @@ export default function ManagedSiteModelSync({
     }
   }, [
     isConfigMissing,
+    isModelSyncUnsupported,
     loadLastExecution,
     loadNextRun,
     loadPreferences,
@@ -299,7 +546,7 @@ export default function ManagedSiteModelSync({
   ])
 
   useEffect(() => {
-    if (isConfigMissing) {
+    if (isConfigMissing || isModelSyncUnsupported) {
       return
     }
 
@@ -336,6 +583,7 @@ export default function ManagedSiteModelSync({
     channels.length,
     hasAttemptedChannelsLoad,
     isConfigMissing,
+    isModelSyncUnsupported,
     isChannelsLoading,
     loadChannels,
     routeParams?.channelId,
@@ -376,36 +624,80 @@ export default function ManagedSiteModelSync({
    * Handles retrying only the failed channels from the last execution, showing appropriate success or error toasts based on the result.
    */
   async function handleRetryFailed() {
+    const tracker = startModelSyncAnalytics({
+      ...actionBarAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RetryFailedManagedSiteModelSync,
+    })
+
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncTriggerFailedOnly,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.TriggerFailedOnly,
+      )
 
       if (response.success) {
         notifySyncCompletion(response.data)
         setLastExecution(response.data)
+        completeModelSyncExecutionAnalytics(tracker, response.data, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+        })
       } else {
         toast.error(t("messages.error.syncFailed", { error: response.error }))
+        completeModelSyncActionAnalytics(
+          tracker,
+          PRODUCT_ANALYTICS_RESULTS.Failure,
+          {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          },
+        )
       }
     } catch (error: any) {
       toast.error(t("messages.error.syncFailed", { error: error.message }))
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      )
     }
   }
 
   const handleRunAll = async () => {
+    const tracker = startModelSyncAnalytics({
+      ...actionBarAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.SyncAllManagedSiteModels,
+    })
+
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncTriggerAll,
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.TriggerAll,
+      )
 
       if (response.success) {
         notifySyncCompletion(response.data)
         setLastExecution(response.data)
+        completeModelSyncExecutionAnalytics(tracker, response.data, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+        })
       } else {
         toast.error(t("messages.error.syncFailed", { error: response.error }))
+        completeModelSyncActionAnalytics(
+          tracker,
+          PRODUCT_ANALYTICS_RESULTS.Failure,
+          {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          },
+        )
       }
     } catch (error: any) {
       toast.error(t("messages.error.syncFailed", { error: error.message }))
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      )
     }
   }
 
@@ -413,16 +705,39 @@ export default function ManagedSiteModelSync({
     const selectedSet =
       source === "history" ? historySelectedIds : manualSelectedIds
 
+    const tracker = startModelSyncAnalytics({
+      ...(source === "history"
+        ? actionBarAnalyticsScope
+        : manualPanelAnalyticsScope),
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.SyncSelectedManagedSiteModels,
+    })
+
     if (selectedSet.size === 0) {
       toast.error(t("messages.error.noSelection"))
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Skipped,
+        {
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+            sourceKind:
+              source === "history"
+                ? PRODUCT_ANALYTICS_SOURCE_KINDS.History
+                : PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+            selectedCount: 0,
+          },
+        },
+      )
       return
     }
 
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: Array.from(selectedSet),
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.TriggerSelected,
+        {
+          channelIds: Array.from(selectedSet),
+        },
+      )
 
       if (response.success) {
         notifySyncCompletion(response.data)
@@ -432,28 +747,50 @@ export default function ManagedSiteModelSync({
         } else {
           setManualSelectedIds(new Set())
         }
+        completeModelSyncExecutionAnalytics(tracker, response.data, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+          sourceKind:
+            source === "history"
+              ? PRODUCT_ANALYTICS_SOURCE_KINDS.History
+              : PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+          selectedCount: selectedSet.size,
+        })
       } else {
         toast.error(t("messages.error.syncFailed", { error: response.error }))
+        completeModelSyncActionAnalytics(
+          tracker,
+          PRODUCT_ANALYTICS_RESULTS.Failure,
+          {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          },
+        )
       }
     } catch (error: any) {
       toast.error(t("messages.error.syncFailed", { error: error.message }))
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      )
     }
   }
 
-  const handleRefresh = () => {
-    void loadLastExecution()
-    void loadProgress()
-    void loadNextRun()
-    void loadPreferences()
-  }
-
   const handleRunSingle = async (channelId: number) => {
+    const tracker = startModelSyncAnalytics({
+      ...resultsTableAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.SyncSingleManagedSiteModel,
+    })
+
     setRunningChannelId(channelId)
     try {
-      const response = await sendRuntimeMessage({
-        action: RuntimeActionIds.ModelSyncTriggerSelected,
-        channelIds: [channelId],
-      })
+      const response = await sendModelSyncMessage(
+        ModelSyncMessageTypes.TriggerSelected,
+        {
+          channelIds: [channelId],
+        },
+      )
 
       if (response.success) {
         const newItem = response.data.items[0]
@@ -497,17 +834,37 @@ export default function ManagedSiteModelSync({
             }
           })
         }
+        completeModelSyncExecutionAnalytics(tracker, response.data, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Row,
+          selectedCount: 1,
+        })
       } else {
         toast.error(t("messages.error.syncFailed", { error: response.error }))
+        completeModelSyncActionAnalytics(
+          tracker,
+          PRODUCT_ANALYTICS_RESULTS.Failure,
+          {
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          },
+        )
       }
     } catch (error: any) {
       toast.error(t("messages.error.syncFailed", { error: error.message }))
+      completeModelSyncActionAnalytics(
+        tracker,
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      )
     } finally {
       setRunningChannelId(null)
     }
   }
 
   const handleHistorySelectAll = (checked: boolean) => {
+    const itemCount = filteredItems?.length ?? 0
     if (checked && filteredItems) {
       setHistorySelectedIds(
         new Set(filteredItems.map((item) => item.channelId)),
@@ -515,6 +872,19 @@ export default function ManagedSiteModelSync({
     } else {
       setHistorySelectedIds(new Set())
     }
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      },
+      {
+        mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+        selectedCount: checked ? itemCount : 0,
+        itemCount,
+      },
+    )
   }
 
   const handleHistorySelectItem = (channelId: number, checked: boolean) => {
@@ -525,26 +895,24 @@ export default function ManagedSiteModelSync({
       newSelected.delete(channelId)
     }
     setHistorySelectedIds(newSelected)
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      },
+      {
+        mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+        selectedCount: newSelected.size,
+        itemCount: filteredItems?.length ?? 0,
+      },
+    )
   }
 
-  // Filter and search
-  const filteredItems = lastExecution?.items.filter((item) => {
-    // Filter by status
-    if (filterStatus === "success" && !item.ok) return false
-    if (filterStatus === "failed" && item.ok) return false
-
-    // Search by keyword
-    if (searchKeyword) {
-      const keyword = searchKeyword.toLowerCase()
-      return (
-        item.channelName.toLowerCase().includes(keyword) ||
-        item.channelId.toString().includes(keyword) ||
-        item.message?.toLowerCase().includes(keyword)
-      )
-    }
-
-    return true
-  })
+  const filteredItems = lastExecution
+    ? filterExecutionItems(lastExecution.items, filterStatus, searchKeyword)
+    : undefined
 
   const manualItems: ExecutionItemResult[] = useMemo(() => {
     const keyword = manualSearchKeyword.toLowerCase().trim()
@@ -565,6 +933,113 @@ export default function ManagedSiteModelSync({
     }))
   }, [channels, manualSearchKeyword])
 
+  const handleTabChange = (index: number) => {
+    setSelectedTab(index)
+    trackInstantModelSyncAction(
+      {
+        ...actionBarAnalyticsScope,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.SelectManagedSiteModelSyncTab,
+      },
+      {
+        sourceKind:
+          index === TAB_INDEX.manual
+            ? PRODUCT_ANALYTICS_SOURCE_KINDS.Manual
+            : PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+      },
+    )
+  }
+
+  const handleHistoryStatusChange = (status: FilterStatus) => {
+    if (status === filterStatus) {
+      return
+    }
+
+    const nextItems = lastExecution
+      ? filterExecutionItems(lastExecution.items, status, searchKeyword)
+      : []
+    setFilterStatus(status)
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.FilterManagedSiteModelSyncResults,
+      },
+      {
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+        statusKind: getStatusKindFromFilterStatus(status),
+        itemCount: nextItems.length,
+      },
+    )
+  }
+
+  const handleHistorySearchChange = (keyword: string) => {
+    setSearchKeyword(keyword)
+  }
+
+  const handleManualSearchChange = (keyword: string) => {
+    setManualSearchKeyword(keyword)
+  }
+
+  useEffect(() => {
+    const normalizedKeyword = searchKeyword.trim()
+    const resultCount = filteredItems?.length ?? 0
+    const analyticsKey = normalizedKeyword
+      ? `history:${normalizedKeyword}:${resultCount}`
+      : "history:empty"
+
+    if (historySearchAnalyticsKey.current === analyticsKey) {
+      return
+    }
+
+    historySearchAnalyticsKey.current = analyticsKey
+
+    if (!normalizedKeyword) {
+      return
+    }
+
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SearchManagedSiteModelSyncChannels,
+      },
+      {
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.History,
+        itemCount: resultCount,
+      },
+    )
+  }, [filteredItems?.length, searchKeyword, trackInstantModelSyncAction])
+
+  useEffect(() => {
+    const normalizedKeyword = manualSearchKeyword.trim()
+    const resultCount = manualItems.length
+    const analyticsKey = normalizedKeyword
+      ? `manual:${normalizedKeyword}:${resultCount}`
+      : "manual:empty"
+
+    if (manualSearchAnalyticsKey.current === analyticsKey) {
+      return
+    }
+
+    manualSearchAnalyticsKey.current = analyticsKey
+
+    if (!normalizedKeyword) {
+      return
+    }
+
+    trackInstantModelSyncAction(
+      {
+        ...manualPanelAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SearchManagedSiteModelSyncChannels,
+      },
+      {
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+        itemCount: resultCount,
+      },
+    )
+  }, [manualItems.length, manualSearchKeyword, trackInstantModelSyncAction])
+
   const isInitialLoading = isLoading && lastExecution === null
 
   if (!isConfigMissing && isInitialLoading) {
@@ -578,11 +1053,25 @@ export default function ManagedSiteModelSync({
   const manualTabLabel = t("execution.tabs.manual")
 
   const handleManualSelectAll = (checked: boolean) => {
+    const itemCount = manualItems.length
     if (checked) {
       setManualSelectedIds(new Set(manualItems.map((item) => item.channelId)))
     } else {
       setManualSelectedIds(new Set())
     }
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      },
+      {
+        mode: PRODUCT_ANALYTICS_MODE_IDS.Selected,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+        selectedCount: checked ? itemCount : 0,
+        itemCount,
+      },
+    )
   }
 
   const handleManualSelectItem = (channelId: number, checked: boolean) => {
@@ -593,10 +1082,23 @@ export default function ManagedSiteModelSync({
       newSelected.delete(channelId)
     }
     setManualSelectedIds(newSelected)
+    trackInstantModelSyncAction(
+      {
+        ...resultsTableAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.SelectAllManagedSiteModelSyncChannels,
+      },
+      {
+        mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+        selectedCount: newSelected.size,
+        itemCount: manualItems.length,
+      },
+    )
   }
 
   const renderTabs = () => (
-    <Tab.Group selectedIndex={selectedTab} onChange={setSelectedTab}>
+    <Tab.Group selectedIndex={selectedTab} onChange={handleTabChange}>
       <Tab.List className="mb-4 flex space-x-2 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
         <Tab
           className={({ selected }) =>
@@ -641,8 +1143,8 @@ export default function ManagedSiteModelSync({
                   statistics={lastExecution.statistics}
                   status={filterStatus}
                   keyword={searchKeyword}
-                  onStatusChange={setFilterStatus}
-                  onKeywordChange={setSearchKeyword}
+                  onStatusChange={handleHistoryStatusChange}
+                  onKeywordChange={handleHistorySearchChange}
                 />
               </div>
             )}
@@ -676,7 +1178,7 @@ export default function ManagedSiteModelSync({
                       t("execution.manual.searchPlaceholder") as string
                     }
                     value={manualSearchKeyword}
-                    onChange={(e) => setManualSearchKeyword(e.target.value)}
+                    onChange={(e) => handleManualSearchChange(e.target.value)}
                     leftIcon={<MagnifyingGlassIcon className="h-4 w-4" />}
                   />
                 </div>
@@ -748,6 +1250,12 @@ export default function ManagedSiteModelSync({
       <PageHeader
         icon={RefreshCcw}
         title={t("execution.title")}
+        titleActions={
+          <OptionsPageSettingsTitleAction
+            tabId="managedSite"
+            anchor="managed-site-model-sync"
+          />
+        }
         description={t("description")}
         actions={
           <ManagedSiteTypeSwitcher
@@ -760,7 +1268,17 @@ export default function ManagedSiteModelSync({
         spacing="compact"
       />
 
-      {isConfigMissing ? (
+      {isModelSyncUnsupported ? (
+        <EmptyState
+          className="mt-6"
+          icon={<RefreshCcw className="h-12 w-12 text-slate-400" />}
+          title={t("managedSiteModelSync:execution.unsupported.title")}
+          description={getManagedSiteUnsupportedModelSyncMessage(
+            t,
+            getManagedSiteMessagesKeyFromSiteType(managedSiteType),
+          )}
+        />
+      ) : isConfigMissing ? (
         <ManagedSiteConfigRequiredState
           description={getManagedSiteConfigMissingMessage(
             t,

@@ -10,7 +10,10 @@ import { Button, Heading3, IconButton, Separator } from "~/components/ui"
 import { Z_INDEX } from "~/constants/designTokens"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
-import { getMenuItemLabel } from "~/features/OptionsMenu/getMenuItemLabel"
+import {
+  getMenuCategoryLabel,
+  getMenuItemLabel,
+} from "~/features/OptionsMenu/getMenuItemLabel"
 import { cn } from "~/lib/utils"
 
 import { menuItems } from "../constants"
@@ -27,14 +30,6 @@ interface SidebarProps {
 const DESKTOP_WIDTH = 256
 const COLLAPSED_WIDTH = 64
 const MOBILE_WIDTH = 256
-
-const SEPARATOR_BEFORE_IDS = new Set<string>([
-  MENU_ITEM_IDS.MODELS,
-  MENU_ITEM_IDS.MANAGED_SITE_CHANNELS,
-  MENU_ITEM_IDS.IMPORT_EXPORT,
-  MENU_ITEM_IDS.BALANCE_HISTORY,
-  MENU_ITEM_IDS.SITE_ANNOUNCEMENTS,
-])
 
 /**
  * Animated sidebar for the Options page, supporting collapse and mobile overlay.
@@ -58,6 +53,17 @@ function Sidebar({
   const { t } = useTranslation("ui")
   const { preferences } = useUserPreferencesContext()
   const shouldShowCollapsedState = isCollapsed && !isMobileOpen
+
+  const visibleMenuItems = menuItems.filter((item) => {
+    if (
+      item.id === MENU_ITEM_IDS.AUTO_CHECKIN &&
+      !preferences?.autoCheckin?.globalEnabled
+    ) {
+      return false
+    }
+    return true
+  })
+
   const targetWidth = isMobileOpen
     ? MOBILE_WIDTH
     : shouldShowCollapsedState
@@ -167,26 +173,29 @@ function Sidebar({
             className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto py-4"
           >
             <ul className="space-y-1 px-2">
-              {menuItems.map((item) => {
+              {visibleMenuItems.map((item, index) => {
                 const Icon = item.icon
                 const isActive = activeMenuItem === item.id
                 const label = getMenuItemLabel(t, item.id)
 
-                if (
-                  item.id === MENU_ITEM_IDS.AUTO_CHECKIN &&
-                  !preferences?.autoCheckin?.globalEnabled
-                ) {
-                  return null
-                }
-
-                const shouldShowSeparatorBefore =
-                  SEPARATOR_BEFORE_IDS.has(item.id) && !shouldShowCollapsedState
+                const prevItem = index > 0 ? visibleMenuItems[index - 1] : null
+                const isNewCategory =
+                  item.category && item.category !== prevItem?.category
+                const categoryLabel = item.category
+                  ? getMenuCategoryLabel(t, item.category)
+                  : null
 
                 return (
                   <li key={item.id}>
-                    {shouldShowSeparatorBefore && (
-                      <Separator className="mx-3 my-1" />
-                    )}
+                    {isNewCategory &&
+                      categoryLabel &&
+                      !shouldShowCollapsedState && (
+                        <div className="mt-4 mb-2 px-3">
+                          <Heading3 className="dark:text-dark-text-tertiary text-xs font-semibold tracking-wide text-gray-400 uppercase">
+                            {categoryLabel}
+                          </Heading3>
+                        </div>
+                      )}
                     <button
                       onClick={() => onMenuItemClick(item.id)}
                       title={shouldShowCollapsedState ? label : undefined}

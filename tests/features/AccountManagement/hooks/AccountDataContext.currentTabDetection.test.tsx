@@ -3,6 +3,7 @@ import { useEffect } from "react"
 import { I18nextProvider } from "react-i18next"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { SITE_TYPES } from "~/constants/siteType"
 import {
   AccountDataProvider,
   useAccountDataContext,
@@ -71,6 +72,11 @@ vi.mock("~/contexts/UserPreferencesContext", () => ({
       lastModified: Date.now(),
       criteria: [{ id: "current_site", enabled: true, priority: 0 }],
     },
+    preferences: {
+      balanceHistory: {
+        estimatedTodayIncome: { enabled: false },
+      },
+    },
   }),
 }))
 
@@ -97,6 +103,16 @@ vi.mock("~/utils/browser/browserApi", () => ({
       tabUpdatedListener = null
     }
   }),
+  sendTabMessage: vi.fn(
+    (
+      tabId: number,
+      message: unknown,
+      options?: browser.tabs._SendMessageOptions,
+    ) =>
+      typeof options === "undefined"
+        ? globalThis.browser.tabs.sendMessage(tabId, message)
+        : globalThis.browser.tabs.sendMessage(tabId, message, options),
+  ),
 }))
 
 /**
@@ -121,17 +137,19 @@ function createAccount({
   id,
   baseUrl,
   userId,
+  siteType = SITE_TYPES.UNKNOWN,
 }: {
   id: string
   baseUrl: string
-  userId: number
+  userId: string
+  siteType?: string
 }) {
   return {
     id,
     site_name: "Test",
     site_url: baseUrl,
     health: { status: SiteHealthStatus.Healthy },
-    site_type: "unknown",
+    site_type: siteType,
     exchange_rate: 7,
     account_info: {
       id: userId,
@@ -167,12 +185,12 @@ describe("AccountDataContext current tab detection", () => {
     const account1 = createAccount({
       id: "acc-1",
       baseUrl: "https://foo.example.com",
-      userId: 1,
+      userId: "1",
     })
     const account2 = createAccount({
       id: "acc-2",
       baseUrl: "https://foo.example.com",
-      userId: 2,
+      userId: "2",
     })
 
     mockResetExpiredCheckIns.mockResolvedValue(undefined)
@@ -195,7 +213,7 @@ describe("AccountDataContext current tab detection", () => {
       .spyOn(browser.tabs, "sendMessage")
       .mockResolvedValue({
         success: true,
-        data: { userId: 2, user: { id: 2 } },
+        data: { userId: "2", user: { id: 2 } },
       } as any)
 
     let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
@@ -216,18 +234,197 @@ describe("AccountDataContext current tab detection", () => {
     expect(sendMessageSpy).toHaveBeenCalledTimes(1)
   })
 
+  it("matches AIHubMix current tab across main and console origins", async () => {
+    activeTabs = [{ id: 104, url: "https://aihubmix.com/statistics" }]
+
+    const aihubmixAccount = createAccount({
+      id: "acc-aihubmix",
+      baseUrl: "https://console.aihubmix.com",
+      userId: "aihubmix-user",
+      siteType: SITE_TYPES.AIHUBMIX,
+    })
+
+    mockResetExpiredCheckIns.mockResolvedValue(undefined)
+    mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+    mockGetAllAccounts.mockResolvedValue([aihubmixAccount])
+    mockGetAllBookmarks.mockResolvedValue([])
+    mockGetOrderedList.mockResolvedValue([])
+    mockGetPinnedList.mockResolvedValue([])
+    mockGetAccountStats.mockResolvedValue({
+      total_quota: 0,
+      today_total_consumption: 0,
+      today_total_requests: 0,
+      today_total_prompt_tokens: 0,
+      today_total_completion_tokens: 0,
+      today_total_income: 0,
+    })
+    mockConvertToDisplayData.mockReturnValue([{ id: "acc-aihubmix" }])
+
+    const sendMessageSpy = vi
+      .spyOn(browser.tabs, "sendMessage")
+      .mockResolvedValue({
+        success: true,
+        data: { userId: "aihubmix-user", user: { username: "aihubmix-user" } },
+      } as any)
+
+    let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
+
+    render(
+      <I18nextProvider i18n={testI18n}>
+        <AccountDataProvider>
+          <ContextProbe onChange={(ctx) => (latestCtx = ctx)} />
+        </AccountDataProvider>
+      </I18nextProvider>,
+    )
+
+    await waitFor(() => {
+      expect(
+        latestCtx?.detectedSiteAccounts.map((account) => account.id),
+      ).toEqual(["acc-aihubmix"])
+      expect(latestCtx?.detectedAccount?.id).toBe("acc-aihubmix")
+    })
+
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      104,
+      expect.objectContaining({
+        siteType: SITE_TYPES.AIHUBMIX,
+      }),
+    )
+  })
+
+  it("normalizes string identities from current-tab user verification before matching", async () => {
+    activeTabs = [{ id: 102, url: "https://foo.example.com/dashboard" }]
+
+    const matchingAccount = createAccount({
+      id: "acc-aihubmix",
+      baseUrl: "https://foo.example.com",
+      userId: "aihubmix-user",
+    })
+
+    mockResetExpiredCheckIns.mockResolvedValue(undefined)
+    mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+    mockGetAllAccounts.mockResolvedValue([matchingAccount])
+    mockGetAllBookmarks.mockResolvedValue([])
+    mockGetOrderedList.mockResolvedValue([])
+    mockGetPinnedList.mockResolvedValue([])
+    mockGetAccountStats.mockResolvedValue({
+      total_quota: 0,
+      today_total_consumption: 0,
+      today_total_requests: 0,
+      today_total_prompt_tokens: 0,
+      today_total_completion_tokens: 0,
+      today_total_income: 0,
+    })
+    mockConvertToDisplayData.mockReturnValue([{ id: "acc-aihubmix" }])
+
+    const sendMessageSpy = vi
+      .spyOn(browser.tabs, "sendMessage")
+      .mockResolvedValue({
+        success: true,
+        data: { userId: " aihubmix-user ", user: { id: "aihubmix-user" } },
+      } as any)
+
+    let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
+
+    render(
+      <I18nextProvider i18n={testI18n}>
+        <AccountDataProvider>
+          <ContextProbe onChange={(ctx) => (latestCtx = ctx)} />
+        </AccountDataProvider>
+      </I18nextProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestCtx?.detectedAccount?.id).toBe("acc-aihubmix")
+    })
+
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      102,
+      expect.objectContaining({
+        siteType: SITE_TYPES.UNKNOWN,
+      }),
+    )
+  })
+
+  it("prefers a known same-origin site type for current-tab user verification", async () => {
+    activeTabs = [{ id: 103, url: "https://foo.example.com/dashboard" }]
+
+    const legacyUnknownAccount = createAccount({
+      id: "acc-legacy",
+      baseUrl: "https://foo.example.com",
+      userId: "legacy-user",
+      siteType: SITE_TYPES.UNKNOWN,
+    })
+    const aihubmixAccount = createAccount({
+      id: "acc-aihubmix",
+      baseUrl: "https://foo.example.com",
+      userId: "aihubmix-user",
+      siteType: SITE_TYPES.AIHUBMIX,
+    })
+
+    mockResetExpiredCheckIns.mockResolvedValue(undefined)
+    mockGetTagStore.mockResolvedValue({ version: 1, tagsById: {} })
+    mockGetAllAccounts.mockResolvedValue([
+      legacyUnknownAccount,
+      aihubmixAccount,
+    ])
+    mockGetAllBookmarks.mockResolvedValue([])
+    mockGetOrderedList.mockResolvedValue([])
+    mockGetPinnedList.mockResolvedValue([])
+    mockGetAccountStats.mockResolvedValue({
+      total_quota: 0,
+      today_total_consumption: 0,
+      today_total_requests: 0,
+      today_total_prompt_tokens: 0,
+      today_total_completion_tokens: 0,
+      today_total_income: 0,
+    })
+    mockConvertToDisplayData.mockReturnValue([
+      { id: "acc-legacy" },
+      { id: "acc-aihubmix" },
+    ])
+
+    const sendMessageSpy = vi
+      .spyOn(browser.tabs, "sendMessage")
+      .mockResolvedValue({
+        success: true,
+        data: { userId: "aihubmix-user", user: { username: "aihubmix-user" } },
+      } as any)
+
+    let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
+
+    render(
+      <I18nextProvider i18n={testI18n}>
+        <AccountDataProvider>
+          <ContextProbe onChange={(ctx) => (latestCtx = ctx)} />
+        </AccountDataProvider>
+      </I18nextProvider>,
+    )
+
+    await waitFor(() => {
+      expect(latestCtx?.detectedAccount?.id).toBe("acc-aihubmix")
+    })
+
+    expect(sendMessageSpy).toHaveBeenCalledWith(
+      103,
+      expect.objectContaining({
+        siteType: SITE_TYPES.AIHUBMIX,
+      }),
+    )
+  })
+
   it("keeps site-level match when userId does not match any stored account", async () => {
     activeTabs = [{ id: 202, url: "https://foo.example.com/settings" }]
 
     const account1 = createAccount({
       id: "acc-1",
       baseUrl: "https://foo.example.com",
-      userId: 1,
+      userId: "1",
     })
     const account2 = createAccount({
       id: "acc-2",
       baseUrl: "https://foo.example.com",
-      userId: 2,
+      userId: "2",
     })
 
     mockResetExpiredCheckIns.mockResolvedValue(undefined)
@@ -248,7 +445,7 @@ describe("AccountDataContext current tab detection", () => {
 
     vi.spyOn(browser.tabs, "sendMessage").mockResolvedValue({
       success: true,
-      data: { userId: 999, user: { id: 999 } },
+      data: { userId: "999", user: { id: 999 } },
     } as any)
 
     let latestCtx: ReturnType<typeof useAccountDataContext> | null = null
@@ -273,12 +470,12 @@ describe("AccountDataContext current tab detection", () => {
     const account1 = createAccount({
       id: "acc-1",
       baseUrl: "https://foo.example.com",
-      userId: 1,
+      userId: "1",
     })
     const account2 = createAccount({
       id: "acc-2",
       baseUrl: "https://foo.example.com",
-      userId: 2,
+      userId: "2",
     })
 
     mockResetExpiredCheckIns.mockResolvedValue(undefined)
@@ -301,7 +498,7 @@ describe("AccountDataContext current tab detection", () => {
       .spyOn(browser.tabs, "sendMessage")
       .mockResolvedValue({
         success: true,
-        data: { userId: 2, user: { id: 2 } },
+        data: { userId: "2", user: { id: 2 } },
       } as any)
 
     let latestCtx: ReturnType<typeof useAccountDataContext> | null = null

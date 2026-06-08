@@ -6,12 +6,14 @@ import toast from "react-hot-toast"
 
 import { ChannelType } from "~/constants"
 import { DEFAULT_OCTOPUS_CHANNEL_FIELDS } from "~/constants/octopus"
+import { SITE_TYPES } from "~/constants/siteType"
 import { ensureAccountApiToken } from "~/services/accounts/accountOperations"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { normalizeAccountForManagedChannel } from "~/services/accounts/utils/siteUrlNormalization"
 import type { ApiResponse } from "~/services/apiService/common/type"
 import * as octopusApi from "~/services/apiService/octopus"
+import { resolveManagedSiteImportDuplicate } from "~/services/managedSites/importDuplicateResolution"
 import type { ManagedSiteConfig } from "~/services/managedSites/managedSiteService"
-import { findManagedSiteChannelByComparableInputs } from "~/services/managedSites/utils/channelMatching"
 import { getNumericChannelType } from "~/services/managedSites/utils/channelType"
 import { fetchManagedSiteAvailableModels } from "~/services/managedSites/utils/fetchManagedSiteAvailableModels"
 import { fetchTokenScopedModels } from "~/services/managedSites/utils/fetchTokenScopedModels"
@@ -29,7 +31,6 @@ import type {
   ChannelFormData,
   ChannelMode,
   CreateChannelPayload,
-  ManagedSiteChannel,
   ManagedSiteChannelListData,
   OctopusChannelWithData,
   UpdateChannelPayload,
@@ -46,6 +47,11 @@ import { normalizeList } from "~/utils/core/string"
 import { t } from "~/utils/i18n/core"
 
 const logger = createLogger("OctopusService")
+
+const octopusImportDuplicateService = {
+  siteType: SITE_TYPES.OCTOPUS,
+  searchChannel,
+}
 
 /**
  * 将 ChannelType (New API 渠道类型 0-55) 映射为 OctopusOutboundType (0-5)
@@ -163,28 +169,13 @@ export async function getOctopusConfig(): Promise<ManagedSiteConfig | null> {
   try {
     const prefs = await userPreferences.getPreferences()
     if (hasValidOctopusConfig(prefs) && prefs.octopus) {
-      return {
-        baseUrl: prefs.octopus.baseUrl,
-        token: "", // Octopus 使用 JWT，token 动态获取
-        userId: prefs.octopus.username,
-      }
+      return prefs.octopus
     }
     return null
   } catch (error) {
     logger.error("Error getting config", error)
     return null
   }
-}
-
-/**
- * 获取完整的 Octopus 配置（包含密码）
- */
-async function getFullOctopusConfig(): Promise<OctopusConfig | null> {
-  const prefs = await userPreferences.getPreferences()
-  if (hasValidOctopusConfig(prefs) && prefs.octopus) {
-    return prefs.octopus
-  }
-  return null
 }
 
 /**
@@ -240,15 +231,10 @@ export function octopusChannelToManagedSite(
  * 搜索渠道
  */
 export async function searchChannel(
-  _baseUrl: string,
-  _accessToken: string,
-  _userId: number | string,
+  config: OctopusConfig,
   keyword: string,
 ): Promise<ManagedSiteChannelListData | null> {
   try {
-    const config = await getFullOctopusConfig()
-    if (!config) return null
-
     const channels = await octopusApi.searchChannels(config, keyword)
     return {
       items: channels.map(octopusChannelToManagedSite),
@@ -265,17 +251,10 @@ export async function searchChannel(
  * 创建渠道
  */
 export async function createChannel(
-  _baseUrl: string,
-  _adminToken: string,
-  _userId: number | string,
+  config: OctopusConfig,
   channelData: CreateChannelPayload,
 ): Promise<ApiResponse<unknown>> {
   try {
-    const config = await getFullOctopusConfig()
-    if (!config) {
-      return { success: false, data: null, message: "Octopus config not found" }
-    }
-
     const channel = channelData.channel
     const request: OctopusCreateChannelRequest = {
       name: channel.name || "",
@@ -311,17 +290,10 @@ export async function createChannel(
  * 更新渠道
  */
 export async function updateChannel(
-  _baseUrl: string,
-  _adminToken: string,
-  _userId: number | string,
+  config: OctopusConfig,
   channelData: UpdateChannelPayload & { status?: number },
 ): Promise<ApiResponse<unknown>> {
   try {
-    const config = await getFullOctopusConfig()
-    if (!config) {
-      return { success: false, data: null, message: "Octopus config not found" }
-    }
-
     const result = await octopusApi.updateChannel(config, {
       id: channelData.id,
       name: channelData.name,
@@ -358,17 +330,10 @@ export async function updateChannel(
  * 删除渠道
  */
 export async function deleteChannel(
-  _baseUrl: string,
-  _adminToken: string,
-  _userId: number | string,
+  config: OctopusConfig,
   channelId: number,
 ): Promise<ApiResponse<unknown>> {
   try {
-    const config = await getFullOctopusConfig()
-    if (!config) {
-      return { success: false, data: null, message: "Octopus config not found" }
-    }
-
     const result = await octopusApi.deleteChannel(config, channelId)
     return {
       success: result.success,
@@ -417,8 +382,9 @@ export async function prepareChannelFormData(
   account: DisplaySiteData,
   token: ApiToken | AccountToken,
 ): Promise<ChannelFormData> {
+  const upstreamAccount = normalizeAccountForManagedChannel(account)
   const { models: availableModels, fetchFailed } = await fetchTokenScopedModels(
-    account,
+    upstreamAccount,
     token,
   )
 
@@ -426,7 +392,7 @@ export async function prepareChannelFormData(
     name: buildChannelName(account, token),
     type: DEFAULT_OCTOPUS_CHANNEL_FIELDS.type,
     key: token.key,
-    base_url: buildOctopusBaseUrl(account.baseUrl), // Octopus 需要 /v1 后缀
+    base_url: buildOctopusBaseUrl(upstreamAccount.baseUrl), // Octopus 需要 /v1 后缀
     models: normalizeList(availableModels),
     ...(fetchFailed ? { modelPrefillFetchFailed: true } : {}),
     groups: ["default"],
@@ -460,38 +426,6 @@ export function buildChannelPayload(
 }
 
 /**
- * 查找匹配的渠道
- */
-export async function findMatchingChannel(
-  _baseUrl: string,
-  _adminToken: string,
-  _userId: number | string,
-  accountBaseUrl: string,
-  models: string[],
-  key?: string,
-): Promise<ManagedSiteChannel | null> {
-  try {
-    const config = await getFullOctopusConfig()
-    if (!config) return null
-
-    const channels = await octopusApi.listChannels(config)
-
-    // 规范化 accountBaseUrl，与 prepareChannelFormData 保持一致
-    const normalizedBase = buildOctopusBaseUrl(accountBaseUrl)
-
-    return findManagedSiteChannelByComparableInputs({
-      channels: channels.map(octopusChannelToManagedSite),
-      accountBaseUrl: normalizedBase,
-      models,
-      key,
-    })
-  } catch (error) {
-    logger.error("Failed to find matching channel", error)
-    return null
-  }
-}
-
-/**
  * Legacy direct-import helper for the managed-site compatibility path.
  * @deprecated Unused by the current runtime flow. Account auto-config now
  * uses `useChannelDialog().openWithAccount()` so users can review generated
@@ -502,10 +436,11 @@ export async function autoConfigToOctopus(
   toastId?: string,
 ): Promise<{ success: boolean; message: string }> {
   try {
-    const config = await getFullOctopusConfig()
-    if (!config) {
+    const prefs = await userPreferences.getPreferences()
+    if (!hasValidOctopusConfig(prefs) || !prefs.octopus) {
       return { success: false, message: t("messages:octopus.configMissing") }
     }
+    const config = prefs.octopus
 
     const displaySiteData = accountStorage.convertToDisplayData(account)
 
@@ -521,15 +456,11 @@ export async function autoConfigToOctopus(
 
     const formData = await prepareChannelFormData(displaySiteData, apiToken)
 
-    // 检查是否已存在
-    const existingChannel = await findMatchingChannel(
-      config.baseUrl,
-      "",
-      "",
-      displaySiteData.baseUrl,
-      formData.models,
-      formData.key,
-    )
+    const existingChannel = await resolveManagedSiteImportDuplicate({
+      service: octopusImportDuplicateService,
+      managedConfig: config,
+      formData,
+    })
 
     if (existingChannel) {
       return {
@@ -541,7 +472,7 @@ export async function autoConfigToOctopus(
     }
 
     const payload = buildChannelPayload(formData)
-    const result = await createChannel(config.baseUrl, "", "", payload)
+    const result = await createChannel(config, payload)
 
     if (result.success) {
       toast.success(

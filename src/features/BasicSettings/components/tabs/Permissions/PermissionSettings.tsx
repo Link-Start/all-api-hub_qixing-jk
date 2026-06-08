@@ -8,19 +8,26 @@ import { Badge } from "~/components/ui/badge"
 import { Button } from "~/components/ui/button"
 import { Card } from "~/components/ui/Card"
 import { BodySmall } from "~/components/ui/Typography"
+import { PermissionList } from "~/features/Permissions/components/PermissionList"
 import {
   hasPermission,
   ManifestOptionalPermissions,
   onOptionalPermissionsChanged,
   OPTIONAL_PERMISSION_DEFINITIONS,
   OPTIONAL_PERMISSIONS,
-  removePermission,
-  requestPermission,
+  removePermissionDetailed,
+  requestPermissionDetailed,
 } from "~/services/permissions/permissionManager"
+import {
+  getPermissionRemoveOutcome,
+  PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS,
+  PRODUCT_ANALYTICS_PERMISSION_OPERATIONS,
+  PRODUCT_ANALYTICS_PERMISSION_OUTCOMES,
+  trackOptionalPermissionRequestResult,
+  trackOptionalPermissionResult,
+} from "~/services/productAnalytics/permissions"
 import { createLogger } from "~/utils/core/logger"
 import { showResultToast } from "~/utils/core/toastHelpers"
-
-import { PermissionList } from "./PermissionList"
 
 interface PermissionState {
   statuses: Record<ManifestOptionalPermissions, boolean | null>
@@ -148,10 +155,21 @@ export default function PermissionSettings() {
         label,
       })
       let success = false
+      const wasGrantedBefore = state.statuses[id] === true
 
       try {
         if (shouldEnable) {
-          success = await requestPermission(id)
+          const result = await requestPermissionDetailed(id)
+          success = result.success
+          const wasGrantedAfter = success || wasGrantedBefore
+          trackOptionalPermissionRequestResult(id, {
+            success,
+            failureReason: result.failureReason
+              ? result.failureReason
+              : undefined,
+            wasGrantedBefore,
+            wasGrantedAfter,
+          })
           logger.debug("Permission request completed", { id, success })
           showResultToast(
             success,
@@ -159,7 +177,22 @@ export default function PermissionSettings() {
             t("permissions.messages.grantFailed", { name: label }),
           )
         } else {
-          success = await removePermission(id)
+          const result = await removePermissionDetailed(id)
+          success = result.success
+          const wasGrantedAfter = success ? false : wasGrantedBefore
+          trackOptionalPermissionResult(id, {
+            operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Remove,
+            outcome: result.failureReason
+              ? PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.ApiError
+              : getPermissionRemoveOutcome(success),
+            failureReason: result.failureReason
+              ? PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.ApiException
+              : success
+                ? undefined
+                : PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.RemoveFailed,
+            wasGrantedBefore,
+            wasGrantedAfter,
+          })
           logger.debug("Permission revoke completed", { id, success })
           showResultToast(
             success,
@@ -179,6 +212,23 @@ export default function PermissionSettings() {
         }
       } catch (error) {
         success = false
+        if (shouldEnable) {
+          trackOptionalPermissionRequestResult(id, {
+            success: false,
+            failureReason: error,
+            wasGrantedBefore,
+            wasGrantedAfter: wasGrantedBefore,
+          })
+        } else {
+          trackOptionalPermissionResult(id, {
+            operation: PRODUCT_ANALYTICS_PERMISSION_OPERATIONS.Remove,
+            outcome: PRODUCT_ANALYTICS_PERMISSION_OUTCOMES.ApiError,
+            failureReason:
+              PRODUCT_ANALYTICS_PERMISSION_FAILURE_REASONS.ApiException,
+            wasGrantedBefore,
+            wasGrantedAfter: wasGrantedBefore,
+          })
+        }
         logger.error("Failed to toggle optional permission", { id, error })
         showResultToast(
           false,
@@ -199,7 +249,7 @@ export default function PermissionSettings() {
         }))
       }
     },
-    [t],
+    [state.statuses, t],
   )
 
   const isLoading = useMemo(
@@ -244,7 +294,7 @@ export default function PermissionSettings() {
               title: label,
               description: getPermissionDescription(t, permission.id),
               rightContent: (
-                <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                <div className="flex flex-col items-start gap-3 [@container(min-width:42rem)]:flex-row [@container(min-width:42rem)]:items-center">
                   <Badge
                     variant={
                       granted

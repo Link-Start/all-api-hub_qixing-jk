@@ -3,11 +3,10 @@
 </h4>
 
 <div align="center">
-  <img src="src/assets/icon.png" alt="All API Hub Logo" width="128" height="128">
 
 # All API Hub – 你的全能 AI 资产管家
 
-**一站式管理 New API 兼容中转站账号：余额/用量看板、模型价格比对、自动签到、密钥与独立 API 凭证管理、网页内 API 可用性测试、渠道与模型同步/重定向**
+**一站式管理 New API 兼容中转站账号：余额/用量、模型价格、自动签到、API 凭据、网页内测试，以及渠道与模型同步/重定向**
 
 <p align="center">
 <a href="https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo">
@@ -19,29 +18,22 @@
 <a href="https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}">
   <img alt="Firefox Add-on" src="https://img.shields.io/amo/v/{bc73541a-133d-4b50-b261-36ea20df0d24}?label=Firefox&logo=firefoxbrowser&style=flat">
 </a>
-<a href="https://github.com/qixing-jk/all-api-hub/releases">
-  <img alt="GitHub version" src="https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat">
-</a>
 </p>
 
-**[⚡ 快速上手](https://all-api-hub.qixing1217.top/get-started.html) | [📚 文档中心](https://all-api-hub.qixing1217.top/) | [💬 社区交流](https://all-api-hub.qixing1217.top/#community) | [🔌 集成工具](https://all-api-hub.qixing1217.top/supported-export-tools.html) | [🌐 支持站点](https://all-api-hub.qixing1217.top/supported-sites.html) | [❓ 常见问题](https://all-api-hub.qixing1217.top/faq.html) | [📜 更新日志](https://all-api-hub.qixing1217.top/changelog.html)**
+**[⚡ 快速上手](https://all-api-hub.qixing1217.top/get-started.html) | [🌐 支持站点](https://all-api-hub.qixing1217.top/supported-sites.html) | [🔌 集成工具](https://all-api-hub.qixing1217.top/supported-export-tools.html) | [📜 更新日志](https://all-api-hub.qixing1217.top/changelog.html)**
 
 <p align="center">
-  <strong>📢 讨论帖：</strong>
-  <a href="https://linux.do/t/topic/1001042">Linux.do 主题帖</a>
-</p>
-
-<a id="community"></a>
-<p align="center">
-  <strong>💬 社区：</strong> 
+  <a href="https://linux.do/t/topic/1001042">
+    <img alt="Linux.do 主题帖" src="https://img.shields.io/badge/Linux.do-主题帖-faa511?logo=linux&logoColor=white" />
+  </a>
   <a href="./resources/wechat_group.png">
-    <img alt="中文群" src="https://img.shields.io/badge/WeChat-中文群-green" />
+    <img alt="微信中文群" src="https://img.shields.io/badge/微信-中文群-green?logo=wechat&logoColor=white" />
   </a>
   <a href="https://discord.gg/RmFXZ577ZQ">
-    <img alt="Discord-多语言社区" src="https://img.shields.io/badge/Discord-多语言社区-5865F2?logo=discord&logoColor=white">
+    <img alt="Discord 多语言社区" src="https://img.shields.io/badge/Discord-多语言社区-5865F2?logo=discord&logoColor=white">
   </a>
   <a href="https://t.me/qixing_chat">
-    <img alt="Telegram-多语言群" src="https://img.shields.io/badge/Telegram-多语言群-blue?logo=telegram">
+    <img alt="Telegram 多语言群" src="https://img.shields.io/badge/Telegram-多语言群-blue?logo=telegram&logoColor=white">
   </a>
 </p>
 
@@ -50,68 +42,63 @@
 <a id="introduction"></a>
 ## ❓ 为什么需要 All API Hub？
 
-**简单来说**：AI 中转站就像是“AI 充值卡超市”，让你能以极低的价格（甚至免费）在一个地方用上 ChatGPT、Claude、Midjourney 等各种顶尖模型。
+**简单来说**：AI 中转站就像“AI 充值卡超市”，能低价甚至免费使用 ChatGPT、Claude、GPT Image 等模型。
 
 但如果你有多个账号，管理起来会很头疼：
-- 📂 **资产太乱**：余额多少、钱花哪了，得一个一个网站去登录看。
-- 💲 **价格太杂**：每个站点计费倍率不同，到底哪家最划算？
-- ✅ **福利漏领**：很多站点每天签到送额度，但手动签到太累，容易忘。
-- 🔌 **配置麻烦**：把 API 填到各种 AI 工具（如沉浸式翻译、Cherry Studio）里，复制粘贴太心累。
+- 📂 **资产分散**：余额和用量要逐站登录查看。
+- 💲 **价格复杂**：不同站点倍率不同，难判断哪家更划算。
+- ✅ **福利易漏**：每日签到送额度，但手动处理容易忘。
+- 🔌 **配置繁琐**：API 信息要反复复制到 cc-switch、Cherry Studio 等工具里。
 
-**All API Hub 就是你的“AI 资产全能管家”**。你只需要把站点地址填进来，剩下的交给我们。
+**All API Hub 就是你的 AI 资产管家**：填入站点地址，剩下的交给插件处理。
 
 <a id="features"></a>
 ## ✨ 它能为你做什么？
 
 ### 📊 多站点统一看板
-- **多账号资产总览**：在一个面板内集中查看所有站点的余额、总用量与健康状态。
-- **智能站点识别**：只需粘贴地址，自动识别架构类型、计费比例并完成添加。
-- **独立凭证档案**：直接管理 `URL + Key` 组合，支持标签分类，像管理收藏夹一样简单。
+- **多账号资产总览**：集中查看余额、用量与健康状态。
+- **智能站点识别**：粘贴地址即可识别架构、计费比例并完成添加。
+- **API 凭据库**：保存常用 `Base URL + API Key`，用于复制、验证接口、查看模型与余额/用量。
 
 ### 💰 智能省钱与自动收益
-- **模型价格比对**：自动计算各站点模型的实际折合单价，锁定当前最实惠的分组与站点。
-- **全自动签到流**：一键处理或定时执行所有支持站点的签到，确保存储额度不中断。
+- **模型价格比对**：计算各站点模型折合单价，找出更划算的分组与站点。
+- **全自动签到流**：一键或定时执行支持站点的签到。
 - **用量深度统计**：按站点、账号、模型、日期生成报表，包含热力图与慢请求分析。
 
 ### 🚀 极速生态集成
-- **一键快捷导出**：深度适配并一键同步到 **CherryStudio, CC Switch, CLIProxyAPI, Claude Code Router, Kilo Code** 等。
-- **后台联动工具**：为自建站点管理员提供渠道管理、模型重定向、渠道同步等后台效率增强功能。
+- **一键快捷导出**：同步到 **CherryStudio, CC Switch, CLIProxyAPI, Claude Code Router, Kilo Code** 等，完整列表见 [支持的工具](https://all-api-hub.qixing1217.top/supported-export-tools.html)。
+- **后台联动工具**：将账号/密钥导入为自建站点渠道，并提供渠道管理、模型重定向、渠道同步等工具。
 - **网页嗅探与快速录入**：在网页上选中 Base URL 或 API Key 即可快速弹出测试窗并保存，详情见 [网页 API 嗅探与验证](https://all-api-hub.qixing1217.top/web-ai-api-check.html)。
-- **查看集成列表**：👉 [支持的工具](https://all-api-hub.qixing1217.top/supported-export-tools.html)
 
 ### 🧪 稳定性护航
 - **多维度接口验证**：支持批量测试模型可用性、Token 兼容性及 CLI 代理可用性。
 - **CF 过盾助手**：自动协助通过 Cloudflare 挑战，确保数据刷新与接口调用不中断。
 
 ### 🔒 保护隐私与安全
-- **数据本地化**：你的 Key 和账号信息只存在你自己的电脑里，不上传服务器。
-- **加密同步**：支持 WebDAV 加密备份，换台电脑也能瞬间找回所有数据。
-
-> [!NOTE]
-> 觉得原本的 [One API Hub](https://github.com/fxaxg/one-api-hub) 好用？你会更爱现在的 All API Hub。我们大幅重构并保持了数据兼容，支持无缝一键导入。
-
-
+- **默认本地管理**：Key 和账号信息默认保存在本机，只有启用 WebDAV 备份/同步时才会上传。
+- **加密同步**：支持 WebDAV 加密备份，换设备也能恢复数据。
 
 <a id="installation"></a>
 ## 🚀 快速安装
 
 > [!IMPORTANT]
-> **90% 的用户请直接选择商店安装**。商店版安装最简单，且支持自动更新，省心稳定。
+> **绝大多数用户建议优先选择商店安装**。商店版安装简单、支持自动更新。
 
 | 渠道 | 安装链接                                                                                          | 当前版本 | 用户数                                                                                                                                                                                                                     |
 |------|-----------------------------------------------------------------------------------------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Chrome 商店 | [Chrome 商店](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo)        | [![Chrome version](https://img.shields.io/chrome-web-store/v/lapnciffpekdengooeolaienkeoilfeo?label=Chrome&logo=googlechrome&style=flat)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) | [![Chrome Web Store Users](https://img.shields.io/chrome-web-store/users/lapnciffpekdengooeolaienkeoilfeo?label=Chrome%20Users)](https://chromewebstore.google.com/detail/lapnciffpekdengooeolaienkeoilfeo) |
 | Edge 商店 | [Edge 商店](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge version](https://img.shields.io/badge/dynamic/json?label=Edge&prefix=v&query=%24.version&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Fpcokpjaffghgipcgjhapgdpeddlhblaa&logo=microsoftedge&style=flat)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) | [![Edge Add-ons Users](https://img.shields.io/badge/dynamic/json?label=Edge%20Users&query=$.activeInstallCount&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/pcokpjaffghgipcgjhapgdpeddlhblaa)](https://microsoftedge.microsoft.com/addons/detail/pcokpjaffghgipcgjhapgdpeddlhblaa) |
 | Firefox 商店 | [Firefox 商店](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Firefox version](https://img.shields.io/amo/v/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox&logo=firefoxbrowser&style=flat)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) | [![Mozilla Add-on Users](https://img.shields.io/amo/users/%7Bbc73541a-133d-4b50-b261-36ea20df0d24%7D?label=Firefox%20Users)](https://addons.mozilla.org/firefox/addon/{bc73541a-133d-4b50-b261-36ea20df0d24}) |
-| GitHub Releases | [查看全部版本](https://github.com/qixing-jk/all-api-hub/releases)                                   | [![GitHub version](https://img.shields.io/github/v/release/qixing-jk/all-api-hub?label=GitHub&logo=github&style=flat)](https://github.com/qixing-jk/all-api-hub/releases/latest) | [![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/qixing-jk/all-api-hub/total?label=Total%20Downloads)](https://github.com/qixing-jk/all-api-hub/releases) |
 
 <details>
 <summary>📦 需要手动安装或测试版？（点击展开）</summary>
 
 | 渠道 | 下载链接 | 适用场景 |
 |------|----------|----------|
-| GitHub 正式版 | [下载 Stable](https://github.com/qixing-jk/all-api-hub/releases/latest) | 无法访问商店，或想手动管理版本 |
-| Nightly 预发布 | [下载 Nightly](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) | 想抢先体验新功能，协助测试 |
+| GitHub Stable | [下载 Stable](https://github.com/qixing-jk/all-api-hub/releases/latest) | 无法安装商店版，或需要临时手动安装已发布修复 |
+| Nightly 预发布 | [下载 Nightly](https://github.com/qixing-jk/all-api-hub/releases/tag/nightly) | 想抢先体验新功能并协助测试，可能不如商店稳定版稳定 |
+
+GitHub Stable 和 Nightly 属于手动安装通道，不会自动更新；可 Star / Watch 仓库接收新版本通知。
 
 **其他环境支持：**
 - **手机端**：支持 Edge 手机版、Firefox Android、Kiwi 等浏览器，详见 [移动端使用指南](https://all-api-hub.qixing1217.top/faq.html#mobile-browser-support)。
@@ -119,6 +106,25 @@
 - **Safari (Mac)**：需要 Xcode 编译，详详见 [Safari 安装指南](https://all-api-hub.qixing1217.top/safari-install.html)。
 
 </details>
+
+<a id="sponsors"></a>
+## ❤️ 赞助商
+
+> [想出现在这里？](mailto:street-anime-olive@duck.com)
+
+<div>
+  <a href="https://www.packyapi.com/register?aff=all-api-hub">
+    <img src="resources/partners/packycode.png" alt="PackyCode" width="128" align="left" hspace="12" vspace="4">
+  </a>
+  <p>
+    感谢 PackyCode 赞助了本项目！PackyCode 是一家稳定、高效的API中转服务商，提供 Claude Code、Codex、Gemini 等多种中转服务。PackyCode
+    为本软件的用户提供了特别优惠，使用<a href="https://www.packyapi.com/register?aff=all-api-hub">此链接</a>注册并在充值时填写"all-api-hub"优惠码，首次充值可以享受9折优惠！
+  </p>
+</div>
+<br clear="left">
+
+> [!NOTE]
+> 如果你之前使用过 [One API Hub](https://github.com/fxaxg/one-api-hub)，All API Hub 已完成大幅重构，并保留数据兼容能力，支持一键导入原有数据。
 
 <a id="quick-start"></a>
 ## 🧑‍🚀 30 秒上手指南
@@ -132,9 +138,10 @@
 
 <a id="introduction-tech"></a>
 ### 🧩 强大的兼容性
-不论你用的是哪种架构，我们基本都支持：     
-- **主流开源**：[one-api](https://github.com/songquanpeng/one-api)、[new-api](https://github.com/QuantumNous/new-api)、[Sub2API](https://github.com/Wei-Shaw/sub2api)、[one-hub](https://github.com/MartialBE/one-hub)、[done-hub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)
-- **特色架构**：[AnyRouter](https://anyrouter.top)、Neo-API、Super-API 等
+不论你用的是哪种架构，我们基本都支持：
+- **账号站点兼容架构**：[one-api](https://github.com/songquanpeng/one-api)、[new-api](https://github.com/QuantumNous/new-api)、[Veloera](https://github.com/Veloera/Veloera)、[one-hub](https://github.com/MartialBE/one-hub)、[done-hub](https://github.com/deanxv/done-hub)、[Sub2API](https://github.com/Wei-Shaw/sub2api) 等
+- **特色账号平台与兼容实现**：[AIHubMix](https://aihubmix.com/?aff=W3DN)、[AnyRouter](https://anyrouter.top)、Neo-API、Super-API、v-api 等
+- **自建管理后台**：[new-api](https://github.com/QuantumNous/new-api)、[Veloera](https://github.com/Veloera/Veloera)、[done-hub](https://github.com/deanxv/done-hub)、[Octopus](https://github.com/bestruirui/octopus)、[AxonHub](https://github.com/looplj/axonhub)、[Claude Code Hub](https://github.com/ding113/claude-code-hub) 等，用于渠道管理、迁移和部分模型同步
 - **查看完整列表**：👉 [支持的站点](https://all-api-hub.qixing1217.top/supported-sites.html)
 
 <a id="ui-preview"></a>
@@ -187,6 +194,17 @@
 ## 🛠️ 开发指南
 
 请参阅 [CONTRIBUTING](CONTRIBUTING.md) 以获取更多信息。
+
+<a id="license"></a>
+## 📜 许可证与商业授权
+
+All API Hub 基于 GNU Affero General Public License v3.0（AGPL-3.0）开源。
+
+如果你需要 AGPL-3.0 之外的授权条款，例如闭源分发、私有修改、白标再分发，或其他闭源商业集成场景，可以联系项目维护者获取商业授权。
+
+商业授权联系：<street-anime-olive@duck.com>
+
+商业授权仅覆盖 All API Hub 维护者有权授权的代码和资源。第三方依赖以及历史上源自 [One API Hub](https://github.com/fxaxg/one-api-hub) 的 MIT 许可部分，仍需保留对应版权与许可声明，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 <a id="tech-stack"></a>
 ## 🏗️ 技术栈

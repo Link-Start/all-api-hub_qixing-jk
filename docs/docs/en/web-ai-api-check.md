@@ -26,7 +26,7 @@ Perform the following operations without leaving the current webpage:
 - **Automatic Extraction**: Automatically separate `Base URL`, `Secret Key`, and `API Type` from the source text.
 - **Instant Testing**: Click "Start Test" to verify the connectivity of the key and available models.
 - **Get Model List**: Fetch the full list of model IDs supported by the upstream site with one click.
-- **Save to Credentials**: Once verified, save it with one click to the extension's [API Credentials](./api-credential-profiles.md) for later export to tools like CherryStudio.
+- **Save to API Credential Library**: Once verified, save it with one click to the extension's [API Credential Library](./api-credential-profiles.md) for later copying, verification, or export to tools like CherryStudio.
 
 ## Configuration and Customization
 
@@ -50,5 +50,5 @@ You can customize which sites the extension is allowed to automatically sniff.
 
 ## Related Documents
 
-- [API Credential Profiles](./api-credential-profiles.md): Manage saved sniffing results.
+- [API Credential Library](./api-credential-profiles.md): Manage saved sniffing results.
 - [Interface Verification and Health Status](./auto-refresh.md): Learn how the extension verifies interfaces.

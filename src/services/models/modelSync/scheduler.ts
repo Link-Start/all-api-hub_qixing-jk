@@ -1,17 +1,33 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { SITE_TYPES } from "~/constants/siteType"
 import * as octopusApi from "~/services/apiService/octopus"
 import { getManagedSiteServiceForType } from "~/services/managedSites/managedSiteService"
 import {
-  getManagedSiteAdminConfig,
-  getManagedSiteConfig,
+  resolveCurrentManagedSiteRuntimeConfig,
+  resolveManagedSiteRuntimeConfigForType,
+} from "~/services/managedSites/runtimeConfig"
+import {
   getManagedSiteConfigMissingMessage,
   getManagedSiteContext,
   getManagedSiteNoChannelsToSyncMessage,
+  getManagedSiteUnsupportedModelSyncMessage,
   ManagedSiteMessagesKey,
+  supportsManagedSiteModelSync,
 } from "~/services/managedSites/utils/managedSite"
 import { ModelRedirectService } from "~/services/models/modelRedirect"
 import { notifyTaskResult } from "~/services/notifications/taskNotificationService"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  type ProductAnalyticsErrorCategory,
+  type ProductAnalyticsManagedSiteType,
+} from "~/services/productAnalytics/events"
+import { resolveProductAnalyticsManagedSiteType } from "~/services/productAnalytics/managedSite"
+import { ModelSyncMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type { ChannelModelFilterRule } from "~/types/channelModelFilters"
 import type {
   ManagedSiteChannel,
@@ -25,7 +41,6 @@ import {
   ExecutionProgress,
   ExecutionResult,
 } from "~/types/managedSiteModelSync"
-import type { OctopusConfig } from "~/types/octopusConfig"
 import {
   getTaskNotificationStatusFromCounts,
   TASK_NOTIFICATION_STATUSES,
@@ -50,12 +65,106 @@ import {
   DEFAULT_PREFERENCES,
   userPreferences,
 } from "../../preferences/userPreferences"
+import {
+  onModelSyncMessage,
+  type ModelSyncUpdateSettingsRequest,
+} from "./messaging"
 import { collectModelsFromExecution } from "./modelCollection"
 import { ModelSyncService } from "./modelSyncService"
 import { runOctopusBatch } from "./octopusModelSync"
 import { managedSiteModelSyncStorage } from "./storage"
 
 const logger = createLogger("ManagedSiteModelSync")
+
+const MODEL_SYNC_BACKGROUND_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteModelSync,
+  actionId: PRODUCT_ANALYTICS_ACTION_IDS.ScheduledManagedSiteModelSync,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+} as const
+
+/**
+ * Buckets automatic sync failures without exposing raw backend messages.
+ */
+function classifyModelSyncError(error: unknown): ProductAnalyticsErrorCategory {
+  const message = getErrorMessage(error).toLowerCase()
+
+  if (message.includes("unsupported") || message.includes("不支持")) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unsupported
+  }
+  if (
+    message.includes("401") ||
+    message.includes("403") ||
+    message.includes("unauthorized") ||
+    message.includes("forbidden") ||
+    message.includes("token") ||
+    message.includes("auth") ||
+    message.includes("鉴权") ||
+    message.includes("认证")
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth
+  }
+  if (
+    message.includes("config") ||
+    message.includes("validation") ||
+    message.includes("invalid") ||
+    message.includes("missing") ||
+    message.includes("no channels") ||
+    message.includes("配置") ||
+    message.includes("无可同步") ||
+    message.includes("沒有可同步")
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+  }
+  if (
+    message.includes("429") ||
+    message.includes("rate limit") ||
+    message.includes("too many requests") ||
+    message.includes("限流")
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.RateLimit
+  }
+  if (
+    message.includes("network") ||
+    message.includes("fetch") ||
+    message.includes("timeout") ||
+    message.includes("failed to fetch") ||
+    message.includes("econn") ||
+    message.includes("enotfound") ||
+    message.includes("网络")
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Network
+  }
+
+  return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+}
+
+/**
+ * Picks one coarse failure category from failed batch items, if available.
+ */
+function classifyModelSyncResultError(
+  result: ExecutionResult,
+): ProductAnalyticsErrorCategory | undefined {
+  const failedItem = result.items.find((item) => !item.ok)
+  if (!failedItem) {
+    return undefined
+  }
+
+  if (failedItem.httpStatus === 401 || failedItem.httpStatus === 403) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Auth
+  }
+  if (failedItem.httpStatus === 429) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.RateLimit
+  }
+  if (
+    failedItem.httpStatus != null &&
+    failedItem.httpStatus >= 400 &&
+    failedItem.httpStatus < 500
+  ) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+  }
+
+  return classifyModelSyncError(failedItem.message ?? "unknown")
+}
 
 /**
  * Scheduler for New API Model Sync.
@@ -76,14 +185,12 @@ class ModelSyncScheduler {
   private async createService(): Promise<ModelSyncService> {
     const userPrefs = await userPreferences.getPreferences()
 
-    const { siteType, messagesKey } = getManagedSiteContext(userPrefs)
-    const managedConfig = getManagedSiteAdminConfig(userPrefs)
+    const { messagesKey } = getManagedSiteContext(userPrefs)
+    const managedConfig = resolveCurrentManagedSiteRuntimeConfig(userPrefs)
 
     if (!managedConfig) {
       throw new Error(getManagedSiteConfigMissingMessage(t, messagesKey))
     }
-
-    const { baseUrl, adminToken, userId } = managedConfig
 
     const config =
       userPrefs.managedSiteModelSync ??
@@ -92,16 +199,13 @@ class ModelSyncScheduler {
     const channelConfigs = await channelConfigStorage.getAllConfigs()
 
     return new ModelSyncService(
-      baseUrl,
-      adminToken,
-      userId,
+      managedConfig,
       config.rateLimit,
       config.allowedModels,
       channelConfigs,
       sanitizeChannelFiltersForStorage(config.globalChannelModelFilters, {
         idPrefix: "global-channel-filter",
       }),
-      siteType,
     )
   }
 
@@ -120,9 +224,39 @@ class ModelSyncScheduler {
       if (hasAlarmsAPI()) {
         onAlarm(async (alarm) => {
           if (alarm.name === ModelSyncScheduler.ALARM_NAME) {
+            const tracker = startProductAnalyticsAction(
+              MODEL_SYNC_BACKGROUND_ANALYTICS_CONTEXT,
+            )
+            const startedAt = Date.now()
+            let managedSiteType: ProductAnalyticsManagedSiteType | undefined
+
             try {
+              const prefs = await userPreferences.getPreferences()
+              managedSiteType = resolveProductAnalyticsManagedSiteType(
+                getManagedSiteContext(prefs).siteType,
+              )
+
               // Await to keep the MV3 service worker alive while the sync runs.
               const result = await this.executeSync()
+              tracker.complete(
+                result.statistics.failureCount > 0
+                  ? PRODUCT_ANALYTICS_RESULTS.Failure
+                  : PRODUCT_ANALYTICS_RESULTS.Success,
+                {
+                  durationMs: Date.now() - startedAt,
+                  errorCategory:
+                    result.statistics.failureCount > 0
+                      ? classifyModelSyncResultError(result)
+                      : undefined,
+                  insights: {
+                    sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Auto,
+                    ...(managedSiteType ? { managedSiteType } : {}),
+                    itemCount: result.statistics.total,
+                    successCount: result.statistics.successCount,
+                    failureCount: result.statistics.failureCount,
+                  },
+                },
+              )
               await notifyTaskResult({
                 task: TASK_NOTIFICATION_TASKS.ManagedSiteModelSync,
                 status: getTaskNotificationStatusFromCounts({
@@ -137,6 +271,14 @@ class ModelSyncScheduler {
               })
             } catch (error) {
               logger.error("Scheduled execution failed", error)
+              tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+                durationMs: Date.now() - startedAt,
+                errorCategory: classifyModelSyncError(error),
+                insights: {
+                  sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Auto,
+                  ...(managedSiteType ? { managedSiteType } : {}),
+                },
+              })
               await notifyTaskResult({
                 task: TASK_NOTIFICATION_TASKS.ManagedSiteModelSync,
                 status: TASK_NOTIFICATION_STATUSES.Failure,
@@ -236,19 +378,23 @@ class ModelSyncScheduler {
 
     // Octopus 使用独立的 API 服务
     if (siteType === SITE_TYPES.OCTOPUS) {
-      const { config } = getManagedSiteConfig(userPrefs)
-      const octopusConfig = config as OctopusConfig
+      const octopusRuntimeConfig =
+        resolveCurrentManagedSiteRuntimeConfig(userPrefs)
 
       // Validate config like createService does
       if (
-        !octopusConfig?.baseUrl ||
-        !octopusConfig?.username ||
-        !octopusConfig?.password
+        !octopusRuntimeConfig ||
+        octopusRuntimeConfig.siteType !== SITE_TYPES.OCTOPUS ||
+        !octopusRuntimeConfig.config.baseUrl ||
+        !octopusRuntimeConfig.config.username ||
+        !octopusRuntimeConfig.config.password
       ) {
         throw new Error(getManagedSiteConfigMissingMessage(t, messagesKey))
       }
 
-      const channels = await octopusApi.listChannels(octopusConfig)
+      const channels = await octopusApi.listChannels(
+        octopusRuntimeConfig.config,
+      )
       return {
         items: channels.map(octopusChannelToManagedSite),
         total: channels.length,
@@ -257,18 +403,16 @@ class ModelSyncScheduler {
     }
 
     if (siteType === SITE_TYPES.CLAUDE_CODE_HUB) {
-      const managedConfig = getManagedSiteAdminConfig(userPrefs)
+      const managedConfig = resolveManagedSiteRuntimeConfigForType(
+        userPrefs,
+        SITE_TYPES.CLAUDE_CODE_HUB,
+      )
       if (!managedConfig) {
         throw new Error(getManagedSiteConfigMissingMessage(t, messagesKey))
       }
 
       const service = getManagedSiteServiceForType(siteType)
-      const channels = await service.searchChannel(
-        managedConfig.baseUrl,
-        managedConfig.adminToken,
-        managedConfig.userId,
-        "",
-      )
+      const channels = await service.searchChannel(managedConfig.config, "")
 
       return channels ?? { items: [], total: 0, type_counts: {} }
     }
@@ -306,8 +450,8 @@ class ModelSyncScheduler {
       )
     }
 
-    if (siteType === SITE_TYPES.CLAUDE_CODE_HUB) {
-      throw new Error(t("messages:claudecodehub.unsupportedModelSync"))
+    if (!supportsManagedSiteModelSync(siteType)) {
+      throw new Error(getManagedSiteUnsupportedModelSyncMessage(t, messagesKey))
     }
 
     // Initialize service (for non-Octopus sites)
@@ -501,20 +645,23 @@ class ModelSyncScheduler {
     concurrency: number,
     maxRetries: number,
   ): Promise<ExecutionResult> {
-    const { config } = getManagedSiteConfig(prefs)
-    const octopusConfig = config as OctopusConfig
+    const octopusRuntimeConfig = resolveCurrentManagedSiteRuntimeConfig(prefs)
 
     // Validate config like createService does
     if (
-      !octopusConfig?.baseUrl ||
-      !octopusConfig?.username ||
-      !octopusConfig?.password
+      !octopusRuntimeConfig ||
+      octopusRuntimeConfig.siteType !== SITE_TYPES.OCTOPUS ||
+      !octopusRuntimeConfig.config.baseUrl ||
+      !octopusRuntimeConfig.config.username ||
+      !octopusRuntimeConfig.config.password
     ) {
       throw new Error(getManagedSiteConfigMissingMessage(t, messagesKey))
     }
 
     // List channels using Octopus API
-    const octopusChannels = await octopusApi.listChannels(octopusConfig)
+    const octopusChannels = await octopusApi.listChannels(
+      octopusRuntimeConfig.config,
+    )
     const allChannels = octopusChannels.map(octopusChannelToManagedSite)
 
     // Filter channels if specific IDs provided
@@ -542,7 +689,7 @@ class ModelSyncScheduler {
     let result
     try {
       // Execute batch sync using Octopus-specific implementation
-      result = await runOctopusBatch(octopusConfig, channels, {
+      result = await runOctopusBatch(octopusRuntimeConfig.config, channels, {
         concurrency,
         maxRetries,
         onProgress: async (payload) => {
@@ -716,94 +863,206 @@ class ModelSyncScheduler {
 export const modelSyncScheduler = new ModelSyncScheduler()
 
 /**
- * Message handler for New API Model Sync actions (trigger, retry failed, prefs).
- * Centralizes background-only control plane for sync operations.
+ * Resolve the next scheduled model-sync alarm information.
  */
-export const handleManagedSiteModelSyncMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
-  try {
-    switch (request.action) {
-      case RuntimeActionIds.ModelSyncGetNextRun: {
-        const alarm = await getAlarm(ModelSyncScheduler.ALARM_NAME)
-        const nextScheduledAt =
-          alarm?.scheduledTime != null
-            ? new Date(alarm.scheduledTime).toISOString()
-            : undefined
+export async function getModelSyncNextRun() {
+  const alarm = await getAlarm(ModelSyncScheduler.ALARM_NAME)
+  const nextScheduledAt =
+    alarm?.scheduledTime != null
+      ? new Date(alarm.scheduledTime).toISOString()
+      : undefined
 
-        sendResponse({
-          success: true,
-          data: {
-            nextScheduledAt,
-            periodInMinutes: alarm?.periodInMinutes,
-          },
-        })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncTriggerAll: {
-        const resultAll = await modelSyncScheduler.executeSync()
-        sendResponse({ success: true, data: resultAll })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncTriggerSelected: {
-        const resultSelected = await modelSyncScheduler.executeSync(
-          request.channelIds,
-        )
-        sendResponse({ success: true, data: resultSelected })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncTriggerFailedOnly: {
-        const resultFailed = await modelSyncScheduler.executeFailedOnly()
-        sendResponse({ success: true, data: resultFailed })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncGetLastExecution: {
-        const lastExecution =
-          await managedSiteModelSyncStorage.getLastExecution()
-        sendResponse({ success: true, data: lastExecution })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncGetProgress: {
-        const progress = modelSyncScheduler.getProgress()
-        sendResponse({ success: true, data: progress })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncUpdateSettings:
-        await modelSyncScheduler.updateSettings(request.settings)
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.ModelSyncGetPreferences: {
-        const prefs = await managedSiteModelSyncStorage.getPreferences()
-        sendResponse({ success: true, data: prefs })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncGetChannelUpstreamModelOptions: {
-        const upstreamOptions =
-          await managedSiteModelSyncStorage.getChannelUpstreamModelOptions()
-        sendResponse({ success: true, data: upstreamOptions })
-        break
-      }
-
-      case RuntimeActionIds.ModelSyncListChannels: {
-        const channels = await modelSyncScheduler.listChannels()
-        sendResponse({ success: true, data: channels })
-        break
-      }
-
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
-    }
-  } catch (error) {
-    logger.error("Message handling failed", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+  return {
+    success: true as const,
+    data: {
+      nextScheduledAt,
+      periodInMinutes: alarm?.periodInMinutes,
+    },
   }
+}
+
+/**
+ * Run model sync for all eligible managed-site channels.
+ */
+export async function triggerAllModelSync() {
+  const resultAll = await modelSyncScheduler.executeSync()
+  return { success: true as const, data: resultAll }
+}
+
+/**
+ * Run model sync for the selected managed-site channels.
+ */
+export async function triggerSelectedModelSync(channelIds?: number[]) {
+  if (!Array.isArray(channelIds) || channelIds.length === 0) {
+    return {
+      success: false as const,
+      error: "channelIds must be a non-empty array for selected sync",
+    }
+  }
+
+  const resultSelected = await modelSyncScheduler.executeSync(channelIds)
+  return { success: true as const, data: resultSelected }
+}
+
+/**
+ * Retry model sync only for channels from the last failed execution.
+ */
+export async function triggerFailedOnlyModelSync() {
+  const resultFailed = await modelSyncScheduler.executeFailedOnly()
+  return { success: true as const, data: resultFailed }
+}
+
+/**
+ * Load the last model-sync execution result from storage.
+ */
+export async function getModelSyncLastExecution() {
+  const lastExecution = await managedSiteModelSyncStorage.getLastExecution()
+  return { success: true as const, data: lastExecution }
+}
+
+/**
+ * Read the in-memory model-sync execution progress snapshot.
+ */
+export function getModelSyncProgress() {
+  const progress = modelSyncScheduler.getProgress()
+  return { success: true as const, data: progress }
+}
+
+/**
+ * Persist model-sync scheduler settings and update its schedule.
+ */
+export async function updateModelSyncSettings(
+  settings: ModelSyncUpdateSettingsRequest["settings"],
+) {
+  await modelSyncScheduler.updateSettings(settings)
+  return { success: true as const }
+}
+
+/**
+ * Load persisted model-sync preferences.
+ */
+export async function getModelSyncPreferences() {
+  const prefs = await managedSiteModelSyncStorage.getPreferences()
+  return { success: true as const, data: prefs }
+}
+
+/**
+ * Load upstream model options used by managed-site model sync settings.
+ */
+export async function getModelSyncChannelUpstreamModelOptions() {
+  const upstreamOptions =
+    await managedSiteModelSyncStorage.getChannelUpstreamModelOptions()
+  return { success: true as const, data: upstreamOptions }
+}
+
+/**
+ * List channels available to model-sync UI flows.
+ */
+export async function listModelSyncChannels() {
+  const channels = await modelSyncScheduler.listChannels()
+  return { success: true as const, data: channels }
+}
+
+/**
+ * Convert model-sync listener errors into runtime responses.
+ */
+function toModelSyncFailure(error: unknown) {
+  logger.error("Message handling failed", error)
+  return {
+    success: false as const,
+    error: "settings:messages.runtimeRequestFailed",
+  }
+}
+
+let modelSyncMessagingCleanup: (() => void)[] | null = null
+
+/**
+ * Register typed background listeners for model-sync runtime messages.
+ */
+export function setupManagedSiteModelSyncMessagingListeners() {
+  if (modelSyncMessagingCleanup) {
+    return
+  }
+
+  modelSyncMessagingCleanup = [
+    onModelSyncMessage(ModelSyncMessageTypes.GetNextRun, async () => {
+      try {
+        return await getModelSyncNextRun()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(ModelSyncMessageTypes.TriggerAll, async () => {
+      try {
+        return await triggerAllModelSync()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(
+      ModelSyncMessageTypes.TriggerSelected,
+      async ({ data }) => {
+        try {
+          return await triggerSelectedModelSync(data.channelIds)
+        } catch (error) {
+          return toModelSyncFailure(error)
+        }
+      },
+    ),
+    onModelSyncMessage(ModelSyncMessageTypes.TriggerFailedOnly, async () => {
+      try {
+        return await triggerFailedOnlyModelSync()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(ModelSyncMessageTypes.GetLastExecution, async () => {
+      try {
+        return await getModelSyncLastExecution()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(ModelSyncMessageTypes.GetProgress, async () => {
+      try {
+        return getModelSyncProgress()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(
+      ModelSyncMessageTypes.UpdateSettings,
+      async ({ data }) => {
+        try {
+          return await updateModelSyncSettings(data.settings)
+        } catch (error) {
+          return toModelSyncFailure(error)
+        }
+      },
+    ),
+    onModelSyncMessage(ModelSyncMessageTypes.GetPreferences, async () => {
+      try {
+        return await getModelSyncPreferences()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+    onModelSyncMessage(
+      ModelSyncMessageTypes.GetChannelUpstreamModelOptions,
+      async () => {
+        try {
+          return await getModelSyncChannelUpstreamModelOptions()
+        } catch (error) {
+          return toModelSyncFailure(error)
+        }
+      },
+    ),
+    onModelSyncMessage(ModelSyncMessageTypes.ListChannels, async () => {
+      try {
+        return await listModelSyncChannels()
+      } catch (error) {
+        return toModelSyncFailure(error)
+      }
+    }),
+  ]
 }

@@ -14,6 +14,8 @@ export type EmptyStateAction = {
   icon?: React.ReactNode
   disabled?: boolean
   loading?: boolean
+  testId?: string
+  analyticsAction?: React.ComponentProps<typeof Button>["analyticsAction"]
 }
 
 export interface EmptyStateProps {
@@ -90,6 +92,8 @@ export const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
             rightIcon={resolvedActions[0].rightIcon}
             disabled={resolvedActions[0].disabled}
             loading={resolvedActions[0].loading}
+            data-testid={resolvedActions[0].testId}
+            analyticsAction={resolvedActions[0].analyticsAction}
           >
             {resolvedActions[0].label}
           </Button>
@@ -104,6 +108,8 @@ export const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
                 rightIcon={resolvedAction.rightIcon}
                 disabled={resolvedAction.disabled}
                 loading={resolvedAction.loading}
+                data-testid={resolvedAction.testId}
+                analyticsAction={resolvedAction.analyticsAction}
               >
                 {resolvedAction.label}
               </Button>

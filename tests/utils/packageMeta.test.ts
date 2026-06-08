@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { DOCS_BASE_URL, REPO_URL } from "~/constants/about"
-import { getFeedbackDestinationUrls } from "~/utils/navigation/feedbackLinks"
+import {
+  getFeedbackDestinationUrls,
+  getSiteSupportRequestUrl,
+} from "~/utils/navigation/feedbackLinks"
 import {
   getDocsBaseUrl,
   getHomepage,
@@ -123,6 +126,8 @@ describe("packageMeta", () => {
           "https://github.com/qixing-jk/all-api-hub/issues/new?template=bug_report.yml",
         featureRequest:
           "https://github.com/qixing-jk/all-api-hub/issues/new?template=feature_request.yml",
+        siteSupportRequest:
+          "https://github.com/qixing-jk/all-api-hub/issues/new?template=site_support_request.yml",
         discussions: "https://github.com/qixing-jk/all-api-hub/discussions",
         community: homepage.toString(),
       })
@@ -158,9 +163,34 @@ describe("packageMeta", () => {
           "https://github.com/example/project/issues/new?template=bug_report.yml",
         featureRequest:
           "https://github.com/example/project/issues/new?template=feature_request.yml",
+        siteSupportRequest:
+          "https://github.com/example/project/issues/new?template=site_support_request.yml",
         discussions: "https://github.com/example/project/discussions",
         community: "https://docs.example.test/#community",
       })
+    })
+
+    it("prefills site-support request destinations with site context", () => {
+      const destination = getSiteSupportRequestUrl({
+        siteUrl: "https://relay.example.com/console?token=redacted",
+        errorType: "notFound",
+        errorMessage: "Auto-detect failed",
+      })
+      const url = new URL(destination)
+
+      expect(`${url.origin}${url.pathname}`).toBe(
+        "https://github.com/qixing-jk/all-api-hub/issues/new",
+      )
+      expect(url.searchParams.get("template")).toBe("site_support_request.yml")
+      expect(url.searchParams.get("title")).toBe(
+        "[Site Support]: relay.example.com",
+      )
+      expect(url.searchParams.get("labels")).toBe("site-support")
+      expect(url.searchParams.get("site-url")).toBe(
+        "https://relay.example.com/console?token=redacted",
+      )
+      expect(url.searchParams.get("failure-type")).toBe("notFound")
+      expect(url.searchParams.get("failure-message")).toBe("Auto-detect failed")
     })
   })
 })

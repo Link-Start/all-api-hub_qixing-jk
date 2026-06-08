@@ -28,8 +28,8 @@ actions:
 features:
   - title: "📦 資産の一元管理ボード"
     details: "複数のサイトとアカウントを1つのパネルに集約。残高、使用量、健全状態を一目で確認でき、スマートなアドレス認識で簡単に追加できます。"
-  - title: "🏷️ 独立した API 資格情報"
-    details: "サイトアカウントがなくても、Base URL + Key を直接保存可能。タグ分けに対応し、モデル確認やインターフェース検証も可能です。"
+  - title: "🏷️ API 認証情報庫"
+    details: "サイトアカウントがなくても、Base URL + API Key を直接保存可能。コピー、API 検証、モデル確認、残高/使用量確認に使えます。"
   - title: "💰 モデル価格の比較"
     details: "各サイトのモデル価格を実際のコストで比較。最適なグループを自動的に特定し、最もお得な利用ルートを提案します。"
   - title: "✅ 高度なインターフェース検証"
@@ -50,65 +50,113 @@ footer: "AGPL-3.0 Licensed | Copyright 2025-present All API Hub"
 
 ## 紹介
 
-現在、AIエコシステムにはNew APIシリーズに基づいた集約中継ステーションや自社構築パネルが増加しており、各サイトの残高、使用量、モデル価格、APIキーの可用性を同時に管理することは、分散的で時間がかかることがよくあります。
+AI の時代には、節約したり別のモデルを試したりするために、複数の中継サイトアカウントを持つことがよくあります。ただし、管理は面倒になりがちです。残高は分散し、価格は比較しづらく、毎日の手動チェックインも忘れやすくなります。
 
-All API Hubはブラウザ拡張機能として、これらのサイトのアカウントを自動認識し、ワンクリックで残高、使用量、モデル価格を確認、モデルとキーを管理、自動サインインを行います。また、独立したAPI認証情報管理をサポートし、自社構築のNew API、DoneHub、Veloera、Octopus、AxonHub、およびClaude Code Hubインスタンスに対してバックエンド連携とチャネル関連ツールを提供します。
+**All API Hub は、その問題を解決するためのツールです。** AI 資産を一元管理し、より簡単で見やすく、自動化された管理を実現します。
 
 ## 🎯 使用シーン
 
-あなたの役割やニーズに合わせて、最適なドキュメントを見つけてください：
+### 👤 一般の AI ユーザー（初心者向け）
 
-### AI ツールの利用者
-- **クイックスタート**: [拡張機能のインストール](./get-started.md) -> [最初のアカウントを追加](./get-started.md#add-site)
-- **資産管理**: [残高履歴を確認](./balance-history.md) -> [使用量を分析](./usage-analytics.md)
-- **アカウントの維持**: [アカウントの整理とクリーンアップ](./account-management.md)
-- **コスト削減**: [クロスサイトでの価格比較](./model-list.md) -> [自動サインインで額度獲得](./auto-checkin.md)
-- **一括エクスポート**: [CherryStudio / CC Switch との同期](./get-started.md#quick-export-sites)
+- **どう始めればよいですか？**：[拡張機能をダウンロードしてインストール](./get-started.md) -> [最初のアカウントを追加](./get-started.md#add-site)
+- **節約したい**：[自動チェックインでクレジットを獲得](./auto-checkin.md) -> [サイト間でモデル価格を比較](./model-list.md)
+- **もっと手間を減らしたい**：[資産の変化をひと目で確認](./balance-history.md) -> [アカウントを他の AI ツールに同期](./get-started.md#quick-export-sites)
 
-### 独立した API キーを多数お持ちの方
-- **資格情報管理**: [URL+Key を独立した資格情報として保存](./api-credential-profiles.md)
-- **可用性テスト**: [インターフェースと CLI の互換性を一括検証](./web-ai-api-check.md)
-- **ブックマーク整理**: [ドキュメントや交換ページを一元管理](./bookmark-management.md)
+### 🛠️ 上級ユーザー（Key コレクター）
 
-### 自社構築サイト（New API 等）の管理者
-- **効率化ツール**: [拡張機能内でチャネルを管理](./self-hosted-site-management.md) -> [モデルの一括同期](./managed-site-model-sync.md)
-- **設定の最適化**: [モデルリダイレクトの設定](./model-redirect.md)
-- **セキュリティ**: [2FA / OTP 検証の処理](./new-api-security-verification.md)
+- **キー管理**：[独立した URL+Key を API 認証情報庫に保存](./api-credential-profiles.md)
+- **可用性テスト**：[API と CLI の互換性を一括検証](./web-ai-api-check.md)
+- **デバイス間同期**：[暗号化 WebDAV バックアップを設定](./webdav-sync.md)
 
----
+### 👑 サイト管理者（運営者向け）
 
-## サポートされているサイトシステム
+- **効率化ツール**：[拡張機能内でチャネルを管理](./self-hosted-site-management.md) -> [モデルを一括同期](./managed-site-model-sync.md)
+- **設定の最適化**：[モデルリダイレクトを設定](./model-redirect.md)
+- **セキュリティ対策**：[2FA / OTP 検証を処理](./new-api-security-verification.md)
 
-- [one-api](https://github.com/songquanpeng/one-api)
-- [new-api](https://github.com/QuantumNous/new-api)
-- [Veloera](https://github.com/Veloera/Veloera)
-- [one-hub](https://github.com/MartialBE/one-hub)
-- [done-hub](https://github.com/deanxv/done-hub)
-- [AxonHub](https://github.com/looplj/axonhub)
-- [Sub2API](https://github.com/Wei-Shaw/sub2api)
-- [AnyRouter](https://anyrouter.top)
-- WONG公益站
-- Neo-API（クローズドソース）
-- Super-API（クローズドソース）
-- RIX_API（クローズドソース、基本機能サポート）
-- VoAPI（クローズドソース、旧バージョンサポート）
+## 🧩 サポートされているシステムアーキテクチャ
 
-macOSでSafari経由で拡張機能を使用する場合は、まず[Safariインストールガイド](./safari-install.md)を確認してください。SafariはXcode経由でインストールする必要があります。これは、Chrome/Edge/Firefoxのストアインストールや解凍ロードとは異なる方法です。
+どのアーキテクチャを使っていても、高い確率で対応しています：
 
-もしQQブラウザ、360セキュアブラウザ、360クイックブラウザ、Cheetahブラウザ、Brave、Vivaldi、Operaなどのブラウザを使用している場合は、[QQ/360等ブラウザインストールガイド](./other-browser-install.md)を確認してください。
+- **アカウントサイト互換アーキテクチャ**：One API, New API, Veloera, One-Hub, Done-Hub, Sub2API など。
+- **特色あるアカウントプラットフォームと互換実装**：AIHubMix, AnyRouter, Neo-API, Super-API, v-api など。
+- **セルフホスト型管理バックエンド**：New API, Veloera, Done-Hub, [Octopus](https://github.com/bestruirui/octopus), AxonHub, Claude Code Hub など。チャネル管理、移行、一部のモデル同期に利用できます。
+
+> macOS で Safari を使う場合は、先に [Safari インストールガイド](./safari-install.md) を確認してください。
+> QQ / 360 / Brave などのブラウザを使う場合は、[手動インストールガイド](./other-browser-install.md) を確認してください。
 
 <a id="community"></a>
 ## 💬 コミュニティ交流
 
-使用に関する問題の迅速なコミュニケーション、設定のトラブルシューティング、互換性のあるサイトの共有を行いたい場合は、以下のコミュニティチャネルの利用をお勧めします。
+問題の相談や便利なサイトの共有をしたい場合は、コミュニティに参加してください：
 
-- [GitHub Discussions](https://github.com/qixing-jk/all-api-hub/discussions)：問題の整理、経験の蓄積、長期的な議論に適しています。
-- [Discord コミュニティ](https://discord.gg/RmFXZ577ZQ)：多言語ユーザー向けで、機能が豊富、議論や問題解決に適しています。
-- [Telegram グループ](https://t.me/qixing_chat)：多言語ユーザー間の迅速なコミュニケーションに適しています。
-- WeChatグループ：以下のQRコードをスキャンして、中国語の交流グループに参加してください。
+- [GitHub Discussions](https://github.com/qixing-jk/all-api-hub/discussions)
+- [Discord コミュニティ](https://discord.gg/RmFXZ577ZQ)
+- [Telegram グループ](https://t.me/qixing_chat)
+- **WeChat グループ**：下の QR コードをスキャンして中国語グループに参加してください。
 
 <img
   src="../../../resources/wechat_group.png"
   alt="All API Hub WeChatグループQRコード"
   style="width: min(280px, 100%);"
 />
+
+<a id="sponsors"></a>
+## ❤️ Sponsors
+
+<div class="readme-sponsor">
+  <div class="readme-sponsor-logo">
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">
+      <img src="../../../resources/partners/packycode.png" alt="PackyCode">
+    </a>
+  </div>
+  <p class="readme-sponsor-copy">
+    Thanks to PackyCode for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex,
+    Gemini, and more. PackyCode provides special discounts for our software users: register using
+    <a href="https://www.packyapi.com/register?aff=all-api-hub">this link</a> and enter the "all-api-hub" promo code during first recharge to get 10% off.
+  </p>
+</div>
+
+<style>
+.readme-sponsor {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.readme-sponsor-logo {
+  flex: 0 0 180px;
+  text-align: center;
+}
+
+.readme-sponsor-logo img {
+  width: 150px;
+  max-width: 100%;
+  height: auto;
+}
+
+.readme-sponsor-copy {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .readme-sponsor {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .readme-sponsor-logo {
+    flex-basis: auto;
+    width: 100%;
+    text-align: left;
+  }
+
+  .readme-sponsor-logo img {
+    width: 128px;
+  }
+}
+</style>

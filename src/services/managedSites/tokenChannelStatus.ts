@@ -19,10 +19,14 @@ import {
 } from "~/services/managedSites/providers/newApiSession"
 import { hasNewApiTotpSecret } from "~/services/managedSites/providers/newApiTotp"
 import { normalizeManagedSiteChannelBaseUrl } from "~/services/managedSites/utils/channelMatching"
-import { supportsManagedSiteBaseUrlChannelLookup } from "~/services/managedSites/utils/managedSite"
+import {
+  collectManagedConfigSecrets,
+  supportsManagedSiteBaseUrlChannelLookup,
+} from "~/services/managedSites/utils/managedSite"
 import { toSanitizedErrorSummary } from "~/services/verification/aiApiVerification/utils"
 import type { AccountToken, ApiToken, DisplaySiteData } from "~/types"
 import type { ManagedSiteChannel } from "~/types/managedSite"
+import type { NewApiConfig } from "~/types/newApiConfig"
 import { createLogger } from "~/utils/core/logger"
 
 const logger = createLogger("ManagedSiteTokenChannelStatus")
@@ -82,37 +86,44 @@ export interface ManagedSiteTokenChannelRecovery {
   automaticCodeConfigured: boolean
 }
 
+interface ManagedSiteTokenChannelResolvedKeys {
+  resolvedChannelKeysById?: Record<number, string>
+}
+
 export type ManagedSiteTokenChannelStatus =
-  | {
-      status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.ADDED
-      matchedChannel: ManagedSiteTokenChannelStatusMatchedChannel
-      assessment: ManagedSiteTokenChannelAssessment
-    }
-  | {
-      status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.NOT_ADDED
-      assessment: ManagedSiteTokenChannelAssessment
-    }
-  | {
-      status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
-      reason: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION
-      assessment: ManagedSiteTokenChannelAssessment
-    }
-  | {
-      status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
-      reason: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE
-      assessment?: ManagedSiteTokenChannelAssessment
-      diagnostic?: string
-      recovery?: ManagedSiteTokenChannelRecovery
-    }
-  | {
-      status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
-      reason: Exclude<
-        ManagedSiteTokenChannelStatusUnknownReason,
-        | typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION
-        | typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE
-      >
-      diagnostic?: string
-    }
+  ManagedSiteTokenChannelResolvedKeys &
+    (
+      | {
+          status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.ADDED
+          matchedChannel: ManagedSiteTokenChannelStatusMatchedChannel
+          assessment: ManagedSiteTokenChannelAssessment
+        }
+      | {
+          status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.NOT_ADDED
+          assessment: ManagedSiteTokenChannelAssessment
+        }
+      | {
+          status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
+          reason: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION
+          assessment: ManagedSiteTokenChannelAssessment
+        }
+      | {
+          status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
+          reason: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE
+          assessment?: ManagedSiteTokenChannelAssessment
+          diagnostic?: string
+          recovery?: ManagedSiteTokenChannelRecovery
+        }
+      | {
+          status: typeof MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
+          reason: Exclude<
+            ManagedSiteTokenChannelStatusUnknownReason,
+            | typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION
+            | typeof MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE
+          >
+          diagnostic?: string
+        }
+    )
 
 interface GetManagedSiteTokenChannelStatusParams {
   account: DisplaySiteData
@@ -161,11 +172,21 @@ const collectSecrets = (
   token: ApiToken | AccountToken,
   managedConfig: ManagedSiteConfig | null,
 ) => {
-  return [token.key, managedConfig?.token].filter(Boolean) as string[]
+  return [
+    token.key,
+    ...(managedConfig ? collectManagedConfigSecrets(managedConfig) : []),
+  ].filter(Boolean) as string[]
 }
 
+const isNewApiConfig = (config: ManagedSiteConfig): config is NewApiConfig =>
+  "adminToken" in config && "userId" in config
+
+const isExactVerificationUnavailable = (
+  resolution: ManagedSiteChannelMatchInspection,
+) => resolution.url.matched && !resolution.key.comparable
+
 const buildNewApiRecoveryMetadata = async (params: {
-  managedConfig: ManagedSiteConfig
+  managedConfig: NewApiConfig
   assessment?: ManagedSiteTokenChannelAssessment
 }): Promise<ManagedSiteTokenChannelRecovery> => {
   const loginAssistConfig = await getNewApiLoginAssistConfig()
@@ -272,15 +293,22 @@ export async function getManagedSiteTokenChannelStatus(
       models: formData.models,
       key: formData.key,
       resolvedChannelKeysById: params.resolvedChannelKeysById,
+      resolveHiddenKeys: true,
     })
     const assessment = toManagedSiteTokenChannelAssessment(resolution)
     const exactMatch = getManagedSiteChannelExactMatch(resolution)
+    const resolvedChannelKeys =
+      resolution.resolvedChannelKeysById &&
+      Object.keys(resolution.resolvedChannelKeysById).length > 0
+        ? { resolvedChannelKeysById: resolution.resolvedChannelKeysById }
+        : {}
 
     if (exactMatch) {
       return {
         status: MANAGED_SITE_TOKEN_CHANNEL_STATUSES.ADDED,
         matchedChannel: toMatchedChannelSummary(exactMatch),
         assessment,
+        ...resolvedChannelKeys,
       }
     }
 
@@ -292,16 +320,13 @@ export async function getManagedSiteTokenChannelStatus(
       }
     }
 
-    if (
-      !formData.key.trim() ||
-      (resolution.url.matched && !resolution.key.comparable)
-    ) {
+    if (!formData.key.trim() || isExactVerificationUnavailable(resolution)) {
       let recovery: ManagedSiteTokenChannelRecovery | undefined
 
       if (
         service.siteType === SITE_TYPES.NEW_API &&
-        resolution.url.matched &&
-        !resolution.key.comparable
+        isNewApiConfig(managedConfig) &&
+        isExactVerificationUnavailable(resolution)
       ) {
         try {
           recovery = await buildNewApiRecoveryMetadata({
@@ -327,6 +352,7 @@ export async function getManagedSiteTokenChannelStatus(
           MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE,
         assessment,
         ...(recovery ? { recovery } : {}),
+        ...resolvedChannelKeys,
       }
     }
 
@@ -340,12 +366,14 @@ export async function getManagedSiteTokenChannelStatus(
         reason:
           MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION,
         assessment,
+        ...resolvedChannelKeys,
       }
     }
 
     return {
       status: MANAGED_SITE_TOKEN_CHANNEL_STATUSES.NOT_ADDED,
       assessment,
+      ...resolvedChannelKeys,
     }
   } catch (error) {
     const diagnostic = toSanitizedErrorSummary(error, secretsToRedact)

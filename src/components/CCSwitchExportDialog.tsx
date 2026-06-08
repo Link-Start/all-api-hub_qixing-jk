@@ -17,13 +17,26 @@ import {
   SelectValue,
 } from "~/components/ui"
 import { resolveDisplayAccountTokenForSecret } from "~/services/accounts/utils/apiServiceRequest"
-import { fetchOpenAICompatibleModelIds } from "~/services/apiService/openaiCompatible"
+import { fetchOpenAICompatibleModelIds } from "~/services/aiApi/openaiCompatible"
 import {
   CCSWITCH_APPS,
   openInCCSwitch,
   type CCSwitchApp,
 } from "~/services/integrations/ccSwitch"
+import {
+  startProductAnalyticsAction,
+  type ProductAnalyticsActionContext,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { ApiToken, DisplaySiteData } from "~/types"
+import { isTestMode } from "~/utils/core/environment"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import {
@@ -37,6 +50,7 @@ interface CCSwitchExportDialogProps {
   onClose: () => void
   account: DisplaySiteData
   token: ApiToken
+  analyticsContext?: ProductAnalyticsActionContext
 }
 
 /**
@@ -48,8 +62,7 @@ const DEFAULT_APP: CCSwitchApp = "claude"
 const APP_LIMITATION_NOTICE_ID = "ccswitch-app-limitation"
 // Preserve the real debounce in dev/prod so endpoint edits do not spam model-list
 // requests, but skip the wall-clock delay in Vitest.
-const UPSTREAM_MODEL_FETCH_DEBOUNCE_MS =
-  import.meta.env.MODE === "test" ? 0 : 300
+const UPSTREAM_MODEL_FETCH_DEBOUNCE_MS = isTestMode() ? 0 : 300
 
 const getCCSwitchAppLabel = (t: TFunction, app: CCSwitchApp) => {
   switch (app) {
@@ -87,7 +100,7 @@ const getCCSwitchLimitationNotice = (t: TFunction, app: CCSwitchApp) => {
  * @param props.token API token exported through CCSwitch.
  */
 export function CCSwitchExportDialog(props: CCSwitchExportDialogProps) {
-  const { isOpen, onClose, account, token } = props
+  const { isOpen, onClose, account, token, analyticsContext } = props
   const { t } = useTranslation(["ui", "common"])
   const [app, setApp] = useState<CCSwitchApp>(DEFAULT_APP)
   const [model, setModel] = useState("")
@@ -187,6 +200,16 @@ export function CCSwitchExportDialog(props: CCSwitchExportDialogProps) {
     event.preventDefault()
 
     void (async () => {
+      const tracker = startProductAnalyticsAction(
+        analyticsContext ?? {
+          featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ImportExport,
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExportAccountTokenToCCSwitch,
+          surfaceId:
+            PRODUCT_ANALYTICS_SURFACE_IDS.AccountTokenThirdPartyExportDialog,
+          entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+        },
+      )
+
       try {
         const resolvedToken = await resolveDisplayAccountTokenForSecret(
           account,
@@ -204,9 +227,15 @@ export function CCSwitchExportDialog(props: CCSwitchExportDialogProps) {
         })
 
         if (opened) {
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
           onClose()
+        } else {
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure)
         }
       } catch (error) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        })
         logger.warn("Failed to resolve token for CC Switch export", error)
         toast.error(
           t("messages:errors.operation.failed", {

@@ -1,4 +1,3 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import {
   apiCredentialProfilesStorage,
   mergeApiCredentialProfilesConfigs,
@@ -19,7 +18,14 @@ import {
   createDefaultTagStore,
   sanitizeTagStore,
 } from "~/services/tags/tagStoreUtils"
-import type { SiteAccount, SiteBookmark, TagStore } from "~/types"
+import {
+  DELETED_ENTRY_KIND,
+  type AccountStorageConfig,
+  type DeletedEntryKind,
+  type SiteAccount,
+  type SiteBookmark,
+  type TagStore,
+} from "~/types"
 import {
   API_CREDENTIAL_PROFILES_CONFIG_VERSION,
   type ApiCredentialProfilesConfig,
@@ -43,6 +49,7 @@ import {
   hasAlarmsAPI,
   isMessageReceiverUnavailableError,
   onAlarm,
+  onStorageChanged,
   sendRuntimeMessage,
 } from "~/utils/browser/browserApi"
 import { getErrorMessage } from "~/utils/core/error"
@@ -57,6 +64,18 @@ import {
   userPreferences,
   type UserPreferences,
 } from "../preferences/userPreferences"
+import { WebdavAutoSyncMessageTypes } from "../runtimeMessaging/messageTypes"
+import {
+  createRuntimeMessageFailure,
+  type RuntimeMessageResponse,
+} from "../runtimeMessaging/result"
+import {
+  onWebdavAutoSyncMessage,
+  type WebdavAutoSyncMutationResponse,
+  type WebdavAutoSyncStatusResponse,
+  type WebdavAutoSyncSyncNowResponse,
+  type WebdavAutoSyncUpdateSettingsRequest,
+} from "./webdavAutoSyncMessaging"
 import {
   detectWebdavBackupPresence,
   mergeWebdavBackupPayloadBySelection,
@@ -65,6 +84,7 @@ import {
 import {
   downloadBackup,
   isWebdavFileNotFoundError,
+  parseWebdavBackupJson,
   testWebdavConnection,
   uploadBackup,
 } from "./webdavService"
@@ -328,8 +348,7 @@ class WebdavAutoSyncService {
       void this.handleSharedAccountStorageChanged()
     }
 
-    browser.storage.onChanged.addListener(listener)
-    return () => browser.storage.onChanged.removeListener(listener)
+    return onStorageChanged(listener)
   }
 
   private hasDeletedSharedEntries(change: browser.storage.StorageChange) {
@@ -515,6 +534,7 @@ class WebdavAutoSyncService {
     bookmarks: SiteBookmark[]
     pinnedAccountIds: string[]
     orderedAccountIds: string[]
+    deletedEntryRecords?: AccountStorageConfig["deletedEntryRecords"]
     tagStore: TagStore
     preferences: UserPreferences
     channelConfigs: ChannelConfigMap
@@ -528,6 +548,7 @@ class WebdavAutoSyncService {
         bookmarks: input.bookmarks,
         pinnedAccountIds: input.pinnedAccountIds,
         orderedAccountIds: input.orderedAccountIds,
+        deletedEntryRecords: input.deletedEntryRecords || {},
         last_updated: Date.now(),
       },
       tagStore: input.tagStore,
@@ -542,7 +563,7 @@ class WebdavAutoSyncService {
       const content = await downloadBackup(undefined, {
         prepareForWrite: true,
       })
-      const remoteData = JSON.parse(content)
+      const remoteData = parseWebdavBackupJson<BackupFullV2>(content)
       logger.info("成功下载远程数据", { timestamp: remoteData?.timestamp })
       return remoteData
     } catch (error: any) {
@@ -584,6 +605,7 @@ class WebdavAutoSyncService {
         accounts: localAccounts,
         bookmarks: localBookmarks,
       }),
+      deletedEntryRecords: localAccountsConfig.deletedEntryRecords,
       tagStore: localTagStore,
       preferences: localPreferences,
       channelConfigs: localChannelConfigs,
@@ -677,6 +699,7 @@ class WebdavAutoSyncService {
       localApiCredentialProfiles
     let pinnedAccountIdsToSave: string[] = localPinnedAccountIds
     let orderedAccountIdsToSave: string[] = localOrderedAccountIds
+    let deletedEntryRecordsToSave = localAccountsConfig.deletedEntryRecords
 
     if (strategy === WEBDAV_SYNC_STRATEGIES.MERGE && remoteData) {
       // 合并策略
@@ -688,6 +711,7 @@ class WebdavAutoSyncService {
         {
           accounts: localAccountsConfig.accounts,
           bookmarks: localBookmarks,
+          deletedEntryRecords: localAccountsConfig.deletedEntryRecords,
           accountsTimestamp: localAccountsConfig.last_updated,
           tagStore: localTagStore,
           preferences: localPreferences,
@@ -699,6 +723,7 @@ class WebdavAutoSyncService {
         {
           accounts: normalizedRemote.accounts,
           bookmarks: normalizedRemote.bookmarks,
+          deletedEntryRecords: normalizedRemote.deletedEntryRecords,
           accountsTimestamp: normalizedRemote.accountsTimestamp,
           tagStore: sanitizeTagStore(
             normalizedRemote.tagStore ?? createDefaultTagStore(),
@@ -720,6 +745,7 @@ class WebdavAutoSyncService {
       preferencesToSave = mergeResult.preferences
       channelConfigsToSave = mergeResult.channelConfigs
       apiCredentialProfilesToSave = mergeResult.apiCredentialProfiles
+      deletedEntryRecordsToSave = mergeResult.deletedEntryRecords
 
       const entryIdSet = new Set<string>([
         ...accountsToSave.map((account) => account.id),
@@ -950,6 +976,7 @@ class WebdavAutoSyncService {
         syncDataSelection,
         accountsToSave,
         bookmarksToSave,
+        deletedEntryRecordsToSave,
         pinnedAccountIdsToSave,
         orderedAccountIdsToSave,
         tagStoreToSave,
@@ -970,6 +997,7 @@ class WebdavAutoSyncService {
       bookmarks: bookmarksToSave,
       pinnedAccountIds: pinnedAccountIdsToSave,
       orderedAccountIds: orderedAccountIdsToSave,
+      deletedEntryRecords: deletedEntryRecordsToSave,
       tagStore: tagStoreToSave,
       preferences: preferencesToSave,
       channelConfigs: channelConfigsToSave,
@@ -1000,6 +1028,7 @@ class WebdavAutoSyncService {
     syncDataSelection: WebDAVSyncDataSelection
     accountsToSave: SiteAccount[]
     bookmarksToSave: SiteBookmark[]
+    deletedEntryRecordsToSave?: AccountStorageConfig["deletedEntryRecords"]
     pinnedAccountIdsToSave: string[]
     orderedAccountIdsToSave: string[]
     tagStoreToSave: TagStore
@@ -1011,6 +1040,7 @@ class WebdavAutoSyncService {
       bookmarks?: SiteBookmark[]
       pinnedAccountIds?: string[]
       orderedAccountIds?: string[]
+      deletedEntryRecords?: AccountStorageConfig["deletedEntryRecords"]
     }
     localTagStore: TagStore
     localPreferences: UserPreferences
@@ -1034,6 +1064,7 @@ class WebdavAutoSyncService {
                 pinnedAccountIds: input.pinnedAccountIdsToSave,
                 orderedAccountIds: input.orderedAccountIdsToSave,
                 bookmarks: input.bookmarksToSave,
+                deletedEntryRecords: input.deletedEntryRecordsToSave,
               })
 
               rollbackSteps.push(async () => {
@@ -1044,6 +1075,8 @@ class WebdavAutoSyncService {
                     input.localAccountsConfig.pinnedAccountIds || [],
                   orderedAccountIds:
                     input.localAccountsConfig.orderedAccountIds || [],
+                  deletedEntryRecords:
+                    input.localAccountsConfig.deletedEntryRecords,
                 })
               })
             }
@@ -1116,6 +1149,7 @@ class WebdavAutoSyncService {
     local: {
       accounts: SiteAccount[]
       bookmarks: SiteBookmark[]
+      deletedEntryRecords?: AccountStorageConfig["deletedEntryRecords"]
       accountsTimestamp: number
       tagStore: TagStore
       preferences: UserPreferences
@@ -1126,6 +1160,7 @@ class WebdavAutoSyncService {
     remote: {
       accounts: SiteAccount[]
       bookmarks: SiteBookmark[]
+      deletedEntryRecords?: AccountStorageConfig["deletedEntryRecords"]
       accountsTimestamp: number
       tagStore: TagStore
       preferences: UserPreferences
@@ -1141,6 +1176,9 @@ class WebdavAutoSyncService {
     preferences: UserPreferences
     channelConfigs: ChannelConfigMap
     apiCredentialProfiles: ApiCredentialProfilesConfig
+    deletedEntryRecords: NonNullable<
+      AccountStorageConfig["deletedEntryRecords"]
+    >
   } {
     logger.debug("开始合并数据", {
       localAccountCount: local.accounts.length,
@@ -1179,9 +1217,27 @@ class WebdavAutoSyncService {
 
     // 合并账号数据
     const accountMap = new Map<string, SiteAccount>()
+    const deletedEntryRecords = WebdavAutoSyncService.mergeDeletedEntryRecords({
+      localRecords: local.deletedEntryRecords,
+      remoteRecords: remote.deletedEntryRecords,
+      includeRemoteAccounts: selection.accounts,
+      includeRemoteBookmarks: selection.bookmarks,
+    })
 
     // 首先添加本地账号
     tagMerge.localAccounts.forEach((account) => {
+      if (
+        WebdavAutoSyncService.isEntrySuppressedByDeletionRecord({
+          id: account.id,
+          kind: DELETED_ENTRY_KIND.ACCOUNT,
+          entryUpdatedAt: account.updated_at,
+          entryUserUpdatedAt: account.user_updated_at,
+          deletedEntryRecords,
+        })
+      ) {
+        return
+      }
+
       accountMap.set(account.id, account)
     })
 
@@ -1191,6 +1247,22 @@ class WebdavAutoSyncService {
         const localAccount = accountMap.get(remoteAccount.id)
 
         if (!localAccount) {
+          if (
+            WebdavAutoSyncService.isEntrySuppressedByDeletionRecord({
+              id: remoteAccount.id,
+              kind: DELETED_ENTRY_KIND.ACCOUNT,
+              entryUpdatedAt: remoteAccount.updated_at,
+              entryUserUpdatedAt: remoteAccount.user_updated_at,
+              deletedEntryRecords,
+            })
+          ) {
+            logger.debug("忽略已删除账号的旧远程副本", {
+              accountId: remoteAccount.id,
+              siteName: remoteAccount.site_name,
+            })
+            return
+          }
+
           // 远程账号在本地不存在，直接添加
           accountMap.set(remoteAccount.id, remoteAccount)
           logger.debug("添加远程账号", {
@@ -1223,6 +1295,17 @@ class WebdavAutoSyncService {
 
     const bookmarkMap = new Map<string, SiteBookmark>()
     tagMerge.localBookmarks.forEach((bookmark) => {
+      if (
+        WebdavAutoSyncService.isEntrySuppressedByDeletionRecord({
+          id: bookmark.id,
+          kind: DELETED_ENTRY_KIND.BOOKMARK,
+          entryUpdatedAt: bookmark.updated_at,
+          deletedEntryRecords,
+        })
+      ) {
+        return
+      }
+
       bookmarkMap.set(bookmark.id, bookmark)
     })
 
@@ -1230,6 +1313,17 @@ class WebdavAutoSyncService {
       tagMerge.remoteBookmarks.forEach((remoteBookmark) => {
         const localBookmark = bookmarkMap.get(remoteBookmark.id)
         if (!localBookmark) {
+          if (
+            WebdavAutoSyncService.isEntrySuppressedByDeletionRecord({
+              id: remoteBookmark.id,
+              kind: DELETED_ENTRY_KIND.BOOKMARK,
+              entryUpdatedAt: remoteBookmark.updated_at,
+              deletedEntryRecords,
+            })
+          ) {
+            return
+          }
+
           bookmarkMap.set(remoteBookmark.id, remoteBookmark)
           return
         }
@@ -1243,6 +1337,13 @@ class WebdavAutoSyncService {
     }
 
     const mergedBookmarks = Array.from(bookmarkMap.values())
+
+    const deletedEntryRecordsToKeep =
+      WebdavAutoSyncService.pruneResolvedDeletedEntryRecords({
+        records: deletedEntryRecords,
+        accounts: mergedAccounts,
+        bookmarks: mergedBookmarks,
+      })
 
     const apiCredentialProfiles = selection.apiCredentialProfiles
       ? mergeApiCredentialProfilesConfigs({
@@ -1323,7 +1424,77 @@ class WebdavAutoSyncService {
       preferences,
       channelConfigs: mergedChannelConfigs,
       apiCredentialProfiles,
+      deletedEntryRecords: deletedEntryRecordsToKeep,
     }
+  }
+
+  private static mergeDeletedEntryRecords(input: {
+    localRecords?: AccountStorageConfig["deletedEntryRecords"]
+    remoteRecords?: AccountStorageConfig["deletedEntryRecords"]
+    includeRemoteAccounts?: boolean
+    includeRemoteBookmarks?: boolean
+  }): NonNullable<AccountStorageConfig["deletedEntryRecords"]> {
+    const records: NonNullable<AccountStorageConfig["deletedEntryRecords"]> = {}
+
+    for (const [id, record] of Object.entries(input.remoteRecords || {})) {
+      const includeRemoteRecord =
+        (record.kind === DELETED_ENTRY_KIND.ACCOUNT &&
+          input.includeRemoteAccounts !== false) ||
+        (record.kind === DELETED_ENTRY_KIND.BOOKMARK &&
+          input.includeRemoteBookmarks !== false)
+
+      if (!includeRemoteRecord) {
+        continue
+      }
+
+      records[id] = record
+    }
+
+    for (const [id, record] of Object.entries(input.localRecords || {})) {
+      const current = records[id]
+      if (!current || record.deletedAt > current.deletedAt) {
+        records[id] = record
+      }
+    }
+
+    return records
+  }
+
+  private static isEntrySuppressedByDeletionRecord(input: {
+    id: string
+    kind: DeletedEntryKind
+    entryUpdatedAt?: number
+    entryUserUpdatedAt?: number
+    deletedEntryRecords: AccountStorageConfig["deletedEntryRecords"]
+  }) {
+    const record = input.deletedEntryRecords?.[input.id]
+    if (!record || record.kind !== input.kind) {
+      return false
+    }
+
+    const entryUpdatedAt =
+      typeof input.entryUpdatedAt === "number" ? input.entryUpdatedAt : 0
+    const entryUserUpdatedAt =
+      typeof input.entryUserUpdatedAt === "number"
+        ? input.entryUserUpdatedAt
+        : entryUpdatedAt
+    const deletionBoundary = Math.max(record.deletedAt, record.entryUpdatedAt)
+    return entryUserUpdatedAt <= deletionBoundary
+  }
+
+  private static pruneResolvedDeletedEntryRecords(input: {
+    records: NonNullable<AccountStorageConfig["deletedEntryRecords"]>
+    accounts: SiteAccount[]
+    bookmarks: SiteBookmark[]
+  }) {
+    const records = { ...input.records }
+    for (const account of input.accounts) {
+      delete records[account.id]
+    }
+    for (const bookmark of input.bookmarks) {
+      delete records[bookmark.id]
+    }
+    return records
   }
 
   /**
@@ -1485,70 +1656,122 @@ class WebdavAutoSyncService {
 // 创建单例实例
 export const webdavAutoSyncService = new WebdavAutoSyncService()
 
+let webdavAutoSyncMessagingCleanup: (() => void)[] | null = null
+
 /**
- * Message handler for WebDAV auto-sync actions (setup, syncNow, stop, update).
- * @param request Incoming message with action + payload.
- * @param sendResponse Callback to respond to sender.
+ * Register typed background listeners for WebDAV auto-sync messages.
  */
-export const handleWebdavAutoSyncMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
+export function setupWebdavAutoSyncMessagingListeners() {
+  if (webdavAutoSyncMessagingCleanup) {
+    return
+  }
+
+  webdavAutoSyncMessagingCleanup = [
+    onWebdavAutoSyncMessage(WebdavAutoSyncMessageTypes.Setup, () =>
+      resolveWebdavAutoSyncSetupMessage(),
+    ),
+    onWebdavAutoSyncMessage(WebdavAutoSyncMessageTypes.SyncNow, () =>
+      resolveWebdavAutoSyncSyncNowMessage(),
+    ),
+    onWebdavAutoSyncMessage(WebdavAutoSyncMessageTypes.Stop, () =>
+      resolveWebdavAutoSyncStopMessage(),
+    ),
+    onWebdavAutoSyncMessage(
+      WebdavAutoSyncMessageTypes.UpdateSettings,
+      ({ data }) => resolveWebdavAutoSyncUpdateSettingsMessage(data),
+    ),
+    onWebdavAutoSyncMessage(WebdavAutoSyncMessageTypes.GetStatus, () =>
+      resolveWebdavAutoSyncGetStatusMessage(),
+    ),
+  ]
+}
+
+/**
+ * Resolve a typed request to reapply the WebDAV auto-sync schedule.
+ */
+export async function resolveWebdavAutoSyncSetupMessage(): Promise<
+  RuntimeMessageResponse<undefined>
+> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.WebdavAutoSyncSetup:
-        await webdavAutoSyncService.setupAutoSync()
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.WebdavAutoSyncSyncNow: {
-        const result = await webdavAutoSyncService.syncNow()
-        sendResponse({ success: result.success, message: result.message })
-        break
-      }
-
-      case RuntimeActionIds.WebdavAutoSyncStop:
-        await webdavAutoSyncService.stopAutoSync()
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.WebdavAutoSyncUpdateSettings: {
-        const result = await webdavAutoSyncService.updateSettings(
-          request.settings,
-          typeof request.expectedLastUpdated === "number"
-            ? {
-                expectedLastUpdated: request.expectedLastUpdated,
-              }
-            : undefined,
-        )
-        sendResponse(
-          result.ok
-            ? {
-                success: true,
-                data: result.savedPreferences,
-              }
-            : {
-                success: false,
-                error:
-                  result.reason === "conflict"
-                    ? t("settings:messages.preferencesChangedExternally")
-                    : t("settings:messages.saveSettingsFailed"),
-              },
-        )
-        break
-      }
-
-      case RuntimeActionIds.WebdavAutoSyncGetStatus: {
-        const status = webdavAutoSyncService.getStatus()
-        sendResponse({ success: true, data: status })
-        break
-      }
-
-      default:
-        sendResponse({ success: false, error: "未知的操作" })
-    }
+    await webdavAutoSyncService.setupAutoSync()
+    return { success: true, data: undefined }
   } catch (error) {
     logger.error("处理消息失败", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to run WebDAV auto-sync immediately.
+ */
+export async function resolveWebdavAutoSyncSyncNowMessage(): Promise<WebdavAutoSyncSyncNowResponse> {
+  try {
+    const result = await webdavAutoSyncService.syncNow()
+    return result.success
+      ? { success: true, data: { message: result.message } }
+      : { success: false, error: result.message ?? "" }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return { success: false, error: getErrorMessage(error) }
+  }
+}
+
+/**
+ * Resolve a typed request to stop WebDAV auto-sync scheduling.
+ */
+export async function resolveWebdavAutoSyncStopMessage(): Promise<
+  RuntimeMessageResponse<undefined>
+> {
+  try {
+    await webdavAutoSyncService.stopAutoSync()
+    return { success: true, data: undefined }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request to persist and apply WebDAV auto-sync settings.
+ */
+export async function resolveWebdavAutoSyncUpdateSettingsMessage(
+  request: WebdavAutoSyncUpdateSettingsRequest,
+): Promise<WebdavAutoSyncMutationResponse> {
+  try {
+    const result = await webdavAutoSyncService.updateSettings(
+      request.settings,
+      typeof request.expectedLastUpdated === "number"
+        ? {
+            expectedLastUpdated: request.expectedLastUpdated,
+          }
+        : undefined,
+    )
+    return result.ok
+      ? {
+          success: true,
+          data: result.savedPreferences,
+        }
+      : {
+          success: false,
+          error:
+            result.reason === "conflict"
+              ? t("settings:messages.preferencesChangedExternally")
+              : t("settings:messages.saveSettingsFailed"),
+        }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
+  }
+}
+
+/**
+ * Resolve a typed request for WebDAV auto-sync runtime status.
+ */
+export async function resolveWebdavAutoSyncGetStatusMessage(): Promise<WebdavAutoSyncStatusResponse> {
+  try {
+    return { success: true, data: webdavAutoSyncService.getStatus() }
+  } catch (error) {
+    logger.error("处理消息失败", error)
+    return createRuntimeMessageFailure(getErrorMessage(error))
   }
 }

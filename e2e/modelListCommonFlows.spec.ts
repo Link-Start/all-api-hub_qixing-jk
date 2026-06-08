@@ -2,9 +2,12 @@ import type { BrowserContext } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { API_CREDENTIAL_PROFILES_TEST_IDS } from "~/features/ApiCredentialProfiles/testIds"
+import { MODEL_LIST_TEST_IDS } from "~/features/ModelList/testIds"
 import type { ModelPricing } from "~/services/apiService/common/type"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
+import { verifyAccountModelCatalogUsage } from "~~/e2e/scenarios/accountUsage"
 import {
   createStoredAccount,
   forceExtensionLanguage,
@@ -68,7 +71,7 @@ async function seedModelListAccount(context: BrowserContext) {
       site_name: "Model Catalog Account",
       site_url: MODEL_LIST_BASE_URL,
       account_info: {
-        id: 51,
+        id: "51",
         username: "model-user",
         access_token: "model-token",
       },
@@ -99,21 +102,16 @@ test("loads account-backed models from the options route", async ({
 }) => {
   await seedModelListAccount(context)
 
-  await page.goto(
-    `chrome-extension://${extensionId}/${OPTIONS_PAGE_PATH}#${MENU_ITEM_IDS.MODELS}?accountId=model-list-account`,
-  )
-  await waitForExtensionRoot(page)
-  await expectPermissionOnboardingHidden(page)
-
-  await expect(page.getByRole("heading", { name: "Model List" })).toBeVisible()
-  await expect(page.getByRole("combobox").first()).toContainText(
-    "Model Catalog Account",
-  )
-  await expect(page.getByText("gpt-4o-mini")).toBeVisible()
-  await expect(page.getByText("claude-3-5-sonnet")).toBeVisible()
-  await expect(page.getByText("gemini-1.5-flash")).toBeVisible()
-  await expect(page.getByText("Total 3 models")).toBeVisible()
-  await expect(page.getByText("Showing 3 models")).toBeVisible()
+  await verifyAccountModelCatalogUsage({
+    page,
+    extensionId,
+    account: { accountId: "model-list-account" },
+    expectations: {
+      sourceLabel: "Model Catalog Account",
+      modelNames: ["gpt-4o-mini", "claude-3-5-sonnet", "gemini-1.5-flash"],
+      totalModels: 3,
+    },
+  })
 })
 
 test("routes no-source setup CTAs to account and API credential management", async ({
@@ -130,11 +128,11 @@ test("routes no-source setup CTAs to account and API credential management", asy
   await expect(page.getByText("No model sources yet")).toBeVisible()
   await expect(
     page.getByText(
-      "Add a site account or API credential profile before viewing the model list.",
+      "Add a site account or API credential before viewing the model list.",
     ),
   ).toBeVisible()
 
-  await page.getByRole("button", { name: "Add your first account" }).click()
+  await page.getByTestId(MODEL_LIST_TEST_IDS.addFirstAccountButton).click()
   await expect(page).toHaveURL(/options\.html#account$/)
   await expect(
     page.getByRole("heading", { name: "Account Management" }),
@@ -146,10 +144,12 @@ test("routes no-source setup CTAs to account and API credential management", asy
   await waitForExtensionRoot(page)
   await expectPermissionOnboardingHidden(page)
 
-  await page.getByRole("button", { name: "Add profile" }).click()
+  await page
+    .getByTestId(MODEL_LIST_TEST_IDS.addApiCredentialProfileButton)
+    .click()
   await expect(page).toHaveURL(/options\.html#apiCredentialProfiles$/)
   await expect(
-    page.getByRole("heading", { name: "API credential profiles" }),
+    page.getByRole("heading", { name: "API credential library" }),
   ).toBeVisible()
 })
 
@@ -178,18 +178,28 @@ test("creates an API profile from the empty model list and loads models from it"
   await expectPermissionOnboardingHidden(page)
 
   await expect(page.getByText("No model sources yet")).toBeVisible()
-  await page.getByRole("button", { name: "Add profile" }).click()
+  await page
+    .getByTestId(MODEL_LIST_TEST_IDS.addApiCredentialProfileButton)
+    .click()
   await expect(page).toHaveURL(/options\.html#apiCredentialProfiles$/)
 
-  await page.getByRole("button", { name: "Add profile" }).first().click()
-  await expect(page.getByText("Add API credential profile")).toBeVisible()
+  await page.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.addButton).click()
+  const profileDialog = page.getByTestId(
+    API_CREDENTIAL_PROFILES_TEST_IDS.dialog,
+  )
+  await expect(profileDialog).toBeVisible()
+  await expect(
+    profileDialog.getByRole("heading", { name: "Save API key" }),
+  ).toBeVisible()
 
   await page.locator("#api-credential-profile-name").fill("First Model Profile")
   await page
     .locator("#api-credential-profile-baseUrl")
     .fill("https://first-model-profile.example.com/v1")
   await page.locator("#api-credential-profile-apiKey").fill("sk-first-model")
-  await page.getByRole("button", { name: "Save" }).click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.dialogSaveButton)
+    .click()
 
   await expect(
     page.getByRole("heading", { name: "First Model Profile" }),
@@ -237,7 +247,9 @@ test("creates an API profile from the empty model list and loads models from it"
     searchParams: { profileId: profileId! },
   })
 
-  await page.getByRole("button", { name: "Open in Model Management" }).click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.openModelManagementButton)
+    .click()
 
   const modelsPage = await modelsPagePromise
   installExtensionPageGuards(modelsPage)

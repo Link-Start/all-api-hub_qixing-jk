@@ -15,7 +15,9 @@
     "tokenNotFound": "API トークンの作成または検索に失敗しました"
   },
   "aihubmix": {
-    "createRequiresOneTimeKeyDialog": "AIHubMix のキーは作成時に一度しか表示できません。キー管理で手動作成し、完全なキーをすぐに保存してください。"
+    "createRequiresOneTimeKeyDialog": "AIHubMix のキーは作成時に一度しか表示できません。キー管理で手動作成し、完全なキーをすぐに保存してください。",
+    "oneTimeKeyPromptCancelled": "アカウントは保存されました。あとでキー管理から AIHubMix API キーを手動作成できます。",
+    "oneTimeKeyUnavailableAfterCreate": "アカウントは保存されましたが、完全な AIHubMix API キーを取得できませんでした。AIHubMix キーは作成直後に一度だけ表示されます。キー管理で新しいキーを作成し、完全なキーをすぐに保存してください。"
   },
   "autodetect": {
     "currentTabNeedsReload": "このページは拡張機能のインストールまたは更新前から開かれている可能性があり、現時点ではこのタブの情報を読み取れません。現在のページを再読み込みしてから、もう一度自動検出を試してください。",
@@ -36,7 +38,8 @@
     "importFailed": "インポートに失敗しました。不明なエラーが発生しました",
     "importSuccess": "新しいチャネル {{channelName}} を正常にインポートしました",
     "modelsMissing": "少なくとも 1 つのモデルを指定してください",
-    "noChannelsToSync": "同期するチャネルがありません"
+    "noChannelsToSync": "同期するチャネルがありません",
+    "unsupportedModelSync": "このバージョンでは AxonHub の管理サイトモデル同期はサポートされていません"
   },
   "background": {
     "cannotCreateWindow": "ウィンドウを作成できません",
@@ -154,8 +157,12 @@
   "operations": {
     "detection": {
       "failed": "自動検出に失敗しました。情報を手動入力するか、対象サイトにログインしていることを確認してください",
+      "getAccessTokenFailedDetailed": "アカウントは検出されましたが、アクセストークンを取得できませんでした。API トークンを作成または表示できる権限があるか確認するか、手動で入力してください。",
       "getInfoFailed": "ユーザー名または Access Token の取得に失敗しました",
-      "getUserIdFailed": "ユーザー ID を取得できませんでした"
+      "getSiteStatusFailedDetailed": "アカウントは検出されましたが、サイト状態を読み取れませんでした。時間をおいて再試行してください。解消しない場合は、先に手動で保存してください。",
+      "getUserIdFailed": "ユーザー ID を取得できませんでした",
+      "getUserIdFailedDetailed": "サイトには接続できましたが、ユーザー ID を読み取れませんでした。対象サイトにログインしていることを確認してから再試行してください。",
+      "getUsernameFailedDetailed": "アカウントは検出されましたが、サイトがユーザー名を返しませんでした。ログインしていることを確認するか、手動で入力してください。"
     }
   },
   "storage": {
@@ -235,7 +242,10 @@
     "downloadFailed": "ダウンロードに失敗しました。ステータスコード: {{status}}",
     "encryptFailedNoPassword": "暗号化が有効ですが、パスワードが設定されていません",
     "fileNotFound": "リモートのバックアップファイルが存在しません",
+    "invalidBackupJson": "クラウドバックアップファイルが不完全なため、同期に使用できません。破損したデータを結合しないよう、今回の同期は停止しました。この端末のローカルデータが完全な場合は、「WebDAV にアップロード」でクラウドバックアップを再作成してください。完全でない場合は、完全なデータがある別の端末からアップロードするか、完全なバックアップファイルを先にインポートしてください。",
+    "safeCommitFailed": "この WebDAV サービスではバックアップを安全に保存できませんでした。既存のクラウドバックアップは保持されています。後でもう一度試すか、ファイルの移動または名前変更に対応した WebDAV サービスを使用してください。",
     "syncDataSelectionRequired": "同期するデータ領域を少なくとも 1 つ選択してください",
-    "uploadFailed": "アップロードに失敗しました。ステータスコード: {{status}}"
+    "uploadFailed": "アップロードに失敗しました。ステータスコード: {{status}}",
+    "uploadVerificationFailed": "アップロード後のバックアップ検証に失敗しました。クラウドサービスがファイルを完全に保存できなかった可能性があります。既存のクラウドバックアップは保持されています。"
   }
 }

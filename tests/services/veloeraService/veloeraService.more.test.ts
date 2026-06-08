@@ -337,8 +337,11 @@ describe("veloeraService additional flows", () => {
 
     const result = await autoConfigToVeloera(buildSiteAccount(), "toast-8")
 
-    expect(result.success).toBe(false)
-    expect(result.message).toContain("messages:veloera.channelExists")
+    expect(result).toEqual({
+      success: false,
+      message: expect.stringContaining("channelExists"),
+    })
+    expect(mockSearchChannel).toHaveBeenCalledTimes(1)
     expect(mockCreateChannel).not.toHaveBeenCalled()
   })
 
@@ -359,15 +362,43 @@ describe("veloeraService additional flows", () => {
     })
 
     await searchChannel(
-      "https://veloera.example.com",
-      "veloera-token",
-      "200",
+      {
+        baseUrl: "https://veloera.example.com",
+        adminToken: "veloera-token",
+        userId: "200",
+      },
       "proxy",
     )
-    await createChannel("https://veloera.example.com", "veloera-token", "200", {
-      mode: "single",
-      channel: {
-        name: "Veloera Channel",
+    await createChannel(
+      {
+        baseUrl: "https://veloera.example.com",
+        adminToken: "veloera-token",
+        userId: "200",
+      },
+      {
+        mode: "single",
+        channel: {
+          name: "Veloera Channel",
+          type: 1,
+          key: "veloera-key",
+          base_url: "https://proxy.example.com",
+          models: "gpt-4o",
+          groups: ["default"],
+          priority: 0,
+          weight: 0,
+          status: 1,
+        },
+      } as any,
+    )
+    await updateChannel(
+      {
+        baseUrl: "https://veloera.example.com",
+        adminToken: "veloera-token",
+        userId: "200",
+      },
+      {
+        id: 7,
+        name: "Updated Veloera Channel",
         type: 1,
         key: "veloera-key",
         base_url: "https://proxy.example.com",
@@ -376,24 +407,14 @@ describe("veloeraService additional flows", () => {
         priority: 0,
         weight: 0,
         status: 1,
-      },
-    } as any)
-    await updateChannel("https://veloera.example.com", "veloera-token", "200", {
-      id: 7,
-      name: "Updated Veloera Channel",
-      type: 1,
-      key: "veloera-key",
-      base_url: "https://proxy.example.com",
-      models: "gpt-4o",
-      groups: ["default"],
-      priority: 0,
-      weight: 0,
-      status: 1,
-    } as any)
+      } as any,
+    )
     await deleteChannel(
-      "https://veloera.example.com",
-      "veloera-token",
-      "200",
+      {
+        baseUrl: "https://veloera.example.com",
+        adminToken: "veloera-token",
+        userId: "200",
+      },
       7,
     )
     const models = await fetchAvailableModels(account, token)
@@ -451,52 +472,6 @@ describe("veloeraService additional flows", () => {
     )
   })
 
-  it("returns matched channels by comparable inputs and null when Veloera search cannot find any", async () => {
-    const { findMatchingChannel } = await import(
-      "~/services/managedSites/providers/veloera"
-    )
-
-    mockSearchChannel.mockResolvedValueOnce({
-      items: [
-        buildManagedSiteChannel({
-          id: 55,
-          name: "Existing Veloera Channel",
-          base_url: "https://proxy.example.com",
-          models: "gpt-4o",
-          key: "veloera-key",
-        }),
-      ],
-      total: 1,
-      type_counts: {},
-    })
-
-    await expect(
-      findMatchingChannel(
-        "https://veloera.example.com",
-        "veloera-token",
-        "200",
-        "https://proxy.example.com",
-        ["gpt-4o"],
-        "veloera-key",
-      ),
-    ).resolves.toMatchObject({
-      id: 55,
-      name: "Existing Veloera Channel",
-    })
-
-    mockSearchChannel.mockResolvedValueOnce(null)
-    await expect(
-      findMatchingChannel(
-        "https://veloera.example.com",
-        "veloera-token",
-        "200",
-        "https://proxy.example.com",
-        ["gpt-4o"],
-        "veloera-key",
-      ),
-    ).resolves.toBeNull()
-  })
-
   it("trims fetched Veloera channel keys and throws when the detail payload omits them", async () => {
     const { fetchChannelSecretKey } = await import(
       "~/services/managedSites/providers/veloera"
@@ -508,9 +483,11 @@ describe("veloeraService additional flows", () => {
     })
     await expect(
       fetchChannelSecretKey(
-        "https://veloera.example.com",
-        "veloera-token",
-        "200",
+        {
+          baseUrl: "https://veloera.example.com",
+          adminToken: "veloera-token",
+          userId: "200",
+        },
         42,
       ),
     ).resolves.toBe("veloera-secret")
@@ -521,9 +498,11 @@ describe("veloeraService additional flows", () => {
     })
     await expect(
       fetchChannelSecretKey(
-        "https://veloera.example.com",
-        "veloera-token",
-        "200",
+        {
+          baseUrl: "https://veloera.example.com",
+          adminToken: "veloera-token",
+          userId: "200",
+        },
         42,
       ),
     ).rejects.toThrow("veloera_channel_key_missing")

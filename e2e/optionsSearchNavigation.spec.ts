@@ -1,5 +1,6 @@
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { BASIC_SETTINGS_TEST_IDS } from "~/features/BasicSettings/testIds"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
 import {
@@ -82,7 +83,7 @@ test("navigates between common options pages from the sidebar", async ({
 
   await expect(
     page
-      .getByTestId("basic-settings-page")
+      .getByTestId(BASIC_SETTINGS_TEST_IDS.page)
       .getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible()
 

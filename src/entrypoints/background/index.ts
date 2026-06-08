@@ -15,14 +15,23 @@ import {
   OPTIONAL_PERMISSIONS,
 } from "~/services/permissions/permissionManager"
 import { userPreferences } from "~/services/preferences/userPreferences"
+import {
+  setupProductAnalyticsAccountChangeListener,
+  setupProductAnalyticsPreferencesChangeListener,
+  triggerStartupSettingsSnapshot,
+  triggerStartupShieldBypassDailySummary,
+  triggerStartupSiteEcosystemSnapshot,
+} from "~/services/productAnalytics/runtime"
 import { tagStorage } from "~/services/tags/tagStorage"
 import { changelogOnUpdateState } from "~/services/updates/changelogOnUpdateState"
 import {
   getManifest,
+  getRuntimeId,
   onInstalled,
   onStartup,
   onSuspend,
 } from "~/utils/browser/browserApi"
+import { isTestMode } from "~/utils/core/environment"
 import { createLogger } from "~/utils/core/logger"
 import { openOrFocusOptionsMenuItem } from "~/utils/navigation"
 
@@ -46,11 +55,11 @@ const logger = createLogger("BackgroundEntrypoint")
  * lifecycle before they can drive a target page.
  */
 function shouldAutoOpenPermissionsOnboarding(): boolean {
-  return import.meta.env.MODE !== "test"
+  return !isTestMode()
 }
 
 export default defineBackground(() => {
-  logger.debug("Hello background", { id: browser.runtime.id })
+  logger.debug("Hello background", { id: getRuntimeId() })
 
   // Apply dev-only branding early so the toolbar action is visually distinguishable.
   void applyDevActionBranding()
@@ -62,6 +71,8 @@ export default defineBackground(() => {
   setupTempWindowListeners()
   setupCookieInterceptorListeners()
   setupContextMenus()
+  setupProductAnalyticsAccountChangeListener()
+  setupProductAnalyticsPreferencesChangeListener()
 
   /**
    * 监听插件安装/更新事件
@@ -105,8 +116,7 @@ export default defineBackground(() => {
           shouldAutoOpenPermissionsOnboarding()
         ) {
           logger.info("First install detected, opening permissions onboarding")
-          openOrFocusOptionsMenuItem(MENU_ITEM_IDS.BASIC, {
-            tab: "permissions",
+          openOrFocusOptionsMenuItem(MENU_ITEM_IDS.OVERVIEW, {
             onboarding: "permissions",
           })
         } else if (
@@ -139,8 +149,7 @@ export default defineBackground(() => {
               logger.info(
                 "Update detected with new optional permissions; prompting user to re-confirm",
               )
-              openOrFocusOptionsMenuItem(MENU_ITEM_IDS.BASIC, {
-                tab: "permissions",
+              openOrFocusOptionsMenuItem(MENU_ITEM_IDS.OVERVIEW, {
                 onboarding: "permissions",
                 reason: "new-permissions",
               })
@@ -199,4 +208,7 @@ async function main() {
   await applyActionClickBehavior(prefs.actionClickBehavior ?? "popup")
 
   await initializeCookieInterceptors()
+  triggerStartupSiteEcosystemSnapshot()
+  triggerStartupSettingsSnapshot()
+  triggerStartupShieldBypassDailySummary()
 }

@@ -1,23 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import {
   fetchChannelFilters,
   saveChannelFilters,
 } from "~/features/ManagedSiteChannels/utils/channelFilters"
+import { ChannelConfigMessageTypes } from "~/services/managedSites/channelConfigMessaging"
 import type { ChannelModelFilterRule } from "~/types/channelModelFilters"
 
-const { mockSendRuntimeMessage, mockGetConfig, mockUpsertFilters, mockWarn } =
-  vi.hoisted(() => ({
-    mockSendRuntimeMessage: vi.fn(),
-    mockGetConfig: vi.fn(),
-    mockUpsertFilters: vi.fn(),
-    mockWarn: vi.fn(),
-  }))
-
-vi.mock("~/utils/browser/browserApi", () => ({
-  sendRuntimeMessage: mockSendRuntimeMessage,
+const {
+  mockSendChannelConfigMessage,
+  mockGetConfig,
+  mockUpsertFilters,
+  mockWarn,
+} = vi.hoisted(() => ({
+  mockSendChannelConfigMessage: vi.fn(),
+  mockGetConfig: vi.fn(),
+  mockUpsertFilters: vi.fn(),
+  mockWarn: vi.fn(),
 }))
+
+vi.mock(
+  "~/services/managedSites/channelConfigMessaging",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("~/services/managedSites/channelConfigMessaging")
+      >()
+    return {
+      ...actual,
+      sendChannelConfigMessage: mockSendChannelConfigMessage,
+    }
+  },
+)
 
 vi.mock("~/services/managedSites/channelConfigStorage", () => ({
   channelConfigStorage: {
@@ -51,7 +65,7 @@ describe("channelFilters", () => {
   })
 
   it("returns runtime-backed filter rules when the background responds successfully", async () => {
-    mockSendRuntimeMessage.mockResolvedValue({
+    mockSendChannelConfigMessage.mockResolvedValue({
       success: true,
       data: {
         modelFilterSettings: {
@@ -62,18 +76,29 @@ describe("channelFilters", () => {
 
     await expect(fetchChannelFilters(9)).resolves.toEqual(sampleRules)
 
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.ChannelConfigGet,
-      channelId: 9,
-    })
+    expect(mockSendChannelConfigMessage).toHaveBeenCalledWith(
+      ChannelConfigMessageTypes.Get,
+      { channelId: 9 },
+    )
     expect(mockGetConfig).not.toHaveBeenCalled()
   })
 
-  it("falls back to local storage when runtime loading fails", async () => {
-    mockSendRuntimeMessage.mockResolvedValue({
+  it("throws explicit runtime load failures instead of falling back to local storage", async () => {
+    mockSendChannelConfigMessage.mockResolvedValue({
       success: false,
       error: "runtime unavailable",
     })
+
+    await expect(fetchChannelFilters(11)).rejects.toThrow("runtime unavailable")
+
+    expect(mockGetConfig).not.toHaveBeenCalled()
+    expect(mockWarn).not.toHaveBeenCalled()
+  })
+
+  it("falls back to local storage when runtime loading is unavailable", async () => {
+    mockSendChannelConfigMessage.mockRejectedValue(
+      new Error("Receiving end does not exist"),
+    )
     mockGetConfig.mockResolvedValue({
       modelFilterSettings: {
         rules: sampleRules,
@@ -87,20 +112,24 @@ describe("channelFilters", () => {
   })
 
   it("saves through the runtime handler when available", async () => {
-    mockSendRuntimeMessage.mockResolvedValue({ success: true })
+    mockSendChannelConfigMessage.mockResolvedValue({ success: true })
 
     await expect(saveChannelFilters(15, sampleRules)).resolves.toBeUndefined()
 
-    expect(mockSendRuntimeMessage).toHaveBeenCalledWith({
-      action: RuntimeActionIds.ChannelConfigUpsertFilters,
-      channelId: 15,
-      filters: sampleRules,
-    })
+    expect(mockSendChannelConfigMessage).toHaveBeenCalledWith(
+      ChannelConfigMessageTypes.UpsertFilters,
+      {
+        channelId: 15,
+        filters: sampleRules,
+      },
+    )
     expect(mockUpsertFilters).not.toHaveBeenCalled()
   })
 
   it("falls back to local persistence when runtime saving fails", async () => {
-    mockSendRuntimeMessage.mockRejectedValue(new Error("no runtime"))
+    mockSendChannelConfigMessage.mockRejectedValue(
+      new Error("Receiving end does not exist"),
+    )
     mockUpsertFilters.mockResolvedValue(true)
 
     await expect(saveChannelFilters(19, sampleRules)).resolves.toBeUndefined()
@@ -109,11 +138,24 @@ describe("channelFilters", () => {
     expect(mockWarn).toHaveBeenCalledTimes(1)
   })
 
-  it("throws when both runtime and local persistence fail", async () => {
-    mockSendRuntimeMessage.mockResolvedValue({
+  it("throws explicit runtime save failures instead of falling back locally", async () => {
+    mockSendChannelConfigMessage.mockResolvedValue({
       success: false,
       error: "save rejected",
     })
+
+    await expect(saveChannelFilters(21, sampleRules)).rejects.toThrow(
+      "save rejected",
+    )
+
+    expect(mockUpsertFilters).not.toHaveBeenCalled()
+    expect(mockWarn).not.toHaveBeenCalled()
+  })
+
+  it("throws when runtime is unavailable and local persistence fails", async () => {
+    mockSendChannelConfigMessage.mockRejectedValue(
+      new Error("Receiving end does not exist"),
+    )
     mockUpsertFilters.mockResolvedValue(false)
 
     await expect(saveChannelFilters(21, sampleRules)).rejects.toThrow(

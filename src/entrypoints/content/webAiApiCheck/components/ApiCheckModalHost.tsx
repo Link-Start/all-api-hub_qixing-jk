@@ -1,5 +1,12 @@
 import { XMarkIcon } from "@heroicons/react/24/outline"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react"
 import toast from "react-hot-toast/headless"
 import { useTranslation } from "react-i18next"
 
@@ -15,6 +22,26 @@ import { inputVariants } from "~/components/ui/input"
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { cn } from "~/lib/utils"
 import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  startProductAnalyticsAction,
+  type ProductAnalyticsActionInsights,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsErrorCategory,
+  type ProductAnalyticsResult,
+  type ProductAnalyticsSourceKind,
+} from "~/services/productAnalytics/events"
+import { buildModelListDiagnostics } from "~/services/productAnalytics/modelListDiagnostics"
+import { resolveProductAnalyticsErrorCategoryFromProbeResult } from "~/services/productAnalytics/verification"
+import {
   API_TYPES,
   getApiVerificationProbeDefinitions,
   type ApiVerificationApiType,
@@ -26,7 +53,12 @@ import {
   translateApiVerificationSummary,
 } from "~/services/verification/aiApiVerification/i18n"
 import { extractApiCheckCredentialsFromText } from "~/services/verification/webAiApiCheck/extractCredentials"
+import {
+  sendWebAiApiCheckMessage,
+  WebAiApiCheckMessageTypes,
+} from "~/services/verification/webAiApiCheck/messaging"
 import { sendRuntimeMessage } from "~/utils/browser/browserApi"
+import { isTestMode } from "~/utils/core/environment"
 
 import {
   API_CHECK_OPEN_MODAL_EVENT,
@@ -34,6 +66,10 @@ import {
   dispatchApiCheckModalHostReady,
   type ApiCheckOpenModalDetail,
 } from "../events"
+import {
+  getWebAiApiCheckProbeTestId,
+  WEB_AI_API_CHECK_TEST_IDS,
+} from "../testIds"
 
 type ProbeItemState = {
   id: ApiVerificationProbeId
@@ -43,9 +79,79 @@ type ProbeItemState = {
   result: ApiVerificationProbeResult | null
 }
 
+type ApiCheckProbeResultWithAnalyticsCategory = ApiVerificationProbeResult & {
+  analyticsErrorCategory?: ProductAnalyticsErrorCategory
+}
+
+type ApiCheckExtractionMetadata = NonNullable<
+  ApiCheckOpenModalDetail["extraction"]
+>
+
 // Preserve the real debounce in dev/prod to avoid bursty background requests
 // while typing, but skip the wall-clock delay in Vitest.
-const MODEL_AUTO_FETCH_DEBOUNCE_MS = import.meta.env.MODE === "test" ? 0 : 300
+const MODEL_AUTO_FETCH_DEBOUNCE_MS = isTestMode() ? 0 : 300
+
+const contentApiCheckAnalyticsScope = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.WebAiApiCheck,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentApiCheckModal,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+} as const
+
+const stopHostPageKeyboardShortcuts = (
+  event: ReactKeyboardEvent<HTMLElement>,
+) => {
+  event.stopPropagation()
+}
+
+const KEYBOARD_EVENTS_TO_CONTAIN = ["keydown", "keyup"] as const
+
+/**
+ * Classifies the modal opening source without carrying page content.
+ */
+function getApiCheckSourceKind(
+  trigger: ApiCheckOpenModalDetail["trigger"],
+): ProductAnalyticsSourceKind {
+  if (trigger === "autoDetect") return PRODUCT_ANALYTICS_SOURCE_KINDS.Auto
+  return PRODUCT_ANALYTICS_SOURCE_KINDS.ContextMenu
+}
+
+/**
+ * Classifies in-modal actions separately from modal launch sources.
+ */
+function getApiCheckActionSourceKind(
+  trigger: ApiCheckOpenModalDetail["trigger"],
+): ProductAnalyticsSourceKind {
+  return trigger === "autoDetect"
+    ? PRODUCT_ANALYTICS_SOURCE_KINDS.Auto
+    : PRODUCT_ANALYTICS_SOURCE_KINDS.Manual
+}
+
+/**
+ * Adds common safe dimensions to API check action completions.
+ */
+function buildApiCheckAnalyticsInsights(
+  apiType: ApiVerificationApiType,
+  trigger: ApiCheckOpenModalDetail["trigger"],
+  insights: ProductAnalyticsActionInsights = {},
+): ProductAnalyticsActionInsights {
+  return {
+    sourceKind: getApiCheckActionSourceKind(trigger),
+    apiType,
+    ...insights,
+  }
+}
+
+/**
+ * Converts probe status into a fixed analytics completion result.
+ */
+function getProbeAnalyticsResult(
+  result: ApiVerificationProbeResult | undefined,
+): ProductAnalyticsResult {
+  if (!result) return PRODUCT_ANALYTICS_RESULTS.Failure
+  if (result.status === "pass") return PRODUCT_ANALYTICS_RESULTS.Success
+  if (result.status === "unsupported") return PRODUCT_ANALYTICS_RESULTS.Skipped
+  return PRODUCT_ANALYTICS_RESULTS.Failure
+}
 
 /**
  * Build the initial probe UI state for the selected API type.
@@ -79,6 +185,8 @@ export function ApiCheckModalHost() {
   const [sourceText, setSourceText] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const [extractionMetadata, setExtractionMetadata] =
+    useState<ApiCheckOpenModalDetail["extraction"]>(undefined)
   const [apiKeyVisible, setApiKeyVisible] = useState(false)
   const [apiType, setApiType] = useState<ApiVerificationApiType>(
     API_TYPES.OPENAI_COMPATIBLE,
@@ -97,8 +205,13 @@ export function ApiCheckModalHost() {
    * the auto-fetch is debounced and keyed by (apiType + baseUrl + apiKey).
    */
   const lastAutoFetchKeyRef = useRef<string | null>(null)
+  const lastObservedModelFetchKeyRef = useRef<string | null>(null)
   const fetchModelsRequestIdRef = useRef(0)
   const hasSignaledHostReadyRef = useRef(false)
+  const skipNextSourceTextExtractionRef = useRef<string | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const backdropRef = useRef<HTMLDivElement | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
 
   /**
    * Radix popovers (used by `SearchableSelect`) portal to `document.body` by default.
@@ -160,6 +273,63 @@ export function ApiCheckModalHost() {
   }, [apiType])
 
   useEffect(() => {
+    if (!isOpen) return
+    dialogRef.current?.focus({ preventScroll: true })
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const stopKeyboardShortcut = (event: KeyboardEvent) => {
+      const target = event.target
+      if (target instanceof Node && dialogRef.current?.contains(target)) {
+        event.stopImmediatePropagation()
+      }
+    }
+    const stopWheel = (event: WheelEvent) => {
+      event.stopPropagation()
+    }
+    const stopBackgroundWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    const documentElement = document.documentElement
+    const body = document.body
+    const previousDocumentOverflow = documentElement.style.overflow
+    const previousBodyOverflow = body.style.overflow
+
+    const dialog = dialogRef.current
+    const backdrop = backdropRef.current
+    const scrollContainer = scrollContainerRef.current
+
+    KEYBOARD_EVENTS_TO_CONTAIN.forEach((eventName) => {
+      document.addEventListener(eventName, stopKeyboardShortcut, {
+        capture: true,
+      })
+    })
+    documentElement.style.overflow = "hidden"
+    body.style.overflow = "hidden"
+    dialog?.addEventListener("wheel", stopBackgroundWheel, { passive: false })
+    backdrop?.addEventListener("wheel", stopBackgroundWheel, {
+      passive: false,
+    })
+    scrollContainer?.addEventListener("wheel", stopWheel, { passive: false })
+
+    return () => {
+      KEYBOARD_EVENTS_TO_CONTAIN.forEach((eventName) => {
+        document.removeEventListener(eventName, stopKeyboardShortcut, {
+          capture: true,
+        })
+      })
+      documentElement.style.overflow = previousDocumentOverflow
+      body.style.overflow = previousBodyOverflow
+      dialog?.removeEventListener("wheel", stopBackgroundWheel)
+      backdrop?.removeEventListener("wheel", stopBackgroundWheel)
+      scrollContainer?.removeEventListener("wheel", stopWheel)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
     const handleOpen = (event: Event) => {
       const custom = event as CustomEvent<ApiCheckOpenModalDetail>
       const detail = custom.detail
@@ -173,11 +343,21 @@ export function ApiCheckModalHost() {
       setPageUrl(detail.pageUrl || window.location.href)
 
       const nextSourceText = (detail.sourceText ?? "").toString()
+      skipNextSourceTextExtractionRef.current = nextSourceText
       setSourceText(nextSourceText)
 
       const extracted = extractApiCheckCredentialsFromText(nextSourceText)
-      setBaseUrl(extracted.baseUrl ?? "")
-      setApiKey(extracted.apiKey ?? "")
+      const extraction = detail.extraction ?? {
+        candidates: extracted.candidates,
+        summary: extracted.summary,
+      }
+      const nextBaseUrl =
+        extraction.candidates.baseUrls[0]?.value ?? extracted.baseUrl ?? ""
+      const nextApiKey =
+        extraction.candidates.apiKeys[0]?.value ?? extracted.apiKey ?? ""
+      setExtractionMetadata(extraction)
+      setBaseUrl(nextBaseUrl)
+      setApiKey(nextApiKey)
 
       setApiKeyVisible(false)
       setModelId("")
@@ -187,6 +367,20 @@ export function ApiCheckModalHost() {
       resetProbeState(apiType)
 
       setIsOpen(true)
+
+      const tracker = startProductAnalyticsAction({
+        ...contentApiCheckAnalyticsScope,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.ShowApiCredentialCheckModal,
+      })
+      const hasUsableCredentials = !!nextBaseUrl && !!nextApiKey
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+        insights: {
+          sourceKind: getApiCheckSourceKind(detail.trigger),
+          apiType,
+          readyCount: hasUsableCredentials ? 1 : 0,
+          blockedCount: hasUsableCredentials ? 0 : 1,
+        },
+      })
     }
 
     window.addEventListener(API_CHECK_OPEN_MODAL_EVENT, handleOpen as any)
@@ -201,12 +395,26 @@ export function ApiCheckModalHost() {
 
   const close = () => {
     const reason = hasAnyResult || hasFetchedModels ? "completed" : "dismissed"
+    if (reason === "dismissed") {
+      const tracker = startProductAnalyticsAction({
+        ...contentApiCheckAnalyticsScope,
+        actionId:
+          PRODUCT_ANALYTICS_ACTION_IDS.DismissDetectedApiCredentialCheck,
+      })
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Cancelled, {
+        insights: {
+          sourceKind: getApiCheckActionSourceKind(trigger),
+        },
+      })
+    }
     dispatchApiCheckModalClosed({
       pageUrl: pageUrl || window.location.href,
       trigger,
       reason,
     })
+    fetchModelsRequestIdRef.current += 1
     lastAutoFetchKeyRef.current = null
+    setExtractionMetadata(undefined)
     setIsOpen(false)
   }
 
@@ -214,10 +422,74 @@ export function ApiCheckModalHost() {
   // a manual "Re-extract" action after editing/pasting into the textarea.
   useEffect(() => {
     if (!isOpen) return
+    if (skipNextSourceTextExtractionRef.current === sourceText) {
+      skipNextSourceTextExtractionRef.current = null
+      return
+    }
     const extracted = extractApiCheckCredentialsFromText(sourceText)
+    setExtractionMetadata({
+      candidates: extracted.candidates,
+      summary: extracted.summary,
+    })
     if (extracted.baseUrl) setBaseUrl(extracted.baseUrl)
     if (extracted.apiKey) setApiKey(extracted.apiKey)
   }, [isOpen, sourceText])
+
+  const renderCandidateButtons = useCallback(
+    (
+      kind: "baseUrl" | "apiKey",
+      candidates: ApiCheckExtractionMetadata["candidates"]["baseUrls"],
+      currentValue: string,
+      onSelect: (value: string) => void,
+    ) => {
+      if (candidates.length <= 1) return null
+
+      return (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {candidates.slice(0, 4).map((candidate, index) => {
+            const label =
+              kind === "apiKey"
+                ? (() => {
+                    const apiKeyCandidateLabel = t(
+                      "webAiApiCheck:modal.candidates.apiKey",
+                      {
+                        index: index + 1,
+                      },
+                    )
+                    return apiKeyCandidateLabel ===
+                      "webAiApiCheck:modal.candidates.apiKey"
+                      ? `${apiKeyCandidateLabel} ${index + 1}`
+                      : apiKeyCandidateLabel
+                  })()
+                : candidate.value
+
+            return (
+              <button
+                key={`${kind}-${candidate.value}`}
+                type="button"
+                data-testid={`${
+                  kind === "apiKey"
+                    ? WEB_AI_API_CHECK_TEST_IDS.apiKeyCandidatePrefix
+                    : WEB_AI_API_CHECK_TEST_IDS.baseUrlCandidatePrefix
+                }-${index}`}
+                className={cn(
+                  "max-w-full truncate rounded-md border px-2 py-1 text-xs sm:max-w-64",
+                  currentValue === candidate.value
+                    ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-200"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+                title={kind === "baseUrl" ? candidate.value : undefined}
+                onClick={() => onSelect(candidate.value)}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )
+    },
+    [t],
+  )
 
   const fetchModels = useCallback(
     async (origin: "auto" | "manual") => {
@@ -225,6 +497,18 @@ export function ApiCheckModalHost() {
       if (origin === "manual") setValidationError(null)
 
       if (!modelListSupported) return
+
+      const tracker = startProductAnalyticsAction({
+        ...contentApiCheckAnalyticsScope,
+        actionId:
+          origin === "auto"
+            ? PRODUCT_ANALYTICS_ACTION_IDS.AutoFetchApiCredentialModelList
+            : PRODUCT_ANALYTICS_ACTION_IDS.FetchApiCredentialModelList,
+      })
+      const sourceKind =
+        origin === "auto"
+          ? PRODUCT_ANALYTICS_SOURCE_KINDS.Auto
+          : PRODUCT_ANALYTICS_SOURCE_KINDS.Manual
 
       const trimmedBaseUrl = baseUrl.trim()
       const trimmedApiKey = apiKey.trim()
@@ -234,21 +518,46 @@ export function ApiCheckModalHost() {
             t("webAiApiCheck:modal.errors.missingBaseUrlOrKey"),
           )
         }
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+          diagnostics: buildModelListDiagnostics({
+            sourceKind,
+            apiType,
+            modelCount: 0,
+            resultKind: "missing_credentials",
+          }),
+        })
         return
       }
 
       const requestId = (fetchModelsRequestIdRef.current += 1)
+      const fetchKey = `${apiType}::${trimmedBaseUrl}::${trimmedApiKey}`
+      if (origin === "manual") {
+        lastAutoFetchKeyRef.current = fetchKey
+      }
       setIsFetchingModels(true)
       try {
-        const response: any = await sendRuntimeMessage({
-          action: RuntimeActionIds.ApiCheckFetchModels,
-          apiType,
-          baseUrl: trimmedBaseUrl,
-          apiKey: trimmedApiKey,
-        })
+        const response = await sendWebAiApiCheckMessage(
+          WebAiApiCheckMessageTypes.FetchModels,
+          {
+            apiType,
+            baseUrl: trimmedBaseUrl,
+            apiKey: trimmedApiKey,
+          },
+        )
 
         // Ignore stale responses when a newer request is already in-flight.
-        if (fetchModelsRequestIdRef.current !== requestId) return
+        if (fetchModelsRequestIdRef.current !== requestId) {
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+            diagnostics: buildModelListDiagnostics({
+              sourceKind,
+              apiType,
+              modelCount: 0,
+              resultKind: "stale_response_ignored",
+            }),
+          })
+          return
+        }
 
         if (response?.success) {
           const ids = Array.isArray(response.modelIds) ? response.modelIds : []
@@ -257,12 +566,56 @@ export function ApiCheckModalHost() {
             // Provide a helpful default to reduce friction.
             setModelId(ids[0] ?? "")
           }
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+            diagnostics: buildModelListDiagnostics({
+              sourceKind,
+              apiType,
+              modelCount: ids.length,
+            }),
+          })
         } else {
+          const responseError = response?.error
           setFetchModelsError(
-            response?.error ||
-              t("webAiApiCheck:modal.errors.fetchModelsFailed"),
+            responseError || t("webAiApiCheck:modal.errors.fetchModelsFailed"),
           )
+          const diagnosticsError =
+            typeof responseError === "string"
+              ? { message: responseError }
+              : undefined
+          const diagnostics = buildModelListDiagnostics({
+            sourceKind,
+            apiType,
+            modelCount: 0,
+            ...(response?.errorCategory
+              ? { errorCategory: response.errorCategory }
+              : {}),
+            ...(diagnosticsError ? { error: diagnosticsError } : {}),
+            ...(typeof response?.errorStatusCode === "number"
+              ? { statusCode: response.errorStatusCode }
+              : {}),
+          })
+          const errorCategory =
+            response?.errorCategory ??
+            diagnostics.failure?.category ??
+            PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+            errorCategory,
+            diagnostics,
+          })
         }
+      } catch (error) {
+        if (fetchModelsRequestIdRef.current === requestId) {
+          setFetchModelsError(t("webAiApiCheck:modal.errors.fetchModelsFailed"))
+        }
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+          diagnostics: buildModelListDiagnostics({
+            sourceKind,
+            apiType,
+            modelCount: 0,
+            error,
+          }),
+        })
       } finally {
         if (fetchModelsRequestIdRef.current === requestId) {
           setIsFetchingModels(false)
@@ -285,6 +638,19 @@ export function ApiCheckModalHost() {
   // show stale options after the user edits base URL / API key.
   useEffect(() => {
     if (!isOpen) return
+    const trimmedBaseUrl = baseUrl.trim()
+    const trimmedApiKey = apiKey.trim()
+    const currentFetchKey =
+      trimmedBaseUrl && trimmedApiKey
+        ? `${apiType}::${trimmedBaseUrl}::${trimmedApiKey}`
+        : null
+
+    fetchModelsRequestIdRef.current += 1
+    if (lastObservedModelFetchKeyRef.current !== currentFetchKey) {
+      lastAutoFetchKeyRef.current = null
+      lastObservedModelFetchKeyRef.current = currentFetchKey
+    }
+    setIsFetchingModels(false)
     setModelIds([])
     setFetchModelsError(null)
   }, [apiType, baseUrl, apiKey, isOpen])
@@ -293,7 +659,6 @@ export function ApiCheckModalHost() {
   useEffect(() => {
     if (!isOpen) return
     if (!modelListSupported) return
-    if (isFetchingModels) return
 
     const trimmedBaseUrl = baseUrl.trim()
     const trimmedApiKey = apiKey.trim()
@@ -301,11 +666,13 @@ export function ApiCheckModalHost() {
 
     const fetchKey = `${apiType}::${trimmedBaseUrl}::${trimmedApiKey}`
     if (lastAutoFetchKeyRef.current === fetchKey) return
+    if (isFetchingModels) return
 
     const timeoutId = window.setTimeout(() => {
       // Double-check inside timer to avoid firing after state has moved on.
       if (!isOpen) return
       if (lastAutoFetchKeyRef.current === fetchKey) return
+      if (isFetchingModels) return
       lastAutoFetchKeyRef.current = fetchKey
       void fetchModels("auto")
     }, MODEL_AUTO_FETCH_DEBOUNCE_MS)
@@ -323,7 +690,18 @@ export function ApiCheckModalHost() {
     modelListSupported,
   ])
 
-  const runProbe = async (probeId: ApiVerificationProbeId) => {
+  const runProbe = async (
+    probeId: ApiVerificationProbeId,
+    options: { trackIndividual?: boolean } = {},
+  ): Promise<ApiCheckProbeResultWithAnalyticsCategory | null> => {
+    const shouldTrack = options.trackIndividual !== false
+    const tracker = shouldTrack
+      ? startProductAnalyticsAction({
+          ...contentApiCheckAnalyticsScope,
+          actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbe,
+        })
+      : null
+
     setValidationError(null)
 
     const trimmedBaseUrl = baseUrl.trim()
@@ -331,7 +709,13 @@ export function ApiCheckModalHost() {
 
     if (!trimmedBaseUrl || !trimmedApiKey) {
       setValidationError(t("webAiApiCheck:modal.errors.missingBaseUrlOrKey"))
-      return
+      tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        }),
+      })
+      return null
     }
 
     setProbes((prev) =>
@@ -347,17 +731,20 @@ export function ApiCheckModalHost() {
     )
 
     try {
-      const response: any = await sendRuntimeMessage({
-        action: RuntimeActionIds.ApiCheckRunProbe,
-        apiType,
-        baseUrl: trimmedBaseUrl,
-        apiKey: trimmedApiKey,
-        modelId: modelId.trim() || undefined,
-        probeId,
-      })
+      const response = await sendWebAiApiCheckMessage(
+        WebAiApiCheckMessageTypes.RunProbe,
+        {
+          apiType,
+          baseUrl: trimmedBaseUrl,
+          apiKey: trimmedApiKey,
+          modelId: modelId.trim() || undefined,
+          probeId,
+        },
+      )
 
-      const result = response?.result as ApiVerificationProbeResult | undefined
-      if (response?.success && result) {
+      if (response.success && response.result) {
+        const result =
+          response.result as ApiCheckProbeResultWithAnalyticsCategory
         setProbes((prev) =>
           prev.map((probe) =>
             probe.id === probeId
@@ -365,17 +752,31 @@ export function ApiCheckModalHost() {
               : probe,
           ),
         )
-        return
+        const analyticsResult = getProbeAnalyticsResult(result)
+        tracker?.complete(analyticsResult, {
+          ...(analyticsResult === PRODUCT_ANALYTICS_RESULTS.Failure
+            ? {
+                errorCategory:
+                  resolveProductAnalyticsErrorCategoryFromProbeResult(result),
+              }
+            : {}),
+          insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          }),
+        })
+        return result
       }
 
+      const failedResponse = response.success ? undefined : response
       const message =
-        response?.error || t("webAiApiCheck:modal.errors.runProbeFailed")
+        failedResponse?.error || t("webAiApiCheck:modal.errors.runProbeFailed")
 
-      const fallback: ApiVerificationProbeResult = {
+      const fallback: ApiCheckProbeResultWithAnalyticsCategory = {
         id: probeId,
         status: "fail",
         latencyMs: 0,
         summary: message,
+        analyticsErrorCategory: failedResponse?.errorCategory,
         input: {
           apiType,
           baseUrl: trimmedBaseUrl,
@@ -389,37 +790,115 @@ export function ApiCheckModalHost() {
             : probe,
         ),
       )
-    } catch {
+      tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory:
+          failedResponse?.errorCategory ??
+          PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        }),
+      })
+      return fallback
+    } catch (error) {
+      const errorCategory = resolveProductAnalyticsErrorCategoryFromError(error)
+      const fallback: ApiCheckProbeResultWithAnalyticsCategory = {
+        id: probeId,
+        status: "fail",
+        latencyMs: 0,
+        summary: t("webAiApiCheck:modal.errors.runProbeFailed"),
+        analyticsErrorCategory: errorCategory,
+        input: {
+          apiType,
+          baseUrl: trimmedBaseUrl,
+        },
+      }
       setProbes((prev) =>
         prev.map((probe) =>
           probe.id === probeId
             ? {
                 ...probe,
                 isRunning: false,
-                result: {
-                  id: probeId,
-                  status: "fail",
-                  latencyMs: 0,
-                  summary: t("webAiApiCheck:modal.errors.runProbeFailed"),
-                  input: {
-                    apiType,
-                    baseUrl: trimmedBaseUrl,
-                  },
-                },
+                result: fallback,
               }
             : probe,
         ),
       )
+      tracker?.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory,
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        }),
+      })
+      return fallback
     }
   }
 
   const runAll = async () => {
+    const tracker = startProductAnalyticsAction({
+      ...contentApiCheckAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunApiCredentialProbeSuite,
+    })
+
+    const trimmedBaseUrl = baseUrl.trim()
+    const trimmedApiKey = apiKey.trim()
+    if (!trimmedBaseUrl || !trimmedApiKey) {
+      setValidationError(t("webAiApiCheck:modal.errors.missingBaseUrlOrKey"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          itemCount: probeDefinitions.length,
+          successCount: 0,
+          failureCount: 0,
+          skippedCount: probeDefinitions.length,
+        }),
+      })
+      return
+    }
+
     setIsRunningAll(true)
+    const results: ApiCheckProbeResultWithAnalyticsCategory[] = []
     try {
       for (const def of probeDefinitions) {
         // Run sequentially so the UI updates progressively and we avoid bursty network traffic.
-        await runProbe(def.id)
+        const result = await runProbe(def.id, { trackIndividual: false })
+        if (result) results.push(result)
       }
+      const successCount = results.filter(
+        (result) => result.status === "pass",
+      ).length
+      const failureCount = results.filter(
+        (result) => result.status === "fail",
+      ).length
+      const skippedCount = results.filter(
+        (result) => result.status === "unsupported",
+      ).length
+      const analyticsResult =
+        failureCount > 0
+          ? PRODUCT_ANALYTICS_RESULTS.Failure
+          : successCount > 0
+            ? PRODUCT_ANALYTICS_RESULTS.Success
+            : PRODUCT_ANALYTICS_RESULTS.Skipped
+
+      tracker.complete(analyticsResult, {
+        ...(analyticsResult === PRODUCT_ANALYTICS_RESULTS.Failure
+          ? {
+              errorCategory:
+                results.find((result) => result.status === "fail")
+                  ?.analyticsErrorCategory ??
+                resolveProductAnalyticsErrorCategoryFromProbeResult(
+                  results.find((result) => result.status === "fail"),
+                ),
+            }
+          : {}),
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger, {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+          itemCount: results.length || probeDefinitions.length,
+          successCount,
+          failureCount,
+          skippedCount,
+        }),
+      })
     } finally {
       setIsRunningAll(false)
     }
@@ -429,6 +908,11 @@ export function ApiCheckModalHost() {
   const canSaveProfile = !!baseUrl.trim() && !!apiKey.trim() && !isSavingProfile
 
   const handleSaveProfile = async () => {
+    const tracker = startProductAnalyticsAction({
+      ...contentApiCheckAnalyticsScope,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.CreateApiCredentialProfile,
+    })
+
     setValidationError(null)
 
     const trimmedBaseUrl = baseUrl.trim()
@@ -436,18 +920,24 @@ export function ApiCheckModalHost() {
 
     if (!trimmedBaseUrl || !trimmedApiKey) {
       setValidationError(t("webAiApiCheck:modal.errors.missingBaseUrlOrKey"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger),
+      })
       return
     }
 
     setIsSavingProfile(true)
     try {
-      const response: any = await sendRuntimeMessage({
-        action: RuntimeActionIds.ApiCheckSaveProfile,
-        apiType,
-        baseUrl: trimmedBaseUrl,
-        apiKey: trimmedApiKey,
-        pageUrl: pageUrl || window.location.href,
-      })
+      const response = await sendWebAiApiCheckMessage(
+        WebAiApiCheckMessageTypes.SaveProfile,
+        {
+          apiType,
+          baseUrl: trimmedBaseUrl,
+          apiKey: trimmedApiKey,
+          pageUrl: pageUrl || window.location.href,
+        },
+      )
 
       if (response?.success) {
         toast.success(
@@ -460,6 +950,9 @@ export function ApiCheckModalHost() {
               </span>
               <button
                 type="button"
+                data-testid={
+                  WEB_AI_API_CHECK_TEST_IDS.openApiProfilesToastButton
+                }
                 className="shrink-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
                 onClick={() => {
                   void sendRuntimeMessage({
@@ -474,14 +967,27 @@ export function ApiCheckModalHost() {
           ),
           { duration: 8000 },
         )
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+          insights: buildApiCheckAnalyticsInsights(apiType, trigger),
+        })
       } else {
         toast.error(
           response?.error ||
             t("webAiApiCheck:modal.errors.saveToProfilesFailed"),
         )
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory:
+            response?.errorCategory ??
+            PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: buildApiCheckAnalyticsInsights(apiType, trigger),
+        })
       }
-    } catch {
+    } catch (error) {
       toast.error(t("webAiApiCheck:modal.errors.saveToProfilesFailed"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+        insights: buildApiCheckAnalyticsInsights(apiType, trigger),
+      })
     } finally {
       setIsSavingProfile(false)
     }
@@ -501,7 +1007,7 @@ export function ApiCheckModalHost() {
 
   return (
     <div
-      data-testid="api-check-modal"
+      data-testid={WEB_AI_API_CHECK_TEST_IDS.modal}
       className="pointer-events-none fixed inset-0 z-2147483647"
     >
       <div
@@ -510,15 +1016,28 @@ export function ApiCheckModalHost() {
         className="pointer-events-auto"
       />
       <div
+        ref={backdropRef}
         className="pointer-events-auto absolute inset-0 bg-black/40"
         onClick={close}
       />
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-3">
-        <div className="border-border bg-background pointer-events-auto max-h-[90vh] w-full max-w-[860px] overflow-hidden rounded-lg border shadow-xl">
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="api-check-modal-title"
+          tabIndex={-1}
+          className="border-border bg-background pointer-events-auto max-h-[90vh] w-full max-w-[860px] overflow-hidden rounded-lg border shadow-xl"
+          onKeyDown={stopHostPageKeyboardShortcuts}
+          onKeyUp={stopHostPageKeyboardShortcuts}
+        >
           <div className="border-border flex items-start justify-between gap-3 border-b p-4">
             <div className="min-w-0">
-              <div className="text-foreground text-base font-semibold">
+              <div
+                id="api-check-modal-title"
+                className="text-foreground text-base font-semibold"
+              >
                 {t("webAiApiCheck:modal.title")}
               </div>
               <div className="text-muted-foreground truncate text-xs">
@@ -536,7 +1055,10 @@ export function ApiCheckModalHost() {
             </IconButton>
           </div>
 
-          <div className="max-h-[calc(90vh-64px)] overflow-y-auto p-4">
+          <div
+            ref={scrollContainerRef}
+            className="max-h-[calc(90vh-64px)] overflow-y-auto overscroll-contain p-4"
+          >
             <div className="space-y-4">
               <div className="space-y-2">
                 <div className="text-foreground text-sm font-medium">
@@ -560,6 +1082,12 @@ export function ApiCheckModalHost() {
                     onChange={(e) => setBaseUrl(e.target.value)}
                     placeholder="https://example.com/api"
                   />
+                  {renderCandidateButtons(
+                    "baseUrl",
+                    extractionMetadata?.candidates.baseUrls ?? [],
+                    baseUrl,
+                    setBaseUrl,
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -579,6 +1107,12 @@ export function ApiCheckModalHost() {
                     onChange={(e) => setApiKey(e.target.value)}
                     placeholder="sk-..."
                   />
+                  {renderCandidateButtons(
+                    "apiKey",
+                    extractionMetadata?.candidates.apiKeys ?? [],
+                    apiKey,
+                    setApiKey,
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -608,7 +1142,7 @@ export function ApiCheckModalHost() {
 
                   <SearchableSelect
                     aria-label={t("webAiApiCheck:modal.fields.modelId")}
-                    data-testid="api-check-model-id"
+                    data-testid={WEB_AI_API_CHECK_TEST_IDS.modelId}
                     options={modelIdsOptions}
                     value={modelId}
                     onChange={setModelId}
@@ -664,6 +1198,7 @@ export function ApiCheckModalHost() {
                 <Button
                   type="button"
                   variant="outline"
+                  data-testid={WEB_AI_API_CHECK_TEST_IDS.saveToProfilesButton}
                   onClick={handleSaveProfile}
                   disabled={!canSaveProfile}
                 >
@@ -696,7 +1231,7 @@ export function ApiCheckModalHost() {
                   return (
                     <div
                       key={probe.id}
-                      data-testid={`api-check-probe-${probe.id}`}
+                      data-testid={getWebAiApiCheckProbeTestId(probe.id)}
                       className="border-border rounded-md border p-3"
                     >
                       <div className="flex items-start justify-between gap-2">

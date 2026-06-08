@@ -82,6 +82,7 @@
   },
   "metrics": {
     "balance": "余额",
+    "estimatedIncome": "估算收入",
     "income": "收入",
     "net": "净变化",
     "outcome": "支出"
@@ -110,6 +111,8 @@
     "enabledHint": "关闭后不会记录快照，也不会安排日终抓取。",
     "endOfDayCapture": "日终抓取",
     "endOfDayCaptureHint": "在每天 {{time}} 左右尽力抓取一次（需要浏览器支持 Alarms API）。",
+    "estimatedTodayIncome": "显示估算今日收入",
+    "estimatedTodayIncomeHint": "基于余额历史估算未进入站点收入日志的奖励；缺少前一日基准快照时不可用。",
     "retentionDays": "保留天数"
   },
   "summary": {
@@ -120,6 +123,7 @@
       "account": "账户",
       "cashflowCoverage": "收支覆盖",
       "endBalance": "结束余额",
+      "estimatedIncomeTotal": "估算收入合计",
       "incomeTotal": "区间收入",
       "outcomeTotal": "区间支出",
       "rangeNet": "区间净变化",

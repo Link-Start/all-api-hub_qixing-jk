@@ -9,6 +9,7 @@ import { useAccountDataContext } from "~/features/AccountManagement/hooks/Accoun
 import {
   calculateTotalBalance,
   calculateTotalConsumption,
+  calculateTotalIncomeForSites,
   getCurrencySymbol,
   getOppositeCurrency,
 } from "~/utils/core/formatters"
@@ -32,13 +33,13 @@ const BalanceDisplay: React.FC<{
 }) => {
   const { t } = useTranslation("common")
 
-  const sizeClass = size === "md" ? "text-2xl" : "text-4xl"
+  const sizeClass = size === "md" ? "text-base" : "text-3xl"
 
   return (
-    <div className="flex items-center space-x-1 break-all">
+    <div className="flex min-w-0 items-center space-x-1">
       <button
         onClick={onCurrencyToggle}
-        className={`${sizeClass} dark:text-dark-text-primary p-0 text-left font-bold tracking-tight text-gray-900 transition-colors hover:text-blue-600`}
+        className={`${sizeClass} dark:text-dark-text-primary min-w-0 p-0 text-left leading-tight font-bold tracking-tight break-words text-gray-900 tabular-nums transition-colors hover:text-blue-600`}
         aria-label={t("currency.clickToSwitch", {
           currency:
             currencyType === "USD" ? t("currency.cny") : t("currency.usd"),
@@ -68,10 +69,18 @@ const BalanceDisplay: React.FC<{
  */
 export default function AccountBalanceSummary() {
   const { t } = useTranslation(["account", "common"])
-  const { accounts, displayData, stats, isInitialLoad, prevTotalConsumption } =
-    useAccountDataContext()
-  const { currencyType, showTodayCashflow, updateCurrencyType } =
+  const {
+    accounts,
+    displayData,
+    stats,
+    isInitialLoad,
+    prevTotalConsumption,
+    todayIncomeEstimateTotals,
+  } = useAccountDataContext()
+  const { currencyType, showTodayCashflow, updateCurrencyType, preferences } =
     useUserPreferencesContext()
+  const estimatedTodayIncomeEnabled =
+    preferences.balanceHistory?.estimatedTodayIncome?.enabled === true
 
   const totalConsumption = useMemo(
     () => calculateTotalConsumption(stats, accounts),
@@ -83,27 +92,18 @@ export default function AccountBalanceSummary() {
     [displayData],
   )
 
-  const totalIncome = useMemo(() => {
-    return {
-      USD: parseFloat(
-        (
-          stats.today_total_income /
-          UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
-        ).toFixed(2),
-      ),
-      CNY: displayData.reduce((sum, site) => {
-        return sum + (site.todayIncome?.CNY || 0)
-      }, 0),
-    }
-  }, [displayData, stats.today_total_income])
+  const totalIncome = useMemo(
+    () => calculateTotalIncomeForSites(displayData),
+    [displayData],
+  )
 
   const handleCurrencyToggle = () => {
     updateCurrencyType(getOppositeCurrency(currencyType))
   }
 
   return (
-    <div className="space-y-3">
-      <div className="space-y-1">
+    <div className="space-y-2">
+      <div className="dark:bg-dark-bg-secondary/40 space-y-1 rounded-lg bg-gray-50/80">
         <BodySmall className="font-medium">
           {t("account:stats.totalBalance")}
         </BodySmall>
@@ -118,8 +118,14 @@ export default function AccountBalanceSummary() {
       </div>
 
       {showTodayCashflow && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
+        <div
+          className={
+            estimatedTodayIncomeEnabled
+              ? "grid grid-cols-3 gap-2"
+              : "grid grid-cols-2 gap-2"
+          }
+        >
+          <div className="dark:bg-dark-bg-secondary/30 min-w-0 space-y-1 rounded-md bg-gray-50/70 p-2">
             <Caption className="font-medium">
               {t("account:stats.todayConsumption")}
             </Caption>
@@ -136,9 +142,11 @@ export default function AccountBalanceSummary() {
             />
           </div>
 
-          <div className="space-y-1">
+          <div className="dark:bg-dark-bg-secondary/30 min-w-0 space-y-1 rounded-md bg-gray-50/70 p-2">
             <Caption className="font-medium">
-              {t("account:stats.todayIncome")}
+              {estimatedTodayIncomeEnabled
+                ? t("account:stats.trustedTodayIncome")
+                : t("account:stats.todayIncome")}
             </Caption>
             <BalanceDisplay
               value={totalIncome[currencyType]}
@@ -150,6 +158,33 @@ export default function AccountBalanceSummary() {
               size="md"
             />
           </div>
+
+          {estimatedTodayIncomeEnabled && (
+            <div className="dark:bg-dark-bg-secondary/30 min-w-0 space-y-1 rounded-md bg-gray-50/70 p-2">
+              <Caption className="font-medium">
+                {t("account:stats.estimatedTodayIncome")}
+              </Caption>
+              {todayIncomeEstimateTotals.estimated ? (
+                <BalanceDisplay
+                  value={todayIncomeEstimateTotals.estimated[currencyType]}
+                  startValue={0}
+                  isInitialLoad={isInitialLoad}
+                  currencyType={currencyType}
+                  onCurrencyToggle={handleCurrencyToggle}
+                  prefix={
+                    todayIncomeEstimateTotals.estimated[currencyType] > 0
+                      ? "+"
+                      : ""
+                  }
+                  size="md"
+                />
+              ) : (
+                <div className="dark:text-dark-text-tertiary text-base font-bold text-gray-500">
+                  -
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -11,6 +11,7 @@ import {
 } from "~/services/managedSites/managedSiteService"
 import { normalizeManagedSiteChannelBaseUrl } from "~/services/managedSites/utils/channelMatching"
 import {
+  collectManagedConfigSecrets,
   hasUsableManagedSiteChannelKey,
   supportsManagedSiteBaseUrlChannelLookup,
 } from "~/services/managedSites/utils/managedSite"
@@ -111,6 +112,10 @@ const uniqueWarningCodes = (
   warnings: ManagedSiteTokenBatchExportWarningCode[],
 ) => Array.from(new Set(warnings))
 
+const isExactVerificationUnavailable = (
+  resolution: Awaited<ReturnType<typeof resolveManagedSiteChannelMatch>>,
+) => resolution.url.matched && !resolution.key.comparable
+
 const getDraftBlockedReason = (
   service: ManagedSiteService,
   draft: ChannelFormData,
@@ -156,7 +161,7 @@ const collectSecrets = (
     token.key,
     account.token,
     account.cookieAuthSessionCookie,
-    managedConfig.token,
+    ...collectManagedConfigSecrets(managedConfig),
   ].filter(Boolean) as string[]
 
 const preparePreviewItem = async (params: {
@@ -267,7 +272,7 @@ const preparePreviewItem = async (params: {
       warningCodes.push(
         MANAGED_SITE_TOKEN_BATCH_EXPORT_WARNING_CODES.BACKEND_SEARCH_FAILED,
       )
-    } else if (resolution.url.matched && !resolution.key.comparable) {
+    } else if (isExactVerificationUnavailable(resolution)) {
       warningCodes.push(
         MANAGED_SITE_TOKEN_BATCH_EXPORT_WARNING_CODES.EXACT_VERIFICATION_UNAVAILABLE,
       )
@@ -451,12 +456,7 @@ export async function executeManagedSiteTokenBatchExport(params: {
     async (item): Promise<ManagedSiteTokenBatchExportExecutionItem> => {
       try {
         const payload = service.buildChannelPayload(item.draft!)
-        const response = await service.createChannel(
-          managedConfig.baseUrl,
-          managedConfig.token,
-          managedConfig.userId,
-          payload,
-        )
+        const response = await service.createChannel(managedConfig, payload)
 
         if (!response.success) {
           throw new Error(response.message || "Failed to create channel")

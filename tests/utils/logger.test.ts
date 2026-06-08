@@ -146,6 +146,122 @@ describe("unified logger", () => {
     expect(details.list[0].key).toBe("[REDACTED]")
   })
 
+  it("preserves and sanitizes nested error causes", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const rootCause = new TypeError("fetch failed")
+    ;(rootCause as any).cause = {
+      endpoint: "https://example.com/path?token=secret#frag",
+      apiKey: "nested-secret",
+    }
+    const error = new Error("persist failed", { cause: rootCause })
+
+    const logger = createLogger("CauseTest")
+    logger.error("webdav config failed", error)
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    const details = errorSpy.mock.calls[0]?.[1] as any
+
+    expect(details).toEqual({
+      name: "Error",
+      message: "persist failed",
+      stack: error.stack,
+      cause: {
+        name: "TypeError",
+        message: "fetch failed",
+        stack: rootCause.stack,
+        cause: {
+          endpoint: "https://example.com/path",
+          apiKey: "[REDACTED]",
+        },
+      },
+    })
+  })
+
+  it("redacts sensitive nested error cause messages and stacks", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const rootCause = new TypeError(
+      "request failed https://example.com/path?token=nested-secret#frag apiKey=nested-key password=nested-password API key: nested-api-key access token: nested-access client secret: nested-client-secret",
+    )
+    rootCause.stack =
+      "TypeError: request failed https://example.com/path?token=nested-secret#frag apiKey=nested-key password=nested-password API key: nested-api-key access token: nested-access client secret: nested-client-secret\n    at nested"
+    const error = new Error("top-level message keeps legacy behavior", {
+      cause: rootCause,
+    })
+
+    const logger = createLogger("SensitiveCauseTest")
+    logger.error("failed with sensitive nested cause", error)
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    const details = errorSpy.mock.calls[0]?.[1] as any
+
+    expect(details.message).toBe("top-level message keeps legacy behavior")
+    expect(details.cause.message).not.toContain("nested-secret")
+    expect(details.cause.message).not.toContain("nested-key")
+    expect(details.cause.message).not.toContain("nested-password")
+    expect(details.cause.message).not.toContain("nested-api-key")
+    expect(details.cause.message).not.toContain("nested-access")
+    expect(details.cause.message).not.toContain("nested-client-secret")
+    expect(details.cause.stack).not.toContain("nested-secret")
+    expect(details.cause.stack).not.toContain("nested-key")
+    expect(details.cause.stack).not.toContain("nested-password")
+    expect(details.cause.stack).not.toContain("nested-api-key")
+    expect(details.cause.stack).not.toContain("nested-access")
+    expect(details.cause.stack).not.toContain("nested-client-secret")
+    expect(details.cause.message).toContain("[REDACTED]")
+    expect(details.cause.stack).toContain("[REDACTED]")
+    expect(details.cause.message).toContain("https://example.com/path")
+    expect(details.cause.message).not.toContain("?token=")
+  })
+
+  it("serializes repeated non-circular error references consistently", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const repeatedCause = new Error("shared failure")
+    const wrapper = new Error("wrapper", {
+      cause: {
+        first: repeatedCause,
+        second: repeatedCause,
+      },
+    })
+
+    const logger = createLogger("RepeatedCauseTest")
+    logger.error("repeated cause", wrapper)
+
+    expect(errorSpy).toHaveBeenCalledTimes(1)
+    const details = errorSpy.mock.calls[0]?.[1] as any
+
+    expect(details.cause.first).toEqual({
+      name: "Error",
+      message: "shared failure",
+      stack: repeatedCause.stack,
+    })
+    expect(details.cause.second).toEqual(details.cause.first)
+    expect(details.cause.second).not.toBe("[Circular]")
+  })
+
+  it("does not throw on circular error causes", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    const selfCauseError = new Error("loop")
+    ;(selfCauseError as any).cause = selfCauseError
+    const objectCause: any = { reason: "manual cause" }
+    objectCause.self = objectCause
+    const wrapper = new Error("wrapper")
+    ;(wrapper as any).cause = objectCause
+
+    const logger = createLogger("CircularCauseTest")
+    expect(() => logger.error("self cause", selfCauseError)).not.toThrow()
+    expect(() => logger.error("object cause", wrapper)).not.toThrow()
+
+    expect(errorSpy).toHaveBeenCalledTimes(2)
+    const selfCauseDetails = errorSpy.mock.calls[0]?.[1] as any
+    const objectCauseDetails = errorSpy.mock.calls[1]?.[1] as any
+    expect(selfCauseDetails.cause).toBe("[Circular]")
+    expect(objectCauseDetails.cause.self).toBe("[Circular]")
+  })
+
   it("handles circular details without throwing", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {})
 

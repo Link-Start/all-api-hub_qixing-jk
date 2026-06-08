@@ -6,13 +6,36 @@ import { accountStorage } from "~/services/accounts/accountStorage"
 import { resolveAutoCheckinProvider } from "~/services/checkin/autoCheckin/providers"
 import {
   autoCheckinScheduler,
-  handleAutoCheckinMessage,
+  getAutoCheckinAccountInfo,
+  getAutoCheckinStatus,
+  pretriggerAutoCheckinDailyOnUiOpen,
+  resetAutoCheckinLastDailyRunDay,
+  retryAutoCheckinAccount,
+  runAutoCheckinNow,
+  scheduleAutoCheckinDailyAlarmForToday,
+  triggerAutoCheckinDailyAlarmNow,
+  triggerAutoCheckinRetryAlarmNow,
+  updateAutoCheckinSettings,
 } from "~/services/checkin/autoCheckin/scheduler"
 import { autoCheckinStorage } from "~/services/checkin/autoCheckin/storage"
 import {
   DEFAULT_PREFERENCES,
   userPreferences,
 } from "~/services/preferences/userPreferences"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_EVENTS,
+  PRODUCT_ANALYTICS_FAILURE_REASONS,
+  PRODUCT_ANALYTICS_FAILURE_STAGES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SETTING_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  trackProductAnalyticsEvent,
+} from "~/services/productAnalytics/events"
 import { AUTO_CHECKIN_RUN_TYPE } from "~/types/autoCheckin"
 import {
   clearAlarm,
@@ -92,6 +115,19 @@ vi.mock("~/utils/core/error", () => ({
   getErrorMessage: vi.fn((e: unknown) => String(e)),
 }))
 
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionCompleted: vi.fn(),
+}))
+
+vi.mock("~/services/productAnalytics/events", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/events")>()
+  return {
+    ...actual,
+    trackProductAnalyticsEvent: vi.fn(),
+  }
+})
+
 const mockedUserPreferences = userPreferences as unknown as {
   getPreferences: ReturnType<typeof vi.fn>
   savePreferences: ReturnType<typeof vi.fn>
@@ -125,6 +161,13 @@ const mockedBrowserApi = {
     isMessageReceiverUnavailableError as unknown as ReturnType<typeof vi.fn>,
   onAlarm: onAlarm as unknown as ReturnType<typeof vi.fn>,
   sendRuntimeMessage: sendRuntimeMessage as unknown as ReturnType<typeof vi.fn>,
+}
+
+const mockedProductAnalytics = {
+  trackProductAnalyticsActionCompleted:
+    trackProductAnalyticsActionCompleted as unknown as ReturnType<typeof vi.fn>,
+  trackProductAnalyticsEvent:
+    trackProductAnalyticsEvent as unknown as ReturnType<typeof vi.fn>,
 }
 
 let storedStatus: any = null
@@ -298,6 +341,91 @@ describe("autoCheckinScheduler.scheduleNextRun", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockedBrowserApi.hasAlarmsAPI.mockReturnValue(true)
+  })
+
+  it("tracks a background config snapshot with exact numeric schedule fields", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2024, 0, 1, 9, 0, 0))
+
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      autoCheckin: {
+        ...(DEFAULT_PREFERENCES as any).autoCheckin,
+        globalEnabled: true,
+        pretriggerDailyOnUiOpen: false,
+        notifyUiOnCompletion: true,
+        windowStart: "08:15",
+        windowEnd: "12:45",
+        scheduleMode: "deterministic",
+        deterministicTime: "09:30",
+        retryStrategy: {
+          enabled: true,
+          intervalMinutes: 30,
+          maxAttemptsPerDay: 3,
+        },
+      },
+    })
+
+    await autoCheckinScheduler.scheduleNextRun()
+
+    expect(mockedProductAnalytics.trackProductAnalyticsEvent).toHaveBeenCalled()
+    const snapshotCall =
+      mockedProductAnalytics.trackProductAnalyticsEvent.mock.calls.find(
+        ([eventName, payload]) =>
+          eventName === PRODUCT_ANALYTICS_EVENTS.SettingsSnapshotCaptured &&
+          payload?.setting_id ===
+            PRODUCT_ANALYTICS_SETTING_IDS.AutoCheckinConfigSnapshot,
+      )
+
+    expect(snapshotCall).toBeTruthy()
+    expect(snapshotCall?.[1]).toEqual({
+      setting_id: PRODUCT_ANALYTICS_SETTING_IDS.AutoCheckinConfigSnapshot,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      global_enabled: true,
+      ui_pretrigger_enabled: false,
+      notify_completion_enabled: true,
+      retry_enabled: true,
+      schedule_mode: "deterministic",
+      retry_interval_minutes: 30,
+      retry_max_attempts: 3,
+      window_length_minutes: 270,
+      deterministic_time_minutes: 570,
+    })
+    expect(JSON.stringify(snapshotCall?.[1])).not.toContain("08:15")
+    expect(JSON.stringify(snapshotCall?.[1])).not.toContain("12:45")
+    expect(JSON.stringify(snapshotCall?.[1])).not.toContain("09:30")
+    expect(snapshotCall?.[1]).not.toHaveProperty("intervalMinutes")
+    expect(snapshotCall?.[1]).not.toHaveProperty("maxAttemptsPerDay")
+
+    vi.useRealTimers()
+  })
+
+  it("still schedules alarms when background config snapshot tracking fails", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2024, 0, 1, 9, 0, 0))
+    mockedProductAnalytics.trackProductAnalyticsEvent.mockResolvedValue(false)
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      autoCheckin: {
+        ...(DEFAULT_PREFERENCES as any).autoCheckin,
+        globalEnabled: true,
+        windowStart: "08:00",
+        windowEnd: "10:00",
+        scheduleMode: "random",
+        retryStrategy: {
+          enabled: true,
+          intervalMinutes: 30,
+          maxAttemptsPerDay: 3,
+        },
+      },
+    })
+
+    await expect(
+      autoCheckinScheduler.scheduleNextRun(),
+    ).resolves.toBeUndefined()
+
+    expect(mockedBrowserApi.clearAlarm).toHaveBeenCalledWith("autoCheckin")
+    expect(alarmStore.autoCheckinDaily).toBeDefined()
+
+    vi.useRealTimers()
   })
 
   it("returns without touching alarms when the alarms API is unavailable", async () => {
@@ -786,6 +914,104 @@ describe("autoCheckinScheduler daily+retry behavior", () => {
     mockedBrowserApi.hasAlarmsAPI.mockReturnValue(true)
   })
 
+  it("tracks daily scheduled completion with sanitized product analytics counts", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2024, 0, 1, 9, 0, 0))
+
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      autoCheckin: {
+        ...(DEFAULT_PREFERENCES as any).autoCheckin,
+        globalEnabled: true,
+        notifyUiOnCompletion: false,
+        retryStrategy: {
+          enabled: false,
+          intervalMinutes: 30,
+          maxAttemptsPerDay: 3,
+        },
+      },
+    })
+
+    const successAccount: any = {
+      id: "success",
+      disabled: false,
+      site_name: "Success Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "success-user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: true },
+    }
+    const failedAccount: any = {
+      id: "failed",
+      disabled: false,
+      site_name: "Failed Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "failed-user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: true },
+    }
+    const skippedAccount: any = {
+      id: "skipped",
+      disabled: false,
+      site_name: "Skipped Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "skipped-user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: false },
+    }
+
+    mockedAccountStorage.getAllAccounts.mockResolvedValue([
+      successAccount,
+      failedAccount,
+      skippedAccount,
+    ])
+
+    const provider = {
+      canCheckIn: vi.fn(() => true),
+      checkIn: vi.fn(async (account: any) =>
+        account.id === "success"
+          ? { status: "success" }
+          : { status: "failed", rawMessage: "boom" },
+      ),
+    }
+    mockedProviders.resolveAutoCheckinProvider.mockReturnValue(provider)
+
+    await autoCheckinScheduler.runCheckins({
+      runType: AUTO_CHECKIN_RUN_TYPE.DAILY,
+    })
+
+    expect(
+      mockedProductAnalytics.trackProductAnalyticsActionCompleted,
+    ).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunAutoCheckinNow,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundAutoCheckinScheduler,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      durationMs: expect.any(Number),
+      diagnostics: {
+        context: {
+          sourceKind: "auto",
+          mode: "telemetry_auto",
+        },
+        execution: {
+          backgroundExecution: true,
+          retryAttempted: false,
+          retryCount: 0,
+        },
+        failure: {
+          category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          reason: PRODUCT_ANALYTICS_FAILURE_REASONS.Unknown,
+          stage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+        },
+        outcome: {
+          itemCount: 3,
+          successCount: 1,
+          failureCount: 1,
+          skippedCount: 1,
+        },
+      },
+    })
+
+    vi.useRealTimers()
+  })
+
   it("builds retry queue from failed accounts only and does not skip isCheckedInToday accounts", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2024, 0, 1, 9, 0, 0))
@@ -1172,6 +1398,77 @@ describe("autoCheckinScheduler daily+retry behavior", () => {
     vi.useRealTimers()
   })
 
+  it("allows targeted manual check-in when the global scheduled feature is disabled", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2024, 0, 1, 9, 0, 0))
+
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      autoCheckin: {
+        ...(DEFAULT_PREFERENCES as any).autoCheckin,
+        globalEnabled: false,
+        notifyUiOnCompletion: true,
+      },
+    })
+
+    storedStatus = {
+      perAccount: {
+        target: {
+          accountId: "target",
+          accountName: "Target Site · user",
+          status: "skipped",
+          messageKey: "autoCheckin:skipReasons.account_disabled",
+          reasonCode: "account_disabled",
+          timestamp: Date.now() - 60_000,
+        },
+      },
+      summary: {
+        totalEligible: 1,
+        executed: 0,
+        successCount: 0,
+        failedCount: 0,
+        skippedCount: 1,
+        needsRetry: false,
+      },
+    } as any
+
+    const targetAccount: any = {
+      id: "target",
+      disabled: false,
+      site_name: "Target Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: true },
+    }
+    mockedAccountStorage.getAllAccounts.mockResolvedValue([targetAccount])
+
+    const provider = {
+      canCheckIn: vi.fn(() => true),
+      checkIn: vi.fn(async () => ({ status: "success" })),
+    }
+    mockedProviders.resolveAutoCheckinProvider.mockReturnValue(provider)
+
+    await autoCheckinScheduler.runCheckins({
+      runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
+      targetAccountIds: ["target"],
+    })
+
+    expect(provider.checkIn).toHaveBeenCalledTimes(1)
+    expect(storedStatus.perAccount.target).toMatchObject({
+      status: "success",
+    })
+    expect(storedStatus.perAccount.target.reasonCode).toBeUndefined()
+    expect(storedStatus.summary).toMatchObject({
+      totalEligible: 1,
+      executed: 1,
+      successCount: 1,
+      failedCount: 0,
+      skippedCount: 0,
+      needsRetry: false,
+    })
+
+    vi.useRealTimers()
+  })
+
   it("preserves targeted manual history when runCheckins fails before execution", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2024, 0, 1, 9, 15, 0))
@@ -1499,6 +1796,127 @@ describe("autoCheckinScheduler daily+retry behavior", () => {
       }),
       { maxAttempts: 1 },
     )
+
+    vi.useRealTimers()
+  })
+
+  it("tracks retry completion with retry mode and updated result counts", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2024, 0, 1, 9, 30, 0))
+
+    mockedUserPreferences.getPreferences.mockResolvedValue({
+      autoCheckin: {
+        ...(DEFAULT_PREFERENCES as any).autoCheckin,
+        globalEnabled: true,
+        notifyUiOnCompletion: false,
+        retryStrategy: {
+          enabled: true,
+          intervalMinutes: 30,
+          maxAttemptsPerDay: 3,
+        },
+      },
+    })
+
+    storedStatus = {
+      lastDailyRunDay: "2024-01-01",
+      retryState: {
+        day: "2024-01-01",
+        pendingAccountIds: ["success", "failed"],
+        attemptsByAccount: { success: 1, failed: 1 },
+      },
+      perAccount: {
+        success: {
+          accountId: "success",
+          accountName: "Success Site · success-user",
+          status: "failed",
+          timestamp: Date.now(),
+        },
+        failed: {
+          accountId: "failed",
+          accountName: "Failed Site · failed-user",
+          status: "failed",
+          timestamp: Date.now(),
+        },
+      },
+      summary: {
+        totalEligible: 2,
+        executed: 2,
+        successCount: 0,
+        failedCount: 2,
+        skippedCount: 0,
+        needsRetry: true,
+      },
+    } as any
+
+    const successAccount: any = {
+      id: "success",
+      disabled: false,
+      site_name: "Success Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "success-user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: true },
+    }
+    const failedAccount: any = {
+      id: "failed",
+      disabled: false,
+      site_name: "Failed Site",
+      site_type: SITE_TYPES.VELOERA,
+      account_info: { username: "failed-user" },
+      checkIn: { enableDetection: true, autoCheckInEnabled: true },
+    }
+
+    mockedAccountStorage.getAllAccounts.mockResolvedValue([
+      successAccount,
+      failedAccount,
+    ])
+    mockedAccountStorage.getAccountById.mockImplementation(
+      async (id: string) => (id === "success" ? successAccount : failedAccount),
+    )
+
+    const provider = {
+      canCheckIn: vi.fn(() => true),
+      checkIn: vi.fn(async (account: any) =>
+        account.id === "success"
+          ? { status: "success" }
+          : { status: "failed", rawMessage: "boom" },
+      ),
+    }
+    mockedProviders.resolveAutoCheckinProvider.mockReturnValue(provider)
+
+    await (autoCheckinScheduler as any).runRetryCheckins()
+
+    expect(
+      mockedProductAnalytics.trackProductAnalyticsActionCompleted,
+    ).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunAutoCheckinNow,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundAutoCheckinScheduler,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      durationMs: expect.any(Number),
+      diagnostics: {
+        context: {
+          sourceKind: "auto",
+          mode: "retry_failed",
+        },
+        execution: {
+          backgroundExecution: true,
+          retryAttempted: true,
+          retryCount: 2,
+        },
+        failure: {
+          category: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          reason: PRODUCT_ANALYTICS_FAILURE_REASONS.Unknown,
+          stage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+        },
+        outcome: {
+          itemCount: 2,
+          successCount: 1,
+          failureCount: 1,
+          skippedCount: 0,
+        },
+      },
+    })
 
     vi.useRealTimers()
   })
@@ -2882,7 +3300,7 @@ describe("autoCheckinScheduler run-completed notifications", () => {
   })
 })
 
-describe("handleAutoCheckinMessage", () => {
+describe("auto check-in operation helpers", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.clearAllMocks()
@@ -2892,178 +3310,122 @@ describe("handleAutoCheckinMessage", () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow },
-      sendResponse,
-    )
+    await expect(runAutoCheckinNow()).resolves.toEqual({ success: true })
 
     expect(runSpy).toHaveBeenCalledWith({
       runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
       targetAccountIds: undefined,
     })
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should pass accountIds for targeted manual runs", async () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow, accountIds: ["a"] },
-      sendResponse,
-    )
+    await expect(runAutoCheckinNow({ accountIds: ["a"] })).resolves.toEqual({
+      success: true,
+    })
 
     expect(runSpy).toHaveBeenCalledWith({
       runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
       targetAccountIds: ["a"],
     })
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should trim and dedupe targeted accountIds before running", async () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinRunNow,
-        accountIds: [" a ", "a", "b "],
-      },
-      sendResponse,
-    )
+    await expect(
+      runAutoCheckinNow({ accountIds: [" a ", "a", "b "] }),
+    ).resolves.toEqual({ success: true })
 
     expect(runSpy).toHaveBeenCalledWith({
       runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
       targetAccountIds: ["a", "b"],
     })
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should return an error for invalid accountIds payload", async () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow, accountIds: [] },
-      sendResponse,
-    )
-
-    expect(runSpy).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(runAutoCheckinNow({ accountIds: [] })).resolves.toEqual({
       success: false,
       error: "Invalid payload: accountIds must be a non-empty string[]",
     })
+
+    expect(runSpy).not.toHaveBeenCalled()
   })
 
   it("should reject non-array accountIds payloads before running", async () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinRunNow,
-        accountIds: "account-1",
-      },
-      sendResponse,
-    )
-
-    expect(runSpy).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(
+      runAutoCheckinNow({ accountIds: "account-1" as any }),
+    ).resolves.toEqual({
       success: false,
       error: "Invalid payload: accountIds must be a non-empty string[]",
     })
+
+    expect(runSpy).not.toHaveBeenCalled()
   })
 
   it("should reject targeted manual runs when accountIds contain blank or non-string values", async () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinRunNow,
-        accountIds: ["account-1", " ", 42],
-      },
-      sendResponse,
-    )
-
-    expect(runSpy).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(
+      runAutoCheckinNow({ accountIds: ["account-1", " ", 42] as any }),
+    ).resolves.toEqual({
       success: false,
       error: "Invalid payload: accountIds must be a non-empty string[]",
     })
+
+    expect(runSpy).not.toHaveBeenCalled()
   })
 
   it("should trigger daily alarm handler on autoCheckin:debugTriggerDailyAlarmNow", async () => {
     const debugSpy = vi
       .spyOn(autoCheckinScheduler as any, "debugTriggerDailyAlarmNow")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinDebugTriggerDailyAlarmNow },
-      sendResponse,
-    )
+    await expect(triggerAutoCheckinDailyAlarmNow()).resolves.toEqual({
+      success: true,
+    })
 
     expect(debugSpy).toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should trigger retry alarm handler on autoCheckin:debugTriggerRetryAlarmNow", async () => {
     const debugSpy = vi
       .spyOn(autoCheckinScheduler as any, "debugTriggerRetryAlarmNow")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinDebugTriggerRetryAlarmNow },
-      sendResponse,
-    )
+    await expect(triggerAutoCheckinRetryAlarmNow()).resolves.toEqual({
+      success: true,
+    })
 
     expect(debugSpy).toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should return status on autoCheckin:getStatus", async () => {
     const status = { lastRunResult: "success" }
     mockedAutoCheckinStorage.getStatus.mockResolvedValue(status as any)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinGetStatus },
-      sendResponse,
-    )
-
-    expect(sendResponse).toHaveBeenCalledWith({ success: true, data: status })
+    await expect(getAutoCheckinStatus()).resolves.toEqual({
+      success: true,
+      data: status,
+    })
   })
 
   it("should retry a specific account on autoCheckin:retryAccount", async () => {
     const retrySpy = vi
       .spyOn(autoCheckinScheduler as any, "retryAccount")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinRetryAccount,
-        accountId: "account-1",
-      },
-      sendResponse,
-    )
+    await expect(retryAutoCheckinAccount("account-1")).resolves.toEqual({
+      success: true,
+    })
 
     expect(retrySpy).toHaveBeenCalledWith("account-1")
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should surface retryAccount failures back to the caller", async () => {
@@ -3072,38 +3434,24 @@ describe("handleAutoCheckinMessage", () => {
       .mockRejectedValueOnce(new Error("retry failed"))
     ;(
       getErrorMessage as unknown as ReturnType<typeof vi.fn>
-    ).mockReturnValueOnce("retry failed")
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinRetryAccount,
-        accountId: "account-1",
-      },
-      sendResponse,
+    ).mockImplementation((error: unknown) =>
+      error instanceof Error ? error.message : String(error),
+    )
+    await expect(retryAutoCheckinAccount("account-1")).rejects.toThrow(
+      "retry failed",
     )
 
     expect(retrySpy).toHaveBeenCalledWith("account-1")
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "retry failed",
-    })
   })
 
   it("should reject retry requests without an accountId", async () => {
     const retrySpy = vi.spyOn(autoCheckinScheduler as any, "retryAccount")
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRetryAccount },
-      sendResponse,
-    )
-
-    expect(retrySpy).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(retryAutoCheckinAccount()).resolves.toEqual({
       success: false,
       error: "Missing accountId",
     })
+
+    expect(retrySpy).not.toHaveBeenCalled()
   })
 
   it("should return account display data on autoCheckin:getAccountInfo", async () => {
@@ -3111,22 +3459,15 @@ describe("handleAutoCheckinMessage", () => {
     const displaySpy = vi
       .spyOn(autoCheckinScheduler as any, "getAccountDisplayData")
       .mockResolvedValueOnce(displayData)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-        accountId: "account-1",
-      },
-      sendResponse,
-    )
+    await expect(
+      getAutoCheckinAccountInfo({ accountId: "account-1" }),
+    ).resolves.toEqual({
+      success: true,
+      data: displayData,
+    })
 
     expect(displaySpy).toHaveBeenCalledWith("account-1", {
       includeDisabled: false,
-    })
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: true,
-      data: displayData,
     })
   })
 
@@ -3135,23 +3476,18 @@ describe("handleAutoCheckinMessage", () => {
     const displaySpy = vi
       .spyOn(autoCheckinScheduler as any, "getAccountDisplayData")
       .mockResolvedValueOnce(displayData)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinGetAccountInfo,
+    await expect(
+      getAutoCheckinAccountInfo({
         accountId: "disabled-1",
         includeDisabled: true,
-      },
-      sendResponse,
-    )
+      }),
+    ).resolves.toEqual({
+      success: true,
+      data: displayData,
+    })
 
     expect(displaySpy).toHaveBeenCalledWith("disabled-1", {
       includeDisabled: true,
-    })
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: true,
-      data: displayData,
     })
   })
 
@@ -3161,23 +3497,15 @@ describe("handleAutoCheckinMessage", () => {
       .mockRejectedValueOnce(new Error("lookup failed"))
     ;(
       getErrorMessage as unknown as ReturnType<typeof vi.fn>
-    ).mockReturnValueOnce("lookup failed")
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinGetAccountInfo,
-        accountId: "account-1",
-      },
-      sendResponse,
+    ).mockImplementation((error: unknown) =>
+      error instanceof Error ? error.message : String(error),
     )
+    await expect(
+      getAutoCheckinAccountInfo({ accountId: "account-1" }),
+    ).rejects.toThrow("lookup failed")
 
     expect(displaySpy).toHaveBeenCalledWith("account-1", {
       includeDisabled: false,
-    })
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "lookup failed",
     })
   })
 
@@ -3186,105 +3514,71 @@ describe("handleAutoCheckinMessage", () => {
       autoCheckinScheduler as any,
       "getAccountDisplayData",
     )
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinGetAccountInfo },
-      sendResponse,
-    )
-
-    expect(displaySpy).not.toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({
+    await expect(getAutoCheckinAccountInfo({} as any)).resolves.toEqual({
       success: false,
       error: "Missing accountId",
     })
+
+    expect(displaySpy).not.toHaveBeenCalled()
   })
 
   it("should update settings on autoCheckin:updateSettings", async () => {
     const updateSpy = vi
       .spyOn(autoCheckinScheduler as any, "updateSettings")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
     const settings = { globalEnabled: false }
 
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinUpdateSettings, settings },
-      sendResponse,
-    )
+    await expect(updateAutoCheckinSettings(settings)).resolves.toEqual({
+      success: true,
+    })
 
     expect(updateSpy).toHaveBeenCalledWith(settings)
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should pretrigger daily run on autoCheckin:pretriggerDailyOnUiOpen", async () => {
     const pretriggerSpy = vi
       .spyOn(autoCheckinScheduler as any, "pretriggerDailyOnUiOpen")
       .mockResolvedValueOnce({ started: false, eligible: false })
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinPretriggerDailyOnUiOpen,
+    await expect(
+      pretriggerAutoCheckinDailyOnUiOpen({
         requestId: "req-1",
-      },
-      sendResponse,
-    )
-
-    expect(pretriggerSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ requestId: "req-1" }),
-    )
-    expect(sendResponse).toHaveBeenCalledWith({
+      }),
+    ).resolves.toEqual({
       success: true,
       started: false,
       eligible: false,
     })
+
+    expect(pretriggerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-1" }),
+    )
   })
 
   it("should reset lastDailyRunDay on autoCheckin:debugResetLastDailyRunDay", async () => {
     const debugSpy = vi
       .spyOn(autoCheckinScheduler as any, "debugResetLastDailyRunDay")
       .mockResolvedValueOnce(undefined)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinDebugResetLastDailyRunDay },
-      sendResponse,
-    )
+    await expect(resetAutoCheckinLastDailyRunDay()).resolves.toEqual({
+      success: true,
+    })
 
     expect(debugSpy).toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 
   it("should schedule the daily alarm for today on autoCheckin:debugScheduleDailyAlarmForToday", async () => {
     const debugSpy = vi
       .spyOn(autoCheckinScheduler as any, "debugScheduleDailyAlarmForToday")
       .mockResolvedValueOnce(123)
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      {
-        action: RuntimeActionIds.AutoCheckinDebugScheduleDailyAlarmForToday,
+    await expect(
+      scheduleAutoCheckinDailyAlarmForToday({
         minutesFromNow: 5,
-      },
-      sendResponse,
-    )
-
-    expect(debugSpy).toHaveBeenCalledWith({ minutesFromNow: 5 })
-    expect(sendResponse).toHaveBeenCalledWith({
+      }),
+    ).resolves.toEqual({
       success: true,
       scheduledTime: 123,
     })
-  })
 
-  it("should return error for unknown action", async () => {
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage({ action: "unknown" }, sendResponse)
-
-    expect(sendResponse).toHaveBeenCalledWith({
-      success: false,
-      error: "Unknown action",
-    })
+    expect(debugSpy).toHaveBeenCalledWith({ minutesFromNow: 5 })
   })
 
   it("should catch errors and respond with error message", async () => {
@@ -3292,18 +3586,17 @@ describe("handleAutoCheckinMessage", () => {
     const runSpy = vi
       .spyOn(autoCheckinScheduler as any, "runCheckins")
       .mockRejectedValueOnce(error)
-    ;(getErrorMessage as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
-      "boom",
+    ;(
+      getErrorMessage as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation((error: unknown) =>
+      error instanceof Error ? error.message : String(error),
     )
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow },
-      sendResponse,
-    )
+    await expect(runAutoCheckinNow()).resolves.toEqual({
+      success: false,
+      error: "boom",
+    })
 
     expect(runSpy).toHaveBeenCalled()
-    expect(sendResponse).toHaveBeenCalledWith({ success: false, error: "boom" })
   })
 
   it("should still reschedule after a manual run failure", async () => {
@@ -3313,19 +3606,18 @@ describe("handleAutoCheckinMessage", () => {
     const scheduleSpy = vi
       .spyOn(autoCheckinScheduler as any, "scheduleNextRun")
       .mockResolvedValueOnce(undefined)
-    ;(getErrorMessage as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
-      "boom",
+    ;(
+      getErrorMessage as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementation((error: unknown) =>
+      error instanceof Error ? error.message : String(error),
     )
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow },
-      sendResponse,
-    )
+    await expect(runAutoCheckinNow()).resolves.toEqual({
+      success: false,
+      error: "boom",
+    })
 
     expect(runSpy).toHaveBeenCalled()
     expect(scheduleSpy).toHaveBeenCalledWith({ preserveExisting: true })
-    expect(sendResponse).toHaveBeenCalledWith({ success: false, error: "boom" })
   })
 
   it("should keep the manual run response successful when post-run rescheduling fails", async () => {
@@ -3335,19 +3627,13 @@ describe("handleAutoCheckinMessage", () => {
     const scheduleSpy = vi
       .spyOn(autoCheckinScheduler as any, "scheduleNextRun")
       .mockRejectedValueOnce(new Error("reschedule failed"))
-    const sendResponse = vi.fn()
-
-    await handleAutoCheckinMessage(
-      { action: RuntimeActionIds.AutoCheckinRunNow },
-      sendResponse,
-    )
+    await expect(runAutoCheckinNow()).resolves.toEqual({ success: true })
 
     expect(runSpy).toHaveBeenCalledWith({
       runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
       targetAccountIds: undefined,
     })
     expect(scheduleSpy).toHaveBeenCalledWith({ preserveExisting: true })
-    expect(sendResponse).toHaveBeenCalledWith({ success: true })
   })
 })
 
@@ -4833,6 +5119,30 @@ describe("autoCheckinScheduler private helpers", () => {
     expect((autoCheckinScheduler as any).parseTimeToMinutes("nope")).toBeNull()
   })
 
+  it("maps no-op run summaries to skipped analytics results", () => {
+    expect(
+      (autoCheckinScheduler as any).mapRunSummaryToProductAnalyticsResult({
+        executed: 0,
+        failedCount: 0,
+        skippedCount: 0,
+      }),
+    ).toBe(PRODUCT_ANALYTICS_RESULTS.Skipped)
+    expect(
+      (autoCheckinScheduler as any).mapRunSummaryToProductAnalyticsResult({
+        executed: 0,
+        failedCount: 1,
+        skippedCount: 0,
+      }),
+    ).toBe(PRODUCT_ANALYTICS_RESULTS.Failure)
+    expect(
+      (autoCheckinScheduler as any).mapRunSummaryToProductAnalyticsResult({
+        executed: 1,
+        failedCount: 0,
+        skippedCount: 0,
+      }),
+    ).toBe(PRODUCT_ANALYTICS_RESULTS.Success)
+  })
+
   it("handles same-day and overnight windows correctly", () => {
     expect(
       (autoCheckinScheduler as any).isMinutesWithinWindow(600, 600, 600),
@@ -4978,10 +5288,6 @@ describe("autoCheckinScheduler private helpers", () => {
   })
 
   it("derives snapshot skip reasons from account state and provider availability", () => {
-    mockedProviders.resolveAutoCheckinProvider.mockReturnValueOnce({
-      canCheckIn: vi.fn(() => true),
-    })
-
     expect(
       (autoCheckinScheduler as any).buildAccountSnapshot(
         {
@@ -5018,10 +5324,6 @@ describe("autoCheckinScheduler private helpers", () => {
       accountId: "no-provider",
       skipReason: "no_provider",
       providerAvailable: false,
-    })
-
-    mockedProviders.resolveAutoCheckinProvider.mockReturnValueOnce({
-      canCheckIn: vi.fn(() => true),
     })
 
     expect(
@@ -5061,10 +5363,6 @@ describe("autoCheckinScheduler private helpers", () => {
       accountId: "provider-not-ready",
       skipReason: "provider_not_ready",
       providerAvailable: false,
-    })
-
-    mockedProviders.resolveAutoCheckinProvider.mockReturnValueOnce({
-      canCheckIn: vi.fn(() => true),
     })
 
     expect(

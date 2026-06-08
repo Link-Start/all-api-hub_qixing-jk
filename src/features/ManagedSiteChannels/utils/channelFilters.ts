@@ -1,7 +1,11 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import {
+  ChannelConfigMessageTypes,
+  sendChannelConfigMessage,
+} from "~/services/managedSites/channelConfigMessaging"
 import { channelConfigStorage } from "~/services/managedSites/channelConfigStorage"
+import { getRuntimeMessageFailureMessage } from "~/services/runtimeMessaging/result"
 import type { ChannelModelFilterRule } from "~/types/channelModelFilters"
-import { sendRuntimeMessage } from "~/utils/browser/browserApi"
+import { isMessageReceiverUnavailableError } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
 
 /**
@@ -21,16 +25,17 @@ const logger = createLogger("ChannelFilters")
 export async function fetchChannelFilters(
   channelId: number,
 ): Promise<ChannelModelFilterRule[]> {
+  let response: Awaited<ReturnType<typeof sendChannelConfigMessage>>
+
   try {
-    const response = await sendRuntimeMessage({
-      action: RuntimeActionIds.ChannelConfigGet,
+    response = await sendChannelConfigMessage(ChannelConfigMessageTypes.Get, {
       channelId,
     })
-    if (response?.success) {
-      return response.data?.modelFilterSettings?.rules ?? []
-    }
-    throw new Error(response?.error || "Failed to load channel filters")
   } catch (runtimeError) {
+    if (!isMessageReceiverUnavailableError(runtimeError)) {
+      throw runtimeError
+    }
+
     logger.warn("Runtime fetch failed for channel, using fallback storage", {
       channelId,
       error: runtimeError,
@@ -38,6 +43,14 @@ export async function fetchChannelFilters(
     const config = await channelConfigStorage.getConfig(channelId)
     return config.modelFilterSettings?.rules ?? []
   }
+
+  if (response.success) {
+    return response.data?.modelFilterSettings?.rules ?? []
+  }
+
+  throw new Error(
+    getRuntimeMessageFailureMessage(response, "Failed to load channel filters"),
+  )
 }
 
 /**
@@ -51,16 +64,18 @@ export async function saveChannelFilters(
   channelId: number,
   filters: ChannelModelFilterRule[],
 ): Promise<void> {
+  let response: Awaited<ReturnType<typeof sendChannelConfigMessage>>
+
   try {
-    const response = await sendRuntimeMessage({
-      action: RuntimeActionIds.ChannelConfigUpsertFilters,
-      channelId,
-      filters,
-    })
-    if (!response?.success) {
-      throw new Error(response?.error || "Failed to save channel filters")
-    }
+    response = await sendChannelConfigMessage(
+      ChannelConfigMessageTypes.UpsertFilters,
+      { channelId, filters },
+    )
   } catch (runtimeError) {
+    if (!isMessageReceiverUnavailableError(runtimeError)) {
+      throw runtimeError
+    }
+
     logger.warn("Runtime save failed for channel, persisting locally", {
       channelId,
       error: runtimeError,
@@ -69,5 +84,15 @@ export async function saveChannelFilters(
     if (!success) {
       throw new Error("Failed to persist filters locally")
     }
+    return
+  }
+
+  if (!response.success) {
+    throw new Error(
+      getRuntimeMessageFailureMessage(
+        response,
+        "Failed to save channel filters",
+      ),
+    )
   }
 }

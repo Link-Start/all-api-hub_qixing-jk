@@ -1,8 +1,19 @@
 import userEvent from "@testing-library/user-event"
+import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import CopyKeyDialog from "~/features/AccountManagement/components/CopyKeyDialog"
+import { KEY_MANAGEMENT_TEST_IDS } from "~/features/KeyManagement/testIds"
 import { API_ERROR_CODES, ApiError } from "~/services/apiService/common/errors"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { API_TYPES } from "~/services/verification/aiApiVerification"
 import { AuthTypeEnum } from "~/types"
 import { render, screen, waitFor } from "~~/tests/test-utils/render"
 
@@ -12,16 +23,26 @@ const {
   fetchAccountAvailableModelsMock,
   fetchUserGroupsMock,
   resolveApiTokenKeyMock,
+  openInCherryStudioMock,
+  openWithAccountMock,
+  startProductAnalyticsActionMock,
+  completeProductAnalyticsActionMock,
   toastSuccessMock,
   toastErrorMock,
+  createApiCredentialProfileMock,
 } = vi.hoisted(() => ({
   fetchAccountTokensMock: vi.fn(),
   createApiTokenMock: vi.fn(),
   fetchAccountAvailableModelsMock: vi.fn(),
   fetchUserGroupsMock: vi.fn(),
   resolveApiTokenKeyMock: vi.fn(),
+  openInCherryStudioMock: vi.fn(),
+  openWithAccountMock: vi.fn(),
+  startProductAnalyticsActionMock: vi.fn(),
+  completeProductAnalyticsActionMock: vi.fn(),
   toastSuccessMock: vi.fn(),
   toastErrorMock: vi.fn(),
+  createApiCredentialProfileMock: vi.fn(),
 }))
 
 vi.mock("react-hot-toast", () => ({
@@ -42,6 +63,36 @@ vi.mock("~/services/apiService", () => ({
   }),
 }))
 
+vi.mock("~/components/dialogs/ChannelDialog", () => ({
+  ChannelDialogProvider: ({ children }: { children: ReactNode }) => children,
+  useChannelDialog: () => ({ openWithAccount: openWithAccountMock }),
+}))
+
+vi.mock("~/services/integrations/cherryStudio", () => ({
+  OpenInCherryStudio: (...args: unknown[]) => openInCherryStudioMock(...args),
+}))
+
+vi.mock("~/services/productAnalytics/actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/actions")>()
+
+  return {
+    ...actual,
+    startProductAnalyticsAction: (...args: unknown[]) =>
+      startProductAnalyticsActionMock(...args),
+  }
+})
+
+vi.mock(
+  "~/services/apiCredentialProfiles/apiCredentialProfilesStorage",
+  () => ({
+    apiCredentialProfilesStorage: {
+      createProfile: (...args: unknown[]) =>
+        createApiCredentialProfileMock(...args),
+    },
+  }),
+)
+
 const ACCOUNT = {
   id: "acc-1",
   name: "Example",
@@ -49,9 +100,10 @@ const ACCOUNT = {
   siteType: "new-api",
   baseUrl: "https://example.com",
   token: "token",
-  userId: 1,
+  userId: "1",
   authType: AuthTypeEnum.AccessToken,
   checkIn: { enableDetection: false },
+  tagIds: ["tag-a"],
 } as any
 
 const TOKEN = {
@@ -79,6 +131,15 @@ describe("CopyKeyDialog", () => {
     fetchAccountAvailableModelsMock.mockReset()
     fetchUserGroupsMock.mockReset()
     resolveApiTokenKeyMock.mockReset()
+    openInCherryStudioMock.mockReset()
+    openWithAccountMock.mockReset()
+    startProductAnalyticsActionMock.mockReset()
+    completeProductAnalyticsActionMock.mockReset()
+    createApiCredentialProfileMock.mockReset()
+    startProductAnalyticsActionMock.mockReturnValue({
+      complete: completeProductAnalyticsActionMock,
+    })
+    completeProductAnalyticsActionMock.mockResolvedValue(undefined)
     resolveApiTokenKeyMock.mockImplementation(
       async (_request, token: { key: string }) => token.key,
     )
@@ -439,6 +500,83 @@ describe("CopyKeyDialog", () => {
     await waitFor(() => {
       expect(resolveApiTokenKeyMock).toHaveBeenCalled()
       expect(writeText).toHaveBeenCalledWith("sk-full-secret")
+      expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.CopyApiKey,
+        surfaceId:
+          PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      })
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+      )
+    })
+  })
+
+  it("tracks Cherry Studio export for a copied account token", async () => {
+    fetchAccountTokensMock.mockResolvedValueOnce([TOKEN])
+    resolveApiTokenKeyMock.mockResolvedValueOnce("sk-full-secret")
+
+    const user = userEvent.setup()
+
+    render(<CopyKeyDialog isOpen={true} onClose={() => {}} account={ACCOUNT} />)
+
+    await user.click(await screen.findByText("default"))
+    await user.click(
+      await screen.findByRole("button", {
+        name: "ui:dialog.copyKey.useInCherry",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExportAccountTokenToCherryStudio,
+        surfaceId:
+          PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      })
+      expect(openInCherryStudioMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "acc-1" }),
+        expect.objectContaining({ key: "sk-full-secret" }),
+      )
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+      )
+    })
+  })
+
+  it("tracks managed-site single token import when the copied token flow opens", async () => {
+    fetchAccountTokensMock.mockResolvedValueOnce([TOKEN])
+    openWithAccountMock.mockResolvedValueOnce({ opened: true })
+
+    const user = userEvent.setup()
+
+    render(<CopyKeyDialog isOpen={true} onClose={() => {}} account={ACCOUNT} />)
+
+    await user.click(await screen.findByText("default"))
+    await user.click(
+      await screen.findByRole("button", {
+        name: "keyManagement:actions.importToManagedSite",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(startProductAnalyticsActionMock).toHaveBeenCalledWith({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteChannels,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.ImportManagedSiteSingleToken,
+        surfaceId:
+          PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementRowActions,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      })
+      expect(openWithAccountMock).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "acc-1" }),
+        expect.objectContaining({ id: 1 }),
+        expect.any(Function),
+      )
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Success,
+      )
     })
   })
 
@@ -469,6 +607,12 @@ describe("CopyKeyDialog", () => {
       expect(resolveApiTokenKeyMock).toHaveBeenCalled()
       expect(writeText).not.toHaveBeenCalled()
       expect(toastErrorMock).toHaveBeenCalledWith("masked fetch failed")
+      expect(completeProductAnalyticsActionMock).toHaveBeenCalledWith(
+        PRODUCT_ANALYTICS_RESULTS.Failure,
+        {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        },
+      )
     })
   })
 
@@ -602,5 +746,69 @@ describe("CopyKeyDialog", () => {
       expect(fetchAccountTokensMock).toHaveBeenCalledTimes(1)
       expect(writeText).toHaveBeenCalledWith("sk-custom-full-secret")
     })
+  })
+
+  it("saves a custom one-time key to an API credential profile without closing the dialog", async () => {
+    fetchAccountTokensMock.mockResolvedValueOnce([])
+    fetchAccountAvailableModelsMock.mockResolvedValueOnce([])
+    fetchUserGroupsMock.mockResolvedValueOnce({
+      default: { desc: "default", ratio: 1 },
+    })
+    createApiTokenMock.mockResolvedValueOnce({
+      ...TOKEN,
+      id: 10,
+      key: "sk-custom-full-secret",
+      name: "My Key",
+    })
+    createApiCredentialProfileMock.mockResolvedValueOnce({
+      id: "profile-1",
+      name: "Example - My Key",
+      apiType: API_TYPES.OPENAI_COMPATIBLE,
+      baseUrl: ACCOUNT.baseUrl,
+      apiKey: "sk-custom-full-secret",
+      tagIds: ACCOUNT.tagIds,
+      notes: "",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    const onClose = vi.fn()
+
+    const user = userEvent.setup()
+    vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined)
+
+    render(<CopyKeyDialog isOpen={true} onClose={onClose} account={ACCOUNT} />)
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "ui:dialog.copyKey.createCustomKey",
+      }),
+    )
+    await user.type(
+      await screen.findByLabelText(/keyManagement:dialog\.tokenName/),
+      "My Key",
+    )
+    await user.click(
+      screen.getByRole("button", { name: "keyManagement:dialog.createToken" }),
+    )
+    await user.click(
+      await screen.findByTestId(KEY_MANAGEMENT_TEST_IDS.oneTimeKeySaveButton),
+    )
+
+    await waitFor(() => {
+      expect(createApiCredentialProfileMock).toHaveBeenCalledWith({
+        name: "Example - My Key",
+        apiType: API_TYPES.OPENAI_COMPATIBLE,
+        baseUrl: ACCOUNT.baseUrl,
+        apiKey: "sk-custom-full-secret",
+        tagIds: ACCOUNT.tagIds,
+      })
+    })
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "keyManagement:messages.savedToApiProfiles",
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(
+      screen.getByLabelText("keyManagement:oneTimeKey.keyLabel"),
+    ).toHaveValue("sk-custom-full-secret")
   })
 })

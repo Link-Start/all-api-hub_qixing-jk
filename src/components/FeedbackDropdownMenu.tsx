@@ -2,6 +2,7 @@ import {
   BugAntIcon,
   ChatBubbleLeftEllipsisIcon,
   LightBulbIcon,
+  PuzzlePieceIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline"
 import { useTranslation } from "react-i18next"
@@ -18,6 +19,7 @@ import {
   openBugReportPage,
   openCommunityPage,
   openFeatureRequestPage,
+  openSiteSupportRequestPage,
 } from "~/utils/navigation"
 
 interface FeedbackDropdownMenuProps {
@@ -57,6 +59,10 @@ export function FeedbackDropdownMenu({
         <DropdownMenuItem onClick={() => void openFeatureRequestPage()}>
           <LightBulbIcon className="h-4 w-4" />
           {t("feedback.featureRequest")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void openSiteSupportRequestPage()}>
+          <PuzzlePieceIcon className="h-4 w-4" />
+          {t("feedback.siteSupportRequest")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => void openCommunityPage(language)}>
           <UsersIcon className="h-4 w-4" />

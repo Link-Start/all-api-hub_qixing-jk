@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 
 import { PageHeader } from "~/components/PageHeader"
 import { Button } from "~/components/ui"
+import { KEY_MANAGEMENT_TEST_IDS } from "~/features/KeyManagement/testIds"
 
 interface HeaderProps {
   selectedAccount: string
@@ -63,6 +64,7 @@ export function Header({
               size="sm"
               variant="success"
               leftIcon={<Plus className="h-4 w-4" />}
+              data-testid={KEY_MANAGEMENT_TEST_IDS.addTokenButton}
             >
               {t("dialog.addToken")}
             </Button>

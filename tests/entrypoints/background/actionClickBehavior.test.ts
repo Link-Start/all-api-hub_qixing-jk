@@ -1,32 +1,42 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { POPUP_PAGE_PATH } from "~/constants/extensionPages"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 
 describe("background applyActionClickBehavior", () => {
   let addActionClickListener: ReturnType<typeof vi.fn>
   let removeActionClickListener: ReturnType<typeof vi.fn>
   let setActionPopup: ReturnType<typeof vi.fn>
+  let disableNativeSidePanelActionClick: ReturnType<typeof vi.fn>
   let getSidePanelSupport: ReturnType<typeof vi.fn>
   let openSidePanelWithFallback: ReturnType<typeof vi.fn>
-  let setPanelBehavior: ReturnType<typeof vi.fn>
+  let startProductAnalyticsAction: ReturnType<typeof vi.fn>
+  let trackerComplete: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     addActionClickListener = vi.fn()
     removeActionClickListener = vi.fn()
     setActionPopup = vi.fn().mockResolvedValue(undefined)
+    disableNativeSidePanelActionClick = vi.fn().mockResolvedValue(undefined)
     getSidePanelSupport = vi.fn()
     openSidePanelWithFallback = vi.fn().mockResolvedValue(undefined)
-    setPanelBehavior = vi.fn().mockResolvedValue(undefined)
-    ;(globalThis as any).chrome = {
-      sidePanel: {
-        setPanelBehavior,
-      },
-    }
+    trackerComplete = vi.fn().mockResolvedValue(undefined)
+    startProductAnalyticsAction = vi.fn().mockReturnValue({
+      complete: trackerComplete,
+    })
 
     vi.resetModules()
 
     vi.doMock("~/utils/browser/browserApi", () => ({
       addActionClickListener,
+      disableNativeSidePanelActionClick,
       getSidePanelSupport,
       removeActionClickListener,
       setActionPopup,
@@ -35,12 +45,16 @@ describe("background applyActionClickBehavior", () => {
     vi.doMock("~/utils/navigation", () => ({
       openSidePanelWithFallback,
     }))
+
+    vi.doMock("~/services/productAnalytics/actions", () => ({
+      startProductAnalyticsAction,
+    }))
   })
 
   afterEach(() => {
-    ;(globalThis as any).chrome = undefined
     vi.doUnmock("~/utils/browser/browserApi")
     vi.doUnmock("~/utils/navigation")
+    vi.doUnmock("~/services/productAnalytics/actions")
     vi.resetModules()
     vi.restoreAllMocks()
   })
@@ -59,9 +73,7 @@ describe("background applyActionClickBehavior", () => {
     await applyActionClickBehavior("sidepanel")
 
     expect(removeActionClickListener).toHaveBeenCalledTimes(1)
-    expect(setPanelBehavior).toHaveBeenCalledWith({
-      openPanelOnActionClick: false,
-    })
+    expect(disableNativeSidePanelActionClick).toHaveBeenCalledTimes(1)
     expect(setActionPopup).toHaveBeenCalledWith(POPUP_PAGE_PATH)
     expect(addActionClickListener).not.toHaveBeenCalled()
   })
@@ -79,9 +91,7 @@ describe("background applyActionClickBehavior", () => {
     await applyActionClickBehavior("sidepanel")
 
     expect(removeActionClickListener).toHaveBeenCalledTimes(1)
-    expect(setPanelBehavior).toHaveBeenCalledWith({
-      openPanelOnActionClick: false,
-    })
+    expect(disableNativeSidePanelActionClick).toHaveBeenCalledTimes(1)
     expect(setActionPopup).toHaveBeenCalledWith("")
     expect(addActionClickListener).toHaveBeenCalledTimes(1)
   })
@@ -99,9 +109,7 @@ describe("background applyActionClickBehavior", () => {
     await applyActionClickBehavior("sidepanel")
 
     expect(removeActionClickListener).toHaveBeenCalledTimes(1)
-    expect(setPanelBehavior).toHaveBeenCalledWith({
-      openPanelOnActionClick: false,
-    })
+    expect(disableNativeSidePanelActionClick).toHaveBeenCalledTimes(1)
     expect(setActionPopup).toHaveBeenCalledWith("")
     expect(addActionClickListener).toHaveBeenCalledTimes(1)
   })
@@ -125,5 +133,64 @@ describe("background applyActionClickBehavior", () => {
     await clickHandler?.(clickedTab)
 
     expect(openSidePanelWithFallback).toHaveBeenCalledWith(clickedTab)
+    expect(startProductAnalyticsAction).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.SidepanelNavigation,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenSidepanelFromToolbarAction,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundToolbarAction,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+    })
+    expect(trackerComplete).toHaveBeenCalledWith()
+  })
+
+  it("does not let tracker completion failures break successful toolbar clicks", async () => {
+    getSidePanelSupport.mockReturnValue({
+      supported: true,
+      kind: "chromium-side-panel",
+    })
+    trackerComplete.mockRejectedValueOnce(new Error("analytics unavailable"))
+
+    const { applyActionClickBehavior } = await import(
+      "~/entrypoints/background/actionClickBehavior"
+    )
+
+    await applyActionClickBehavior("sidepanel")
+
+    const clickHandler = addActionClickListener.mock.calls[0]?.[0]
+
+    await expect(
+      clickHandler?.({ id: 123, windowId: 456 } as browser.tabs.Tab),
+    ).resolves.toBeUndefined()
+
+    expect(openSidePanelWithFallback).toHaveBeenCalledTimes(1)
+    expect(trackerComplete).toHaveBeenCalledWith()
+  })
+
+  it("preserves side-panel failures when failure tracking also fails", async () => {
+    getSidePanelSupport.mockReturnValue({
+      supported: true,
+      kind: "chromium-side-panel",
+    })
+    const sidePanelError = new Error("side panel unavailable")
+    openSidePanelWithFallback.mockRejectedValueOnce(sidePanelError)
+    trackerComplete.mockRejectedValueOnce(new Error("analytics unavailable"))
+
+    const { applyActionClickBehavior } = await import(
+      "~/entrypoints/background/actionClickBehavior"
+    )
+
+    await applyActionClickBehavior("sidepanel")
+
+    const clickHandler = addActionClickListener.mock.calls[0]?.[0]
+
+    await expect(
+      clickHandler?.({ id: 123, windowId: 456 } as browser.tabs.Tab),
+    ).rejects.toThrow(sidePanelError)
+
+    expect(trackerComplete).toHaveBeenCalledWith(
+      PRODUCT_ANALYTICS_RESULTS.Failure,
+      {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      },
+    )
   })
 })

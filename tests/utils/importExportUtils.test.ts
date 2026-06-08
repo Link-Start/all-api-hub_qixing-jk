@@ -304,6 +304,26 @@ describe("importFromBackupObject", () => {
     })
   })
 
+  it("imports legacy V2 account arrays without deletion marker metadata", async () => {
+    const backup: RawBackupData = {
+      version: BACKUP_VERSION,
+      timestamp: Date.now(),
+      accounts: [{ id: "legacy-a" } as any] as any,
+    }
+
+    const result = await importFromBackupObject(backup as BackupV2)
+
+    expect(mockAccountStorageImportData).toHaveBeenCalledWith({
+      accounts: [{ id: "legacy-a" }],
+      bookmarks: [],
+      pinnedAccountIds: [],
+      orderedAccountIds: [],
+      deletedEntryRecords: undefined,
+    })
+    expect(mockEnsureLegacyMigration).toHaveBeenCalled()
+    expect(result.sections.accounts).toBe(true)
+  })
+
   it("merges API credential profiles when present in V2 backup", async () => {
     const backup: BackupFullV2 = {
       version: BACKUP_VERSION,
@@ -595,6 +615,7 @@ describe("normalizeBackupForMerge", () => {
       bookmarks: [],
       pinnedAccountIds: [],
       orderedAccountIds: [],
+      deletedEntryRecords: {},
       accountsTimestamp: 0,
       preferences: null,
       channelConfigs: null,
@@ -610,6 +631,16 @@ describe("normalizeBackupForMerge", () => {
       timestamp: 123,
       accounts: {
         accounts: [{ id: "a1" } as any],
+        bookmarks: [],
+        pinnedAccountIds: [],
+        orderedAccountIds: [],
+        deletedEntryRecords: {
+          deleted: {
+            kind: "account",
+            deletedAt: 200,
+            entryUpdatedAt: 100,
+          },
+        },
         last_updated: 456,
       } as any,
       tagStore: { version: 1, tagsById: {} },
@@ -623,6 +654,13 @@ describe("normalizeBackupForMerge", () => {
     expect(result.bookmarks).toEqual([])
     expect(result.pinnedAccountIds).toEqual([])
     expect(result.orderedAccountIds).toEqual([])
+    expect(result.deletedEntryRecords).toEqual({
+      deleted: {
+        kind: "account",
+        deletedAt: 200,
+        entryUpdatedAt: 100,
+      },
+    })
     expect(result.accountsTimestamp).toBe(456)
     expect(result.preferences).toEqual({ themeMode: "dark" })
     expect(result.channelConfigs).toEqual({ 1: { enabled: true } })
@@ -678,6 +716,15 @@ describe("normalizeBackupForMerge", () => {
     const payload: RawBackupData = {
       version: "1.0",
       timestamp: 999,
+      accounts: {
+        deletedEntryRecords: {
+          deleted: {
+            kind: "bookmark",
+            deletedAt: 300,
+            entryUpdatedAt: 200,
+          },
+        },
+      } as any,
       data: {
         accounts: [{ id: "legacy" }],
         preferences: { themeMode: "dark" },
@@ -691,6 +738,13 @@ describe("normalizeBackupForMerge", () => {
     expect(result.bookmarks).toEqual([])
     expect(result.pinnedAccountIds).toEqual([])
     expect(result.orderedAccountIds).toEqual([])
+    expect(result.deletedEntryRecords).toEqual({
+      deleted: {
+        kind: "bookmark",
+        deletedAt: 300,
+        entryUpdatedAt: 200,
+      },
+    })
     expect(result.accountsTimestamp).toBe(999)
     expect(result.preferences).toEqual({ themeMode: "dark" })
     expect(result.channelConfigs).toEqual({ 2: { enabled: false } })
@@ -729,6 +783,9 @@ describe("export handlers", () => {
   const originalCreateObjectURL = URL.createObjectURL
   const originalRevokeObjectURL = URL.revokeObjectURL
   const originalCreateElement = document.createElement
+  const createElement = originalCreateElement as unknown as (
+    tagName: string,
+  ) => HTMLElement
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -737,13 +794,16 @@ describe("export handlers", () => {
     URL.createObjectURL = vi.fn(() => "blob:mock-url") as any
     URL.revokeObjectURL = vi.fn() as any
 
-    // Mock anchor creation to avoid interacting with real DOM
-    document.createElement = vi.fn(() => ({
-      href: "",
-      download: "",
-      click: vi.fn(),
-      remove: vi.fn(),
-    })) as any
+    document.createElement = vi.fn((tagName: string) => {
+      const element =
+        tagName.toLowerCase() === "a"
+          ? createElement.call(document, "a")
+          : createElement.call(document, "div")
+      if (tagName.toLowerCase() === "a") {
+        vi.spyOn(element, "click").mockImplementation(() => {})
+      }
+      return element
+    }) as any
 
     mockAccountStorageExportData.mockResolvedValue({
       accounts: [],
@@ -821,6 +881,6 @@ describe("export handlers", () => {
 
     mockAccountStorageExportData.mockRejectedValue(new Error("boom"))
 
-    await handleExportAll(setIsExporting)
+    await expect(handleExportAll(setIsExporting)).rejects.toThrow("boom")
   })
 })

@@ -8,16 +8,25 @@ import {
   vi,
 } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { AutoRefreshMessageTypes } from "~/services/accounts/autoRefreshMessaging"
 import {
   autoRefreshService,
-  handleAutoRefreshMessage,
+  resolveAutoRefreshGetStatusMessage,
+  resolveAutoRefreshRefreshNowMessage,
+  resolveAutoRefreshSetupMessage,
+  resolveAutoRefreshStopMessage,
+  resolveAutoRefreshUpdateSettingsMessage,
+  setupAutoRefreshMessagingListeners,
 } from "~/services/accounts/autoRefreshService"
 import { usageHistoryScheduler } from "~/services/history/usageHistory/scheduler"
 import type { UserPreferences } from "~/services/preferences/userPreferences"
 import { userPreferences } from "~/services/preferences/userPreferences"
 import { DEFAULT_ACCOUNT_AUTO_REFRESH } from "~/types/accountAutoRefresh"
+
+const { mockOnAutoRefreshMessage } = vi.hoisted(() => ({
+  mockOnAutoRefreshMessage: vi.fn(() => vi.fn()),
+}))
 
 // Mock dependencies.
 //
@@ -45,6 +54,17 @@ vi.mock("~/services/history/usageHistory/scheduler", () => ({
     runAfterRefreshSync: vi.fn(),
   },
 }))
+
+vi.mock("~/services/accounts/autoRefreshMessaging", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("~/services/accounts/autoRefreshMessaging")
+    >()
+  return {
+    ...actual,
+    onAutoRefreshMessage: mockOnAutoRefreshMessage,
+  }
+})
 
 // Mock browser runtime using vi.stubGlobal like other tests
 const mockSendMessage = vi.fn()
@@ -75,6 +95,14 @@ describe("AutoRefreshService", () => {
 
   describe("initialize", () => {
     it("should short-circuit if already initialized", async () => {
+      vi.mocked(userPreferences.getPreferences).mockResolvedValue({
+        accountAutoRefresh: {
+          ...DEFAULT_ACCOUNT_AUTO_REFRESH,
+          enabled: false,
+        },
+        preferencesVersion: 5,
+      } as UserPreferences)
+
       await autoRefreshService.initialize()
       await autoRefreshService.initialize() // Second call should short-circuit
 
@@ -114,7 +142,7 @@ describe("AutoRefreshService", () => {
 
       await autoRefreshService.initialize()
 
-      expect(autoRefreshService.getStatus().isInitialized).toBe(true) // Still sets isInitialized = true even on error
+      expect(autoRefreshService.getStatus().isInitialized).toBe(false)
     })
   })
 
@@ -240,12 +268,55 @@ describe("AutoRefreshService", () => {
       notifyFrontendSpy.mockRestore()
     })
 
-    it("should handle setup errors gracefully", async () => {
+    it("should propagate setup errors", async () => {
       const error = new Error("Setup failed")
 
       vi.mocked(userPreferences.getPreferences).mockRejectedValue(error)
 
+      await expect(autoRefreshService.setupAutoRefresh()).rejects.toThrow(error)
+
+      expect(autoRefreshService.getStatus().isRunning).toBe(false)
+    })
+
+    it("preserves a running timer when reloading preferences fails", async () => {
+      const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval")
+      vi.mocked(userPreferences.getPreferences)
+        .mockResolvedValueOnce({
+          accountAutoRefresh: {
+            ...DEFAULT_ACCOUNT_AUTO_REFRESH,
+            enabled: true,
+            interval: 300,
+          },
+          preferencesVersion: 5,
+        } as UserPreferences)
+        .mockRejectedValueOnce(new Error("preferences unavailable"))
+
       await autoRefreshService.setupAutoRefresh()
+      const statusBeforeReload = autoRefreshService.getStatus()
+
+      await expect(autoRefreshService.setupAutoRefresh()).rejects.toThrow(
+        "preferences unavailable",
+      )
+
+      expect(statusBeforeReload.isRunning).toBe(true)
+      expect(autoRefreshService.getStatus().isRunning).toBe(true)
+      expect(clearIntervalSpy).not.toHaveBeenCalled()
+      clearIntervalSpy.mockRestore()
+    })
+
+    it("does not start a timer for invalid persisted intervals", async () => {
+      vi.mocked(userPreferences.getPreferences).mockResolvedValue({
+        accountAutoRefresh: {
+          ...DEFAULT_ACCOUNT_AUTO_REFRESH,
+          enabled: true,
+          interval: 0,
+        },
+        preferencesVersion: 5,
+      } as UserPreferences)
+
+      await expect(autoRefreshService.setupAutoRefresh()).rejects.toThrow(
+        "Invalid auto-refresh interval",
+      )
 
       expect(autoRefreshService.getStatus().isRunning).toBe(false)
     })
@@ -326,13 +397,15 @@ describe("AutoRefreshService", () => {
       expect(userPreferences.savePreferences).toHaveBeenCalledWith(updates)
     })
 
-    it("should handle update errors gracefully", async () => {
+    it("should propagate update errors", async () => {
       const error = new Error("Update failed")
       const updates = { accountAutoRefresh: { enabled: true } }
 
       vi.mocked(userPreferences.savePreferences).mockRejectedValue(error)
 
-      await autoRefreshService.updateSettings(updates)
+      await expect(autoRefreshService.updateSettings(updates)).rejects.toThrow(
+        error,
+      )
     })
   })
 
@@ -413,11 +486,8 @@ describe("AutoRefreshService", () => {
   })
 })
 
-describe("handleAutoRefreshMessage", () => {
-  let mockSendResponse: ReturnType<typeof vi.fn>
-
+describe("auto-refresh typed message resolvers", () => {
   beforeEach(() => {
-    mockSendResponse = vi.fn()
     vi.clearAllMocks()
     autoRefreshService.destroy()
   })
@@ -436,26 +506,40 @@ describe("handleAutoRefreshMessage", () => {
         mockPreferences,
       )
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshSetup },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshSetupMessage()
 
       expect(autoRefreshService.getStatus().isRunning).toBe(true)
-      expect(mockSendResponse).toHaveBeenCalledWith({ success: true })
+      expect(response).toEqual({ success: true, data: undefined })
     })
 
-    it("should handle setup errors gracefully and still send success response", async () => {
+    it("should return a failure response when setup cannot load preferences", async () => {
       const error = new Error("Setup failed")
       vi.mocked(userPreferences.getPreferences).mockRejectedValue(error)
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshSetup },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshSetupMessage()
 
-      // setupAutoRefresh catches errors internally, so message handler still succeeds
-      expect(mockSendResponse).toHaveBeenCalledWith({ success: true })
+      expect(response).toEqual({
+        success: false,
+        error: "Error: Setup failed",
+      })
+    })
+
+    it("should return a failure response when setup sees an invalid interval", async () => {
+      vi.mocked(userPreferences.getPreferences).mockResolvedValue({
+        accountAutoRefresh: {
+          ...DEFAULT_ACCOUNT_AUTO_REFRESH,
+          enabled: true,
+          interval: Number.NaN,
+        },
+        preferencesVersion: 5,
+      } as UserPreferences)
+
+      const response = await resolveAutoRefreshSetupMessage()
+
+      expect(response).toEqual({
+        success: false,
+        error: "Error: Invalid auto-refresh interval",
+      })
     })
   })
 
@@ -469,13 +553,10 @@ describe("handleAutoRefreshMessage", () => {
       }
       vi.mocked(accountStorage.refreshAllAccounts).mockResolvedValue(mockResult)
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshRefreshNow },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshRefreshNowMessage()
 
       expect(accountStorage.refreshAllAccounts).toHaveBeenCalledWith(true)
-      expect(mockSendResponse).toHaveBeenCalledWith({
+      expect(response).toEqual({
         success: true,
         data: mockResult,
       })
@@ -485,12 +566,9 @@ describe("handleAutoRefreshMessage", () => {
       const error = new Error("Refresh failed")
       vi.mocked(accountStorage.refreshAllAccounts).mockRejectedValue(error)
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshRefreshNow },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshRefreshNowMessage()
 
-      expect(mockSendResponse).toHaveBeenCalledWith({
+      expect(response).toEqual({
         success: false,
         error: "Error: Refresh failed",
       })
@@ -499,13 +577,10 @@ describe("handleAutoRefreshMessage", () => {
 
   describe("autoRefresh:stop action", () => {
     it("should stop auto refresh and send success response", async () => {
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshStop },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshStopMessage()
 
       expect(autoRefreshService.getStatus().isRunning).toBe(false)
-      expect(mockSendResponse).toHaveBeenCalledWith({ success: true })
+      expect(response).toEqual({ success: true, data: undefined })
     })
   })
 
@@ -521,38 +596,35 @@ describe("handleAutoRefreshMessage", () => {
         preferencesVersion: 5,
       } as UserPreferences)
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshUpdateSettings, settings },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshUpdateSettingsMessage({
+        settings,
+      })
 
       expect(userPreferences.savePreferences).toHaveBeenCalledWith(settings)
-      expect(mockSendResponse).toHaveBeenCalledWith({ success: true })
+      expect(response).toEqual({ success: true, data: undefined })
     })
 
-    it("should handle update errors gracefully and still send success response", async () => {
+    it("should return a failure response when update cannot save preferences", async () => {
       const error = new Error("Update failed")
       const settings = { accountAutoRefresh: { enabled: true } }
       vi.mocked(userPreferences.savePreferences).mockRejectedValue(error)
 
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshUpdateSettings, settings },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshUpdateSettingsMessage({
+        settings,
+      })
 
-      // updateSettings catches errors internally, so message handler still succeeds
-      expect(mockSendResponse).toHaveBeenCalledWith({ success: true })
+      expect(response).toEqual({
+        success: false,
+        error: "Error: Update failed",
+      })
     })
   })
 
   describe("autoRefresh:getStatus action", () => {
     it("should return current status", async () => {
-      await handleAutoRefreshMessage(
-        { action: RuntimeActionIds.AutoRefreshGetStatus },
-        mockSendResponse,
-      )
+      const response = await resolveAutoRefreshGetStatusMessage()
 
-      expect(mockSendResponse).toHaveBeenCalledWith({
+      expect(response).toEqual({
         success: true,
         data: {
           isRunning: false,
@@ -562,17 +634,35 @@ describe("handleAutoRefreshMessage", () => {
     })
   })
 
-  describe("default action", () => {
-    it("should send error response for unknown action", async () => {
-      await handleAutoRefreshMessage(
-        { action: "unknownAction" },
-        mockSendResponse,
-      )
+  it("registers typed message listeners once", () => {
+    setupAutoRefreshMessagingListeners()
+    setupAutoRefreshMessagingListeners()
 
-      expect(mockSendResponse).toHaveBeenCalledWith({
-        success: false,
-        error: "未知的操作",
-      })
-    })
+    expect(mockOnAutoRefreshMessage).toHaveBeenCalledTimes(5)
+    expect(mockOnAutoRefreshMessage).toHaveBeenNthCalledWith(
+      1,
+      AutoRefreshMessageTypes.Setup,
+      expect.any(Function),
+    )
+    expect(mockOnAutoRefreshMessage).toHaveBeenNthCalledWith(
+      2,
+      AutoRefreshMessageTypes.RefreshNow,
+      expect.any(Function),
+    )
+    expect(mockOnAutoRefreshMessage).toHaveBeenNthCalledWith(
+      3,
+      AutoRefreshMessageTypes.Stop,
+      expect.any(Function),
+    )
+    expect(mockOnAutoRefreshMessage).toHaveBeenNthCalledWith(
+      4,
+      AutoRefreshMessageTypes.UpdateSettings,
+      expect.any(Function),
+    )
+    expect(mockOnAutoRefreshMessage).toHaveBeenNthCalledWith(
+      5,
+      AutoRefreshMessageTypes.GetStatus,
+      expect.any(Function),
+    )
   })
 })

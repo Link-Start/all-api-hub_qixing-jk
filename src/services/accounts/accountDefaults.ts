@@ -1,12 +1,15 @@
 import { isAccountSiteType, SITE_TYPES } from "~/constants/siteType"
 import { UI_CONSTANTS } from "~/constants/ui"
+import { coerceAccountIdentity } from "~/services/accounts/accountIdentity"
 import { normalizeAccountSiteUrlForStorage } from "~/services/accounts/utils/siteUrlNormalization"
 import {
   AuthTypeEnum,
+  DELETED_ENTRY_KINDS,
   SiteHealthStatus,
   type AccountInfo,
   type AccountStorageConfig,
   type CheckInConfig,
+  type DeletedEntryKind,
   type HealthStatus,
   type SiteAccount,
 } from "~/types"
@@ -14,7 +17,7 @@ import type { DeepPartial } from "~/types/utils"
 import { deepOverride } from "~/utils"
 
 const DEFAULT_ACCOUNT_INFO: AccountInfo = {
-  id: 0,
+  id: "",
   access_token: "",
   username: "",
   quota: 0,
@@ -44,11 +47,13 @@ const DEFAULT_SITE_ACCOUNT: SiteAccount = {
   account_info: DEFAULT_ACCOUNT_INFO,
   last_sync_time: 0,
   updated_at: 0,
+  user_updated_at: 0,
   created_at: 0,
   notes: "",
   tagIds: [],
   disabled: false,
   excludeFromTotalBalance: false,
+  excludeFromTodayIncome: false,
   authType: AuthTypeEnum.AccessToken,
   checkIn: DEFAULT_CHECK_IN_CONFIG,
 }
@@ -75,6 +80,55 @@ const coerceStringArray = (input: unknown): string[] => {
     .filter((value) => value.length > 0)
 }
 
+const RESERVED_DELETED_ENTRY_RECORD_IDS = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+])
+
+const isDeletedEntryKind = (kind: unknown): kind is DeletedEntryKind =>
+  DELETED_ENTRY_KINDS.includes(kind as DeletedEntryKind)
+
+/**
+ * Normalizes persisted deletion markers used by WebDAV sync reconciliation.
+ */
+function normalizeDeletedEntryRecords(
+  raw: unknown,
+): AccountStorageConfig["deletedEntryRecords"] {
+  if (!raw || typeof raw !== "object") return {}
+
+  const records = Object.create(null) as NonNullable<
+    AccountStorageConfig["deletedEntryRecords"]
+  >
+
+  for (const [id, value] of Object.entries(raw)) {
+    if (
+      !id ||
+      RESERVED_DELETED_ENTRY_RECORD_IDS.has(id) ||
+      !value ||
+      typeof value !== "object"
+    ) {
+      continue
+    }
+
+    const candidate = value as Record<string, unknown>
+    const kind = candidate.kind
+    const deletedAt = coerceNumber(candidate.deletedAt, 0)
+    const entryUpdatedAt = coerceNumber(candidate.entryUpdatedAt, 0)
+
+    if (!isDeletedEntryKind(kind)) continue
+    if (deletedAt <= 0) continue
+
+    records[id] = {
+      kind,
+      deletedAt,
+      entryUpdatedAt,
+    }
+  }
+
+  return records
+}
+
 /**
  * Creates the canonical default shape for `AccountStorageConfig`.
  *
@@ -88,6 +142,7 @@ export function createDefaultAccountStorageConfig(
     bookmarks: [],
     pinnedAccountIds: [],
     orderedAccountIds: [],
+    deletedEntryRecords: {},
     last_updated: now,
   }
 }
@@ -111,6 +166,7 @@ export function normalizeAccountStorageConfigForRead(
     orderedAccountIds: Array.isArray(raw?.orderedAccountIds)
       ? raw.orderedAccountIds
       : [],
+    deletedEntryRecords: normalizeDeletedEntryRecords(raw?.deletedEntryRecords),
     last_updated:
       typeof raw?.last_updated === "number" ? raw.last_updated : now,
   }
@@ -136,6 +192,9 @@ export function normalizeAccountStorageConfigForWrite(
     orderedAccountIds: Array.isArray(config.orderedAccountIds)
       ? config.orderedAccountIds
       : [],
+    deletedEntryRecords: normalizeDeletedEntryRecords(
+      config.deletedEntryRecords,
+    ),
     last_updated: now,
   }
 }
@@ -149,7 +208,7 @@ export function normalizeAccountStorageConfigForWrite(
 function normalizeAccountInfo(raw: Partial<AccountInfo> | undefined) {
   const merged = deepOverride(DEFAULT_ACCOUNT_INFO, raw ?? undefined)
   return {
-    id: coerceNumber(merged.id, 0),
+    id: coerceAccountIdentity(merged.id, ""),
     access_token: coerceString(merged.access_token, ""),
     username: coerceString(merged.username, ""),
     quota: coerceNumber(merged.quota, 0),
@@ -215,6 +274,9 @@ function normalizeCheckInConfig(raw: DeepPartial<CheckInConfig> | undefined) {
  */
 export function normalizeSiteAccount(raw: SiteAccount): SiteAccount {
   const merged = deepOverride<SiteAccount>(DEFAULT_SITE_ACCOUNT, raw)
+  const updatedAt = coerceNumber(merged.updated_at, 0)
+  const rawUserUpdatedAt = (raw as { user_updated_at?: unknown })
+    .user_updated_at
 
   return {
     ...merged,
@@ -236,7 +298,8 @@ export function normalizeSiteAccount(raw: SiteAccount): SiteAccount {
     account_info: normalizeAccountInfo(merged.account_info),
     health: normalizeHealthStatus(merged.health),
     last_sync_time: coerceNumber(merged.last_sync_time, 0),
-    updated_at: coerceNumber(merged.updated_at, 0),
+    updated_at: updatedAt,
+    user_updated_at: coerceNumber(rawUserUpdatedAt, updatedAt),
     created_at: coerceNumber(merged.created_at, 0),
     notes: coerceString(merged.notes, ""),
     tagIds: coerceStringArray(merged.tagIds),
@@ -245,6 +308,7 @@ export function normalizeSiteAccount(raw: SiteAccount): SiteAccount {
       : undefined,
     disabled: merged.disabled === true,
     excludeFromTotalBalance: merged.excludeFromTotalBalance === true,
+    excludeFromTodayIncome: merged.excludeFromTodayIncome === true,
     authType: VALID_AUTH_TYPES.has(merged.authType)
       ? merged.authType
       : AuthTypeEnum.AccessToken,
@@ -259,7 +323,10 @@ export function normalizeSiteAccount(raw: SiteAccount): SiteAccount {
  * structures so downstream reads see stable shapes.
  */
 export function createPersistedSiteAccount(params: {
-  account: Omit<SiteAccount, "id" | "created_at" | "updated_at">
+  account: Omit<
+    SiteAccount,
+    "id" | "created_at" | "updated_at" | "user_updated_at"
+  >
   id: string
   now: number
 }): SiteAccount {
@@ -270,11 +337,20 @@ export function createPersistedSiteAccount(params: {
       id: params.id,
       created_at: params.now,
       updated_at: params.now,
+      user_updated_at: params.now,
     } as DeepPartial<SiteAccount>,
   )
 
   return normalizeSiteAccount(merged)
 }
+
+export const AccountUpdateUserTimestampMode = {
+  Touch: "touch",
+  Preserve: "preserve",
+} as const
+
+export type AccountUpdateUserTimestampMode =
+  (typeof AccountUpdateUserTimestampMode)[keyof typeof AccountUpdateUserTimestampMode]
 
 /**
  * Applies a partial update to a stored `SiteAccount`.
@@ -290,11 +366,15 @@ export function applySiteAccountUpdates(params: {
   account: SiteAccount
   updates: DeepPartial<SiteAccount>
   now: number
+  userTimestampMode: AccountUpdateUserTimestampMode
 }): SiteAccount {
   const normalized = normalizeSiteAccount(params.account)
   const merged = deepOverride<SiteAccount>(normalized, {
     ...params.updates,
     updated_at: params.now,
+    ...(params.userTimestampMode === AccountUpdateUserTimestampMode.Preserve
+      ? {}
+      : { user_updated_at: params.now }),
   } as DeepPartial<SiteAccount>)
   const result = normalizeSiteAccount(merged)
 

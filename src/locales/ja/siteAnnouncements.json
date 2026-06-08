@@ -5,16 +5,27 @@
     "expand": "展開",
     "markAllRead": "すべて既読",
     "markRead": "既読にする",
+    "pollingSettings": "取得設定",
     "viewSource": "サイト公告を表示"
   },
   "badges": {
     "notified": "通知済み",
     "unread": "未読"
   },
-  "description": "バックグラウンドで取得したサイト公告を確認し、未読状態を管理して手動確認を実行できます。",
+  "description": {
+    "disabledSummary": "自動取得は現在オフです。手動確認は引き続き実行できます。",
+    "enabledInterval": "現在の間隔: {{intervalMinutes}} 分ごと。",
+    "enabledSummary": "自動取得は現在オンです。取得したサイト公告を確認し、未読状態を管理して手動確認を実行できます。",
+    "pollingSettingsLink": "自動取得を設定"
+  },
   "empty": {
+    "addAccount": "アカウントを追加",
     "description": "バックグラウンド確認で新しい公告が見つかるとここに表示されます。",
+    "descriptionWhenPollingDisabled": "今すぐ手動確認できます。自動取得は設定で管理できます。",
     "filtered": "現在のフィルターに一致する公告はありません",
+    "noAccounts": "公告確認の前にアカウントを追加してください",
+    "noAccountsDesc": "公告確認には、どのサイトを取得対象にするか判断するため、有効なアカウントが少なくとも 1 つ必要です。",
+    "pollingSettingsLink": "自動取得を設定",
     "title": "公告記録はありません"
   },
   "filters": {
@@ -23,6 +34,7 @@
     "allSiteTypes": "すべての種別",
     "read": "既読",
     "readState": "既読状態",
+    "searchSite": "サイトを検索",
     "site": "サイト",
     "siteType": "サイト種別",
     "unread": "未読"
@@ -31,7 +43,9 @@
   "messages": {
     "checkCompleted": "公告確認が完了しました",
     "checkFailed": "公告確認に失敗しました",
-    "loadFailed": "公告の読み込みに失敗しました"
+    "loadFailed": "公告の読み込みに失敗しました",
+    "markAllReadFailed": "公告をすべて既読にできませんでした",
+    "markReadFailed": "公告を既読にできませんでした"
   },
   "notification": {
     "multipleUnread_other": "{{title}}、ほかに {{count}} 件の未読公告があります",

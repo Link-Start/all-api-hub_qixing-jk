@@ -10,6 +10,7 @@ import { ChannelType, DEFAULT_CHANNEL_FIELDS } from "~/constants/managedSite"
 import { SITE_TYPES } from "~/constants/siteType"
 import { getApiService } from "~/services/apiService"
 import { getManagedSiteService } from "~/services/managedSites/managedSiteService"
+import type { ManagedSiteConfig } from "~/services/managedSites/managedSiteService"
 import {
   getManagedSiteConfigMissingMessage,
   hasUsableManagedSiteChannelKey,
@@ -28,12 +29,24 @@ import { createLogger } from "~/utils/core/logger"
  */
 const logger = createLogger("ChannelFormHook")
 
+const isAccessTokenManagedConfig = (
+  config: ManagedSiteConfig,
+): config is Extract<
+  ManagedSiteConfig,
+  { adminToken: string; userId: string }
+> => "adminToken" in config && "userId" in config
+
 export interface UseChannelFormProps {
   mode: DialogMode
   channel: ManagedSiteChannel | null
   isOpen: boolean
   onClose: () => void
   onSuccess?: (response: any) => void
+  onMutationOutcome?: (outcome: {
+    mode: DialogMode
+    result: "success" | "failure"
+    siteType: string
+  }) => void
   initialValues?: Partial<ChannelFormData>
   initialModels?: string[]
   initialGroups?: string[]
@@ -48,6 +61,7 @@ export interface UseChannelFormProps {
  * @param props.isOpen Whether the dialog is currently visible.
  * @param props.onClose Close callback triggered after saving or cancel.
  * @param props.onSuccess Success callback invoked with the saved channel.
+ * @param props.onMutationOutcome Optional opt-in callback invoked after real save success or failure.
  * @param props.initialValues Prefilled form values supplied externally.
  * @param props.initialModels Prefilled model list for the multiselect.
  * @param props.initialGroups Prefilled group list for the multiselect.
@@ -59,6 +73,7 @@ export function useChannelForm({
   isOpen,
   onClose,
   onSuccess,
+  onMutationOutcome,
   initialValues,
   initialModels,
   initialGroups,
@@ -249,8 +264,10 @@ export function useChannelForm({
         baseUrl: config.baseUrl,
         auth: {
           authType: AuthTypeEnum.AccessToken,
-          userId: config.userId,
-          accessToken: config.token,
+          userId: isAccessTokenManagedConfig(config) ? config.userId : "",
+          accessToken: isAccessTokenManagedConfig(config)
+            ? config.adminToken
+            : "",
         },
       })
 
@@ -373,9 +390,11 @@ export function useChannelForm({
     }
 
     setIsSaving(true)
+    let submissionSiteType: string | null = null
 
     try {
       const service = await getManagedSiteService()
+      submissionSiteType = service.siteType
       const apiConfig = await service.getConfig()
       if (!apiConfig) {
         throw new Error(
@@ -399,20 +418,10 @@ export function useChannelForm({
             group: formData.groups.join(","),
           }
         })()
-        response = await service.updateChannel(
-          apiConfig.baseUrl,
-          apiConfig.token,
-          apiConfig.userId,
-          updatePayload,
-        )
+        response = await service.updateChannel(apiConfig, updatePayload)
       } else {
         const payload = service.buildChannelPayload(formData)
-        response = await service.createChannel(
-          apiConfig.baseUrl,
-          apiConfig.token,
-          apiConfig.userId,
-          payload,
-        )
+        response = await service.createChannel(apiConfig, payload)
       }
 
       if (response.success) {
@@ -426,6 +435,11 @@ export function useChannelForm({
           message: response.message || fallbackMessage,
         }
 
+        onMutationOutcome?.({
+          mode,
+          result: "success",
+          siteType: service.siteType,
+        })
         onSuccess?.(normalizedResponse)
         onClose()
         resetForm()
@@ -434,6 +448,16 @@ export function useChannelForm({
       }
     } catch (error: any) {
       logger.error("Save failed", error)
+      const siteType =
+        submissionSiteType ??
+        (typeof managedSiteType === "string"
+          ? managedSiteType
+          : SITE_TYPES.NEW_API)
+      onMutationOutcome?.({
+        mode,
+        result: "failure",
+        siteType,
+      })
       toast.error(
         t("channelDialog:messages.saveFailed", {
           error: error.message,

@@ -1,5 +1,19 @@
 # Repository Guidelines
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs for this repo live in GitHub Issues for `qixing-jk/all-api-hub`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default canonical triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: read root `CONTEXT.md` and root `docs/adr/` when present. See `docs/agents/domain.md`.
+
 ## Project Structure & Module Organization
 
 ### Source Modules
@@ -30,14 +44,17 @@ When working on a site type:
 ### Relationships
 
 - **One API (`one-api`)** is the original upstream family; many compatible deployments use `src/services/apiService/common/`.
-- **New API (`new-api`)** is downstream of One API and mainly uses `src/services/apiService/common/`.
-- **Veloera (`Veloera`)** and several other supported variants are downstream of New API; Veloera keeps dedicated overrides in `src/services/apiService/veloera/`.
+- **New API (`new-api`)** is a One API downstream family with direct support in this repo and also relies heavily on `src/services/apiService/common/`.
+- **Veloera (`Veloera`)** is downstream of New API and keeps dedicated overrides in `src/services/apiService/veloera/`.
 - **OneHub (`one-hub`)** is downstream of One API with a substantially different surface.
 - **DoneHub (`done-hub`)** is downstream of OneHub and currently layers `src/services/apiService/doneHub/` on top of `src/services/apiService/oneHub/` in `src/services/apiService/index.ts`.
+- **AnyRouter (`anyrouter`)** and **WONG公益站 (`wong-gongyi`)** have dedicated API overrides plus site-specific check-in handling; do not describe them as generic `new-api` aliases without verifying the target deployment.
+- **`v-api`** documents its backend as based on One API with some New API functionality; treat it as a One-API derivative/New API-compatible bucket rather than a pure New API fork.
+- **`Super-API`, `Rix-Api`, and Neo-API (`neo-Api` in code)** are treated as New API-family variants or compatibility buckets, but their degree of downstream modification varies by deployment and should not be guessed without upstream docs or observed API behavior.
+- **VoAPI (`VoAPI`)** is supported as an account site type for older compatible deployments; older VoAPI support is treated as New API-family compatibility, while newer VoAPI should be treated as incompatible with the existing common adapter unless the target deployment proves otherwise.
 - **Octopus (`octopus`)** has dedicated managed-site logic and API overrides in `src/services/apiService/octopus/` plus related provider logic under `src/services/managedSites/providers/`.
 - **AxonHub (`axonhub`)** is not One-API/New-API compatible; it uses dedicated GraphQL admin integration in `src/services/apiService/axonHub/` plus a managed-site provider in `src/services/managedSites/providers/axonHub.ts`.
 - **Claude Code Hub (`claude-code-hub`)** is not One-API/New-API compatible; it uses dedicated admin/provider integration in `src/services/apiService/claudeCodeHub/` plus a managed-site provider in `src/services/managedSites/providers/claudeCodeHub.ts`.
-- **AnyRouter (`anyrouter`)** and **WONG公益站 (`wong-gongyi`)** have custom check-in handling.
 - **Sub2API (`sub2api`)** is not One-API/New-API compatible; it has a different auth model and API surface.
 - **AIHubMix (`AIHubMix`)** is an account-only site type with dedicated overrides in `src/services/apiService/aihubmix/`. Always use `https://aihubmix.com` as the API origin, including accounts imported from `console.aihubmix.com`. Auto-detect may use logged-in web endpoints (`/call/usr/self`, `/call/usr/tkn`) to obtain the account access token, but saved accounts should operate as access-token accounts. Token-authenticated AIHubMix API requests send raw `Authorization: <access_token>` without a `Bearer` prefix. AIHubMix does not support revealing a saved API key after creation; list/detail/search responses may contain masked keys, and `resolveApiTokenKey` must not fall back to common `/api/token/{id}/key` behavior.
 
@@ -52,12 +69,12 @@ When working on a site type:
 - `axonhub`
 - `claude-code-hub`
 
-Do not assume `one-hub` or every New-API-like deployment is a managed site without checking the current type definition.
+Do not assume `one-hub`, `anyrouter`, `wong-gongyi`, VoAPI, `v-api`, or the New API-family compatibility buckets above are managed sites without checking the current type definition.
 
 ### Backend Notes
 
 - Shared One-API/New-API-family helpers live in `src/services/apiService/common/`.
-- Compatible user-id headers are handled in `src/services/apiService/common/utils.ts` and related helpers.
+- Compatible user-id headers are handled in `src/services/apiService/common/compatHeaders.ts` and related helpers.
 - AxonHub keeps its own admin integration under `src/services/apiService/axonHub/` and managed-site provider logic under `src/services/managedSites/providers/axonHub.ts`.
 - Claude Code Hub keeps its own admin/provider integration under `src/services/apiService/claudeCodeHub/` and managed-site provider logic under `src/services/managedSites/providers/claudeCodeHub.ts`.
 - AIHubMix keeps account-only API overrides under `src/services/apiService/aihubmix/`; do not alias it to `new-api` or add managed-site/provider integration unless upstream support is explicitly verified.
@@ -70,6 +87,10 @@ When the user names a backend without a deployment URL or fork, treat these as t
 - One API: `https://github.com/songquanpeng/one-api`
 - New API: `https://github.com/QuantumNous/new-api`
 - Veloera: `https://github.com/Veloera/Veloera`
+- V-API: `https://github.com/popjane/v-api`
+- VoAPI: `https://github.com/VoAPI/VoAPI`
+- Super-API: `https://github.com/SuperAI-Api/Super-API`
+- AnyRouter docs: `https://docs.anyrouter.top/`
 - OneHub: `https://github.com/MartialBE/one-hub`
 - DoneHub: `https://github.com/deanxv/done-hub`
 - AxonHub: `https://github.com/looplj/axonhub`
@@ -131,9 +152,35 @@ Node.js version from `.nvmrc` and pnpm 10+.
 ### Implementation Strategy
 
 - Inspect nearby existing abstractions before planning or implementing new helpers, modules, or UI patterns; prefer reuse or small extensions over parallel implementations.
+- For non-trivial behavior that is already well solved by maintained libraries, explicitly consider whether adding or reusing a third-party dependency is safer than implementing from scratch. Favor mature dependencies for accessibility-heavy UI primitives, parsing/serialization, protocol clients, validators, drag/drop, virtualization, date/time handling, and state-machine-like workflows when they reduce project risk.
+- Before adding a dependency in this repo, check existing dependencies first, use `pnpm` so `pnpm-lock.yaml` stays authoritative, and account for extension bundle/runtime impact. Dependency additions or generated lockfile updates are task-scoped when they are required by the selected implementation.
 - If a string participates in runtime branching, shared protocol values, reusable state mapping, or canonical external URLs, do not duplicate it as a bare literal across modules. Prefer a single runtime constant source, and derive types from that source when both runtime and type-level usage are needed.
 - Normalize data at the highest reliable boundary, then pass the normalized shape downward. Once a contract is established, prefer required types in downstream helpers and components instead of reintroducing optional fallbacks at each leaf.
 - Keep fallback behavior close to the layer that defines the rule or owns the data contract. Do not duplicate the same fallback across multiple consumers merely to compensate for weak typing or incomplete normalization upstream.
+
+### UI Component Dependencies
+
+- This repo has shadcn configured via `components.json`. When adding a new shadcn-supported primitive, prefer `pnpm shadcn add <component> --yes` or `pnpm shadcn add <component> --overwrite --yes` when replacing an existing local baseline.
+- Treat the shadcn CLI output as the baseline. Adapt it only as needed for repo conventions: `~/` aliases, `src/components/ui` barrel exports, `cn`, design tokens, floating-layer/z-index behavior, i18n, lint/JSDoc requirements, and component-specific UX.
+- Do not hand-copy shadcn component templates when the CLI can generate them. If the CLI fails, classify whether the failure is tooling, network, auth, package-manager, or registry related; clean unintended partial outputs before retrying or falling back.
+- Do not remove or rewrite shadcn-added dependencies merely to reduce lockfile noise unless dependency cleanup is explicitly in scope. If a generated dependency looks excessive, call it out and keep the task moving unless it creates a concrete build, bundle, license, or runtime problem.
+
+### Feature Observability and Discoverability
+
+Treat telemetry and settings discoverability as related release-readiness checks for new or materially changed product behavior. They answer different questions and should be evaluated separately.
+
+#### Telemetry
+
+- For new or materially changed product behavior, make an explicit telemetry decision before handoff: `none`, `reuse existing`, `add action`, `add settings snapshot`, or `add result/summary event`. Do not default to silent feature work.
+- Add or update product analytics for new user-visible actions, settings, async/background flows, automatic detection branches, confirmation/cancel paths, shortcuts, and recovery actions when the data is needed to understand adoption, success, failure, skipped states, or funnel drop-off.
+- Keep analytics privacy-safe: record controlled booleans, enums, counts, durations, and status categories only. Do not record URLs, hosts, paths, raw IDs, names, API keys, tokens, cookies, prompts, responses, user-entered text, backend messages, or stack traces.
+- When adding analytics fields, update the typed event payload, privacy allow-list/sanitizer, snapshot builders, and focused tests together. If telemetry is intentionally not added, state the reason in the final handoff.
+
+#### Settings Search and Deep Links
+
+- When adding, renaming, moving, or deleting settings UI, update settings search definitions and deep-link targets in the same change. Check the relevant `*.search.ts`, `searchTargets.ts`, target `id` attributes, URL `anchor` parameters, and `ANCHOR_TO_TAB` mappings when heading anchors or cross-entrypoint navigation are involved.
+- Prefer a single exported target-id constant for settings controls that are used by both rendered DOM ids and search/navigation definitions. Do not duplicate anchor strings across UI, search index, tests, or runtime navigation.
+- Cover settings search and anchor behavior with focused unit/component tests by default. Add Playwright E2E only when the risk depends on real extension browser behavior rather than search registry data or route parameter handling.
 
 ### Progressive Refactoring
 
@@ -149,12 +196,16 @@ Node.js version from `.nvmrc` and pnpm 10+.
 - Add brief inline comments or short code-block comments when non-obvious intent, invariants, edge cases, or protocol/browser constraints need clarification; do not narrate obvious code.
 - For user-visible success/error feedback, do not rely solely on backend `message` fields; provide a local fallback when responses may be empty, unstable, or not suitable for direct display.
 
-### Validation Floor
+### Validation Strategy
 
-- The minimum validation bar is the repo's `pre-commit`-equivalent validation flow when available; if no such flow exists, fall back to `pnpm lint` plus the repo's affected-file or related-test validation command for the touched files.
-- In this repo, the default staged validation entrypoint is `pnpm run validate:staged`; do not treat bare `pnpm lint-staged` as the full pre-commit flow because it skips the separate staged i18n guard.
-- Do not treat `pnpm knip` as the default minimum for every task. Add it when changes can affect the module/dependency graph, such as `package.json` or lockfile edits, `knip.ts` edits, file moves/renames/deletions, new or removed exports/barrels, or dynamic wiring changes that may leave dead files, exports, or dependencies behind.
-- When the repo defines a `pre-commit` validation flow, prefer running the equivalent `pre-commit` checks directly without creating a commit instead of assembling a hand-picked validation command set.
+Use validation as progressive gates:
+
+- **Focused checks**: Start with the repo-defined affected-file or `related` validation flow, then broaden only if the change is cross-cutting. For TS/TSX edits, prefer `vitest related --run` style checks over a manually assembled test file list.
+- **Commit gate**: Before committing or handing completed local work to the user, use the repo's pre-commit-equivalent flow when available. In this repo, that is `pnpm run validate:staged`; stage only task-scoped files, remember it validates only those files, and do not treat bare `pnpm lint-staged` or a no-staged-files result as equivalent.
+- **Formatting**: Do not treat standalone Prettier checks as correctness validation. Use Prettier directly only when formatting is the task, no commit will be created, a hook failed because of formatting, or pre-formatting is needed to reduce review noise; prefer `prettier --write` in those cases.
+- **Push gate**: Before pushing, opening a PR, updating a PR branch, or otherwise handing work to a remote flow, run `pnpm run validate:push` when task-scoped changes can affect TypeScript, exports, dependencies, generated type wiring, shared runtime contracts, or repo structure. This is the preferred pre-push-equivalent gate for changes that need both `compile` and `knip`; do not run `validate:push` or `pnpm knip` by default for every small change.
+- **Push failures**: If `pnpm run validate:push` or the actual pre-push hook fails, do not report the remote handoff as complete. Classify the failure as code, tooling, environment, auth, network, or permission related; fix code and tooling failures before retrying the push, and report environmental blockers with the exact remaining impact.
+- **Sub-agent handoffs**: Sub-agents may hand off partial implementation, investigation findings, or review notes without running `validate:staged`, pre-commit hooks, or `validate:push` unless their assigned scope explicitly requires it. They should report what they completed, files touched, validation run if any, known gaps, and risks; the coordinator is responsible for final task-scoped validation before committing, handing work to the user, pushing, or updating a PR branch.
 
 ## Testing Guidelines
 
@@ -172,13 +223,6 @@ Node.js version from `.nvmrc` and pnpm 10+.
 - Do not stop at `happy path` coverage. For added or changed executable logic, identify and cover the most relevant `edge cases`, especially empty or partial inputs, invalid values, boundary conditions, backend error or empty responses, browser API unavailability, permission or environment limits, site-type compatibility branches, cache or persistence failures, and repeated or concurrent triggers.
 - If an important `edge case` is not practical to automate in this change, call out the uncovered scenario, why it remains uncovered, and the residual risk before handoff.
 
-### Validation Strategy
-
-- Start with the repo-defined `pre-commit`, affected-file, or `related` validation flow for the touched files, then broaden only if the change is cross-cutting.
-- For TS/TSX edits in this repo, treat `pnpm run validate:staged` / the Husky `pre-commit` path as the default affected validation flow and prefer `vitest related --run` style checks over a manually assembled test file list.
-- When adding or reshaping shared exports, provider/context modules, public test utilities, runtime constant sets, or other structural wiring, prefer `pnpm run validate:push` before handoff instead of manually assembling `compile` + `knip`.
-- Do not default to `pnpm run validate:push` for every small change; use it when the change is structural, cross-cutting, or likely to affect type/dependency/export analysis beyond the touched file.
-
 ### E2E and Broad Validation
 
 - Do not add Playwright E2E coverage mechanically for every feature commit. Prefer Vitest or Testing Library for pure functions, protocol adapters, formatting/parsing logic, copy-only changes, style-only changes, and isolated component state.
@@ -186,12 +230,11 @@ Node.js version from `.nvmrc` and pnpm 10+.
 - Do not use E2E to exhaustively cover UI state matrices. For pages with many filters, tabs, empty states, sort modes, or control variants, keep those combinations in Vitest and reserve E2E for one representative browser-level path.
 - For any new or materially changed user-facing behavior, make an explicit E2E decision before handoff: add/update an E2E test, identify the existing E2E flow that already covers the risk, or state why lower-level tests are the right coverage layer.
 - Bias toward adding or updating Playwright E2E coverage only when the main risk appears in a real extension browser context. This includes cross-entrypoint behavior across popup, options, sidepanel, background, content scripts, runtime messages, tabs, windows, or extension storage; navigation, hash routing, lazy-loaded entrypoints, first-load behavior, and deep links; browser APIs or permissions such as notifications, downloads, clipboard, context menus, tab/window handling, optional permissions, service workers, or extension build output; complete critical workflows whose failure would not be visible in component tests; and interaction risks involving dialogs, popovers, floating layers, drag/drop, toasts, or confirm flows.
+- For Playwright E2E selectors, prefer stable feature-local or entrypoint-local `testIds.ts` constants for workflow-critical elements. If an E2E flow needs to locate, disambiguate, or observe an element and the existing UI does not expose a suitable stable selector, add a narrowly scoped test id as part of the same change instead of relying on positional selectors, mutable visible copy, CSS selectors, or incidental DOM ids. Keep user-visible text assertions for user-facing outcomes, not for locating critical controls.
 - Add or update E2E coverage for regressions that lower-level tests previously missed, especially when the failure involved browser runtime behavior, entrypoint integration, persisted state, or a complete user task.
 - For larger PRs that add a user-visible workflow, prefer one stable happy-path E2E scenario over many narrow UI assertions. If an existing E2E already boots the relevant entrypoint and exercises a representative path, extend Vitest coverage for additional states instead of adding another browser scenario.
 - Final handoffs for user-facing behavior changes should include the E2E decision and the validation actually run.
 - Temporary E2E tests created only for self-verification should be deleted before handoff by default. Keep them only when they are deterministic, reusable, and provide clear long-term regression value; if retention is genuinely ambiguous, explain the tradeoff and ask before keeping them.
-- If the change can invalidate unused-file, export, or dependency analysis, broaden validation to include `pnpm knip`; use `pnpm run validate:push` when you want the full local pre-push-equivalent gate instead of assembling `compile` + `knip` manually.
-
 ### Shared Surface Changes
 
 - If a change modifies shared component or hook props, validation must cover direct render/use sites and standalone harness tests that instantiate the changed API surface.

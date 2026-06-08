@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import { ChannelConfigMessageTypes } from "~/services/managedSites/channelConfigMessaging"
 import {
   channelConfigStorage,
-  handleChannelConfigMessage,
+  resolveChannelConfigGetMessage,
+  resolveChannelConfigUpsertFiltersMessage,
+  setupChannelConfigMessagingListeners,
 } from "~/services/managedSites/channelConfigStorage"
 
 const storageData = new Map<string, any>()
 
-const { mockSafeRandomUUID } = vi.hoisted(() => ({
+const { mockOnChannelConfigMessage, mockSafeRandomUUID } = vi.hoisted(() => ({
+  mockOnChannelConfigMessage: vi.fn(() => vi.fn()),
   mockSafeRandomUUID: vi.fn(() => "generated-filter-id"),
 }))
 
@@ -29,6 +32,20 @@ vi.mock("@plasmohq/storage", () => {
 vi.mock("~/utils/core/identifier", () => ({
   safeRandomUUID: mockSafeRandomUUID,
 }))
+
+vi.mock(
+  "~/services/managedSites/channelConfigMessaging",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("~/services/managedSites/channelConfigMessaging")
+      >()
+    return {
+      ...actual,
+      onChannelConfigMessage: mockOnChannelConfigMessage,
+    }
+  },
+)
 
 describe("channelConfigStorage", () => {
   beforeEach(() => {
@@ -305,39 +322,29 @@ describe("channelConfigStorage", () => {
     setSpy.mockRestore()
   })
 
-  it("handles get and upsert runtime messages", async () => {
-    const getResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigGet,
-        channelId: 12,
-      },
-      getResponse,
-    )
+  it("handles typed get and upsert runtime messages", async () => {
+    const getResponse = await resolveChannelConfigGetMessage({
+      channelId: 12,
+    })
 
-    expect(getResponse).toHaveBeenCalledWith({
+    expect(getResponse).toEqual({
       success: true,
       data: expect.objectContaining({ channelId: 12 }),
     })
 
-    const upsertResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigUpsertFilters,
-        channelId: 12,
-        filters: [
-          {
-            name: " Include GPT ",
-            pattern: "gpt",
-            isRegex: false,
-            enabled: true,
-          },
-        ],
-      },
-      upsertResponse,
-    )
+    const upsertResponse = await resolveChannelConfigUpsertFiltersMessage({
+      channelId: 12,
+      filters: [
+        {
+          name: " Include GPT ",
+          pattern: "gpt",
+          isRegex: false,
+          enabled: true,
+        },
+      ],
+    })
 
-    expect(upsertResponse).toHaveBeenCalledWith({
+    expect(upsertResponse).toEqual({
       success: true,
       data: [
         expect.objectContaining({
@@ -349,6 +356,23 @@ describe("channelConfigStorage", () => {
         }),
       ],
     })
+  })
+
+  it("registers typed channel config listeners once", () => {
+    setupChannelConfigMessagingListeners()
+    setupChannelConfigMessagingListeners()
+
+    expect(mockOnChannelConfigMessage).toHaveBeenCalledTimes(2)
+    expect(mockOnChannelConfigMessage).toHaveBeenNthCalledWith(
+      1,
+      ChannelConfigMessageTypes.Get,
+      expect.any(Function),
+    )
+    expect(mockOnChannelConfigMessage).toHaveBeenNthCalledWith(
+      2,
+      ChannelConfigMessageTypes.UpsertFilters,
+      expect.any(Function),
+    )
   })
 
   it("sanitizes empty imports and preserves explicit rule timestamps when provided", async () => {
@@ -402,23 +426,17 @@ describe("channelConfigStorage", () => {
   })
 
   it("rejects invalid message payloads and unknown actions", async () => {
-    const invalidIdResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigGet,
+    await expect(
+      resolveChannelConfigGetMessage({
         channelId: 0,
-      },
-      invalidIdResponse,
-    )
-    expect(invalidIdResponse).toHaveBeenCalledWith({
+      }),
+    ).resolves.toEqual({
       success: false,
       error: "channelId is required",
     })
 
-    const invalidRegexResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigUpsertFilters,
+    await expect(
+      resolveChannelConfigUpsertFiltersMessage({
         channelId: 12,
         filters: [
           {
@@ -427,23 +445,29 @@ describe("channelConfigStorage", () => {
             isRegex: true,
           },
         ],
-      },
-      invalidRegexResponse,
-    )
-    expect(invalidRegexResponse).toHaveBeenCalledWith({
+      }),
+    ).resolves.toEqual({
       success: false,
       error: expect.stringContaining("Invalid regex pattern"),
     })
+  })
 
-    const unknownActionResponse = vi.fn()
-    await handleChannelConfigMessage(
-      { action: "channelConfig:unknown" },
-      unknownActionResponse,
-    )
-    expect(unknownActionResponse).toHaveBeenCalledWith({
+  it("returns a typed failure when filter persistence is rejected", async () => {
+    const saveSpy = vi
+      .spyOn(channelConfigStorage, "upsertFilters")
+      .mockResolvedValueOnce(false)
+
+    await expect(
+      resolveChannelConfigUpsertFiltersMessage({
+        channelId: 12,
+        filters: [],
+      }),
+    ).resolves.toEqual({
       success: false,
-      error: "Unknown action",
+      error: "Failed to save channel filters",
     })
+
+    saveSpy.mockRestore()
   })
 
   it("normalizes probe rules and drops imported credential fields", async () => {
@@ -495,24 +519,18 @@ describe("channelConfigStorage", () => {
   })
 
   it("surfaces non-array and missing-field filter validation errors through the message handler", async () => {
-    const nonArrayResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigUpsertFilters,
+    await expect(
+      resolveChannelConfigUpsertFiltersMessage({
         channelId: 12,
-        filters: "not-an-array",
-      },
-      nonArrayResponse,
-    )
-    expect(nonArrayResponse).toHaveBeenCalledWith({
+        filters: "not-an-array" as any,
+      }),
+    ).resolves.toEqual({
       success: false,
       error: "Filters must be an array",
     })
 
-    const missingPatternResponse = vi.fn()
-    await handleChannelConfigMessage(
-      {
-        action: RuntimeActionIds.ChannelConfigUpsertFilters,
+    await expect(
+      resolveChannelConfigUpsertFiltersMessage({
         channelId: 12,
         filters: [
           {
@@ -520,10 +538,8 @@ describe("channelConfigStorage", () => {
             pattern: "   ",
           },
         ],
-      },
-      missingPatternResponse,
-    )
-    expect(missingPatternResponse).toHaveBeenCalledWith({
+      }),
+    ).resolves.toEqual({
       success: false,
       error: "Filter pattern is required",
     })

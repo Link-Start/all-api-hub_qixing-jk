@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
+import {
+  getSiteBookmarkListItemTestId,
+  SITE_BOOKMARKS_TEST_IDS,
+} from "~/features/SiteBookmarks/testIds"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import type { SiteBookmark } from "~/types"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
@@ -88,8 +92,8 @@ async function expectBrowserTabOpened(
 
 function getBookmarkRow(page: Page, name: string) {
   return page
-    .getByRole("button", { name })
-    .locator("xpath=ancestor::div[contains(@class, 'group')][1]")
+    .getByTestId(new RegExp(`^${getSiteBookmarkListItemTestId("")}`))
+    .filter({ hasText: name })
 }
 
 async function getBookmarkButtonY(page: Page, name: string) {
@@ -105,7 +109,7 @@ async function getBookmarkButtonY(page: Page, name: string) {
 async function openBookmarkActionsMenu(page: Page, name: string) {
   const row = getBookmarkRow(page, name)
   await row.hover()
-  await row.getByRole("button", { name: "More" }).click()
+  await row.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowMoreActionsButton).click()
 }
 
 async function dragBookmarkHandle(
@@ -158,9 +162,9 @@ test("adds a bookmark from bookmark management and persists it", async ({
   )
   await waitForExtensionRoot(page)
 
-  await page.getByRole("button", { name: "Add Bookmark" }).click()
+  await page.getByTestId(SITE_BOOKMARKS_TEST_IDS.addButton).click()
 
-  const dialog = page.getByRole("dialog")
+  const dialog = page.getByTestId(SITE_BOOKMARKS_TEST_IDS.dialog)
   await expect(dialog.getByPlaceholder("e.g. Admin Console")).toBeVisible()
   await dialog.getByPlaceholder("e.g. Admin Console").fill("Docs Portal")
   await dialog
@@ -169,7 +173,7 @@ test("adds a bookmark from bookmark management and persists it", async ({
   await dialog
     .getByPlaceholder("Optional notes...")
     .fill("Primary documentation entrypoint")
-  await dialog.getByRole("button", { name: "Add Bookmark" }).click()
+  await dialog.getByTestId(SITE_BOOKMARKS_TEST_IDS.dialogSaveButton).click()
 
   await expect(page.getByRole("button", { name: "Docs Portal" })).toBeVisible()
 
@@ -207,7 +211,9 @@ test("opens a stored bookmark target from bookmark management", async ({
   await waitForExtensionRoot(page)
 
   await expect(page.getByRole("button", { name: "Managed Docs" })).toBeVisible()
-  await page.getByRole("button", { name: "Managed Docs" }).click()
+  const row = getBookmarkRow(page, "Managed Docs")
+  await row.hover()
+  await row.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowOpenButton).click()
 
   await expectBrowserTabOpened(
     serviceWorker,
@@ -235,10 +241,11 @@ test("edits a stored bookmark from bookmark management and persists the change",
   )
   await waitForExtensionRoot(page)
 
-  await page.getByText("Original Bookmark").hover()
-  await page.getByRole("button", { name: "Edit" }).click()
+  const row = getBookmarkRow(page, "Original Bookmark")
+  await row.hover()
+  await row.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowEditButton).click()
 
-  const dialog = page.getByRole("dialog")
+  const dialog = page.getByTestId(SITE_BOOKMARKS_TEST_IDS.dialog)
   await expect(dialog.getByPlaceholder("e.g. Admin Console")).toBeVisible()
 
   await dialog.getByPlaceholder("e.g. Admin Console").fill("Updated Bookmark")
@@ -246,7 +253,7 @@ test("edits a stored bookmark from bookmark management and persists the change",
     .getByPlaceholder("https://example.com/...")
     .fill("https://example.com/updated")
   await dialog.getByPlaceholder("Optional notes...").fill("Updated note")
-  await dialog.getByRole("button", { name: "Save" }).click()
+  await dialog.getByTestId(SITE_BOOKMARKS_TEST_IDS.dialogSaveButton).click()
 
   await expect(
     page.getByRole("button", { name: "Updated Bookmark" }),
@@ -360,7 +367,7 @@ test("pins and unpins a stored bookmark while persisting pinned order", async ({
   )
 
   await openBookmarkActionsMenu(page, "Zulu Bookmark")
-  await page.getByText("Pin", { exact: true }).click()
+  await page.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowPinToggleMenuItem).click()
 
   await expect
     .poll(async () => {
@@ -374,7 +381,7 @@ test("pins and unpins a stored bookmark while persisting pinned order", async ({
   )
 
   await openBookmarkActionsMenu(page, "Zulu Bookmark")
-  await page.getByText("Unpin", { exact: true }).click()
+  await page.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowPinToggleMenuItem).click()
 
   await expect
     .poll(async () => {
@@ -411,13 +418,12 @@ test("deletes a stored bookmark from bookmark management and removes it from sto
     page.getByRole("button", { name: "Delete Bookmark" }),
   ).toBeVisible()
 
-  await page.getByText("Delete Bookmark").hover()
-  await page.getByRole("button", { name: "More" }).click()
-  await page.getByText("Delete", { exact: true }).click()
+  await openBookmarkActionsMenu(page, "Delete Bookmark")
+  await page.getByTestId(SITE_BOOKMARKS_TEST_IDS.rowDeleteMenuItem).click()
 
   const dialog = page.getByRole("dialog")
   await expect(dialog.getByText("Delete bookmark?")).toBeVisible()
-  await dialog.getByRole("button", { name: "Delete" }).click()
+  await dialog.getByTestId(SITE_BOOKMARKS_TEST_IDS.deleteConfirmButton).click()
 
   await expect(
     page.getByRole("button", { name: "Delete Bookmark" }),

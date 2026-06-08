@@ -1,5 +1,6 @@
-import { POPUP_PAGE_PATH } from "~/constants/extensionPages"
+import { OPTIONS_PAGE_PATH, POPUP_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { BASIC_SETTINGS_TEST_IDS } from "~/features/BasicSettings/testIds"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
 import {
   forceExtensionLanguage,
@@ -7,7 +8,46 @@ import {
   stubLlmMetadataIndex,
   waitForExtensionPage,
 } from "~~/e2e/utils/commonUserFlows"
+import { getServiceWorker } from "~~/e2e/utils/extensionState"
 import { waitForExtensionRoot } from "~~/e2e/utils/lazyLoading"
+
+type ExtensionTabSnapshot = {
+  id?: number
+  url?: string
+}
+
+async function queryOptionsTabs(
+  serviceWorker: Awaited<ReturnType<typeof getServiceWorker>>,
+  extensionId: string,
+): Promise<ExtensionTabSnapshot[]> {
+  return await serviceWorker.evaluate(
+    async ({ targetExtensionId, optionsPath }) => {
+      const chromeApi = (globalThis as any).chrome
+      const tabs = await chromeApi.tabs.query({})
+
+      return tabs
+        .filter((tab: { url?: string }) => {
+          if (!tab.url) return false
+
+          try {
+            const url = new URL(tab.url)
+            return (
+              url.protocol === "chrome-extension:" &&
+              url.host === targetExtensionId &&
+              url.pathname === `/${optionsPath}`
+            )
+          } catch {
+            return false
+          }
+        })
+        .map((tab: { id?: number; url?: string }) => ({
+          id: tab.id,
+          url: tab.url,
+        }))
+    },
+    { targetExtensionId: extensionId, optionsPath: OPTIONS_PAGE_PATH },
+  )
+}
 
 test.beforeEach(async ({ context, page }) => {
   installExtensionPageGuards(page)
@@ -38,7 +78,87 @@ test("opens basic settings from the popup header", async ({
   await expect(targetPage).toHaveURL(/options\.html#basic$/)
   await expect(
     targetPage
-      .getByTestId("basic-settings-page")
+      .getByTestId(BASIC_SETTINGS_TEST_IDS.page)
+      .getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible()
+})
+
+test("reuses an already-open settings tab when opening settings from the popup", async ({
+  context,
+  extensionId,
+  page,
+}) => {
+  const serviceWorker = await getServiceWorker(context)
+  const existingOptionsUrl = `chrome-extension://${extensionId}/${OPTIONS_PAGE_PATH}#${MENU_ITEM_IDS.BASIC}`
+
+  await page.goto(existingOptionsUrl)
+  await waitForExtensionRoot(page)
+  await expect(
+    page
+      .getByTestId(BASIC_SETTINGS_TEST_IDS.page)
+      .getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible()
+
+  const initialOptionsTabs = await queryOptionsTabs(serviceWorker, extensionId)
+  const existingOptionsTab = initialOptionsTabs.find(
+    (tab) => tab.url === existingOptionsUrl,
+  )
+
+  expect(existingOptionsTab?.id).toEqual(expect.any(Number))
+
+  const popupPage = await context.newPage()
+  installExtensionPageGuards(popupPage)
+  await forceExtensionLanguage(popupPage, "en")
+  await popupPage.goto(`chrome-extension://${extensionId}/${POPUP_PAGE_PATH}`)
+  await waitForExtensionRoot(popupPage)
+
+  await popupPage.getByRole("button", { name: "Settings" }).click()
+
+  await expect
+    .poll(async () => {
+      const optionsTabs = await queryOptionsTabs(serviceWorker, extensionId)
+      const reusedTab = optionsTabs.find(
+        (tab) => tab.id === existingOptionsTab?.id,
+      )
+
+      if (!reusedTab?.url) {
+        return {
+          count: optionsTabs.length,
+          hash: "",
+          hasRefresh: false,
+          hasTimestamp: false,
+          reused: false,
+        }
+      }
+
+      const url = new URL(reusedTab.url)
+
+      return {
+        count: optionsTabs.length,
+        hash: url.hash,
+        hasRefresh: url.searchParams.get("refresh") === "true",
+        hasTimestamp: Boolean(url.searchParams.get("t")),
+        reused: true,
+      }
+    })
+    .toEqual({
+      count: initialOptionsTabs.length,
+      hash: `#${MENU_ITEM_IDS.BASIC}`,
+      hasRefresh: true,
+      hasTimestamp: true,
+      reused: true,
+    })
+
+  await expect(page).toHaveURL((url) => {
+    return (
+      url.hash === `#${MENU_ITEM_IDS.BASIC}` &&
+      url.searchParams.get("refresh") === "true" &&
+      Boolean(url.searchParams.get("t"))
+    )
+  })
+  await expect(
+    page
+      .getByTestId(BASIC_SETTINGS_TEST_IDS.page)
       .getByRole("heading", { name: "Settings", exact: true }),
   ).toBeVisible()
 })

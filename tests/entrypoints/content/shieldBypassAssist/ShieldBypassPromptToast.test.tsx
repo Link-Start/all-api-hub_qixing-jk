@@ -3,9 +3,20 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ShieldBypassPromptToast } from "~/entrypoints/content/shieldBypassAssist/components/ShieldBypassPromptToast"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { render, screen } from "~~/tests/test-utils/render"
 
-const { translationMap } = vi.hoisted(() => ({
+const {
+  translationMap,
+  trackStartedMock,
+  recordDismissedMock,
+  recordSettingsVisitedMock,
+} = vi.hoisted(() => ({
   translationMap: {
     titlePrefix: "Shield Mode",
     "toast.title": "Shield Prompt",
@@ -13,6 +24,18 @@ const { translationMap } = vi.hoisted(() => ({
     "toast.actions.dismiss": "Dismiss",
     "toast.actions.openSettings": "Open settings",
   } as Record<string, string>,
+  trackStartedMock: vi.fn(),
+  recordDismissedMock: vi.fn(),
+  recordSettingsVisitedMock: vi.fn(),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionStarted: trackStartedMock,
+}))
+
+vi.mock("~/services/productAnalytics/shieldBypassSummary", () => ({
+  recordShieldBypassPromptDismissed: recordDismissedMock,
+  recordShieldBypassSettingsVisited: recordSettingsVisitedMock,
 }))
 
 vi.mock("react-i18next", async (importOriginal) => {
@@ -28,6 +51,8 @@ vi.mock("react-i18next", async (importOriginal) => {
 
 describe("ShieldBypassPromptToast", () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    trackStartedMock.mockResolvedValue(undefined)
     translationMap.titlePrefix = "Shield Mode"
     translationMap["toast.title"] = "Shield Prompt"
     translationMap["toast.body"] = "Complete the browser verification first."
@@ -85,6 +110,20 @@ describe("ShieldBypassPromptToast", () => {
 
     expect(onDismiss).toHaveBeenCalledTimes(1)
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
+    expect(recordDismissedMock).toHaveBeenCalledTimes(1)
+    expect(recordSettingsVisitedMock).toHaveBeenCalledTimes(1)
+    expect(trackStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ShieldBypassPromptDismissed,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentShieldBypassPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+    })
+    expect(trackStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ShieldBypassAssist,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ShieldBypassSettingsVisited,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentShieldBypassPromptToast,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+    })
 
     unmount()
 

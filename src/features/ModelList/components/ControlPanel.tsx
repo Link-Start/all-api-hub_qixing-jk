@@ -20,6 +20,7 @@ import {
   SearchableSelect,
   Switch,
 } from "~/components/ui"
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
 import {
   MODEL_LIST_BILLING_MODES,
   type ModelListBillingMode,
@@ -37,6 +38,18 @@ import {
   MODEL_LIST_SORT_MODES,
   type ModelListSortMode,
 } from "~/features/ModelList/sortModes"
+import { MODEL_LIST_TEST_IDS } from "~/features/ModelList/testIds"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  PRODUCT_ANALYTICS_TARGET_KINDS,
+  type ProductAnalyticsModeId,
+} from "~/services/productAnalytics/events"
 
 interface ControlPanelProps {
   selectedSource: ModelManagementSource | null
@@ -59,6 +72,12 @@ interface ControlPanelProps {
   setShowEndpointTypes: (show: boolean) => void
   totalModels: number
   filteredModels: any[]
+  getFilteredResultCount?: (filters: {
+    searchTerm?: string
+    sortMode?: ModelListSortMode
+    selectedBillingMode?: ModelListBillingMode
+    selectedGroups?: string[]
+  }) => number
   onBatchVerifyModels?: () => void
 }
 
@@ -85,6 +104,7 @@ interface ControlPanelProps {
  * @param props.setShowEndpointTypes Setter for endpoint type toggle.
  * @param props.totalModels Total models available.
  * @param props.filteredModels Currently filtered model list.
+ * @param props.getFilteredResultCount Optional estimator for pending filter state.
  * @param props.onBatchVerifyModels Optional handler for batch API verification.
  * @returns Card with filters, toggles, and actions.
  */
@@ -109,6 +129,7 @@ export function ControlPanel({
   setShowEndpointTypes,
   totalModels,
   filteredModels,
+  getFilteredResultCount,
   onBatchVerifyModels,
 }: ControlPanelProps) {
   const { t } = useTranslation(["modelList", "ui"])
@@ -172,9 +193,76 @@ export function ControlPanel({
     navigator.clipboard.writeText(modelNames)
     toast.success(t("messages.modelNamesCopied"))
   }
+  const trackFilterChange = (
+    mode: ProductAnalyticsModeId,
+    nextFilters: Partial<{
+      searchTerm: string
+      sortMode: ModelListSortMode
+      selectedBillingMode: ModelListBillingMode
+      selectedGroups: string[]
+    }> = {},
+  ) => {
+    const nextSearchTerm = nextFilters.searchTerm ?? searchTerm
+    const nextSortMode = nextFilters.sortMode ?? sortMode
+    const nextSelectedBillingMode =
+      nextFilters.selectedBillingMode ?? selectedBillingMode
+    const nextSelectedGroups = nextFilters.selectedGroups ?? selectedGroups
+    const filterCount =
+      (nextSearchTerm.trim() ? 1 : 0) +
+      (nextSortMode !== MODEL_LIST_SORT_MODES.DEFAULT ? 1 : 0) +
+      (nextSelectedBillingMode !== MODEL_LIST_BILLING_MODES.ALL ? 1 : 0) +
+      nextSelectedGroups.length
+    const resultCount =
+      getFilteredResultCount?.({
+        searchTerm: nextSearchTerm,
+        sortMode: nextSortMode,
+        selectedBillingMode: nextSelectedBillingMode,
+        selectedGroups: nextSelectedGroups,
+      }) ?? filteredModels.length
+
+    void trackProductAnalyticsActionCompleted({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.FilterModelList,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListControlPanel,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      result: PRODUCT_ANALYTICS_RESULTS.Success,
+      insights: {
+        targetKind: PRODUCT_ANALYTICS_TARGET_KINDS.ModelFilter,
+        mode,
+        filterCount,
+        resultCount,
+      },
+    })
+  }
+  const handleClearSearch = () => {
+    setSearchTerm("")
+    trackFilterChange(PRODUCT_ANALYTICS_MODE_IDS.SearchFilter, {
+      searchTerm: "",
+    })
+  }
+  const handleSortModeChange = (value: string) => {
+    const nextSortMode = value as ModelListSortMode
+    setSortMode(nextSortMode)
+    trackFilterChange(PRODUCT_ANALYTICS_MODE_IDS.SortFilter, {
+      sortMode: nextSortMode,
+    })
+  }
+  const handleBillingModeChange = (value: string) => {
+    const nextBillingMode = value as ModelListBillingMode
+    setSelectedBillingMode(nextBillingMode)
+    trackFilterChange(PRODUCT_ANALYTICS_MODE_IDS.BillingFilter, {
+      selectedBillingMode: nextBillingMode,
+    })
+  }
+  const handleGroupSelectionChange = (groups: string[]) => {
+    setSelectedGroups(groups)
+    trackFilterChange(PRODUCT_ANALYTICS_MODE_IDS.GroupFilter, {
+      selectedGroups: groups,
+    })
+  }
 
   return (
-    <Card className="mb-6">
+    <Card className="mb-6" data-testid={MODEL_LIST_TEST_IDS.controlPanel}>
       <CardContent>
         {isProfileSource && (
           <Alert
@@ -193,7 +281,7 @@ export function ControlPanel({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               leftIcon={<MagnifyingGlassIcon className="h-4 w-4" />}
-              onClear={() => setSearchTerm("")}
+              onClear={handleClearSearch}
               clearButtonLabel={t("common:actions.clear")}
             />
           </FormField>
@@ -203,7 +291,7 @@ export function ControlPanel({
               <SearchableSelect
                 options={sortOptions}
                 value={sortMode}
-                onChange={(value) => setSortMode(value as ModelListSortMode)}
+                onChange={handleSortModeChange}
                 placeholder={t("sortBy")}
               />
             </FormField>
@@ -214,9 +302,7 @@ export function ControlPanel({
               <SearchableSelect
                 options={billingModeOptions}
                 value={selectedBillingMode}
-                onChange={(value) =>
-                  setSelectedBillingMode(value as ModelListBillingMode)
-                }
+                onChange={handleBillingModeChange}
                 placeholder={t("allBillingModes")}
               />
             </FormField>
@@ -228,7 +314,7 @@ export function ControlPanel({
                 <CompactMultiSelect
                   options={groupOptions}
                   selected={selectedGroups}
-                  onChange={setSelectedGroups}
+                  onChange={handleGroupSelectionChange}
                   displayMode="summary"
                   placeholder={t("allGroups")}
                   emptyMessage={t("allGroups")}
@@ -240,79 +326,91 @@ export function ControlPanel({
             )}
         </div>
 
-        <div className="dark:border-dark-bg-tertiary flex flex-col gap-4 border-t border-gray-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-4 text-sm">
-            <div className="flex items-center space-x-2">
-              <AdjustmentsHorizontalIcon className="dark:text-dark-text-tertiary h-4 w-4 text-gray-400" />
-              <span className="dark:text-dark-text-secondary font-medium text-gray-700">
-                {t("displayOptions")}
-              </span>
-            </div>
+        <ProductAnalyticsScope
+          entrypoint={PRODUCT_ANALYTICS_ENTRYPOINTS.Options}
+          featureId={PRODUCT_ANALYTICS_FEATURE_IDS.ModelList}
+          surfaceId={PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListControlPanel}
+        >
+          <div className="dark:border-dark-bg-tertiary flex flex-col gap-4 border-t border-gray-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-4 text-sm">
+              <div className="flex items-center space-x-2">
+                <AdjustmentsHorizontalIcon className="dark:text-dark-text-tertiary h-4 w-4 text-gray-400" />
+                <span className="dark:text-dark-text-secondary font-medium text-gray-700">
+                  {t("displayOptions")}
+                </span>
+              </div>
 
-            {sourceCapabilities.supportsPricing && (
+              {sourceCapabilities.supportsPricing && (
+                <label className="flex cursor-pointer items-center space-x-2">
+                  <Switch
+                    checked={showRealPrice}
+                    onChange={setShowRealPrice}
+                    size="sm"
+                  />
+                  <Label className="cursor-pointer">{t("realAmount")}</Label>
+                </label>
+              )}
+
+              {sourceCapabilities.supportsRatioDisplay && (
+                <label className="flex cursor-pointer items-center space-x-2">
+                  <Switch
+                    checked={showRatioColumn}
+                    onChange={setShowRatioColumn}
+                    size="sm"
+                  />
+                  <Label className="cursor-pointer">{t("showRatio")}</Label>
+                </label>
+              )}
+
               <label className="flex cursor-pointer items-center space-x-2">
                 <Switch
-                  checked={showRealPrice}
-                  onChange={setShowRealPrice}
+                  checked={showEndpointTypes}
+                  onChange={setShowEndpointTypes}
                   size="sm"
                 />
-                <Label className="cursor-pointer">{t("realAmount")}</Label>
+                <Label className="cursor-pointer">{t("endpointTypes")}</Label>
               </label>
-            )}
 
-            {sourceCapabilities.supportsPricing && (
-              <label className="flex cursor-pointer items-center space-x-2">
-                <Switch
-                  checked={showRatioColumn}
-                  onChange={setShowRatioColumn}
-                  size="sm"
-                />
-                <Label className="cursor-pointer">{t("showRatio")}</Label>
-              </label>
-            )}
-
-            <label className="flex cursor-pointer items-center space-x-2">
-              <Switch
-                checked={showEndpointTypes}
-                onChange={setShowEndpointTypes}
-                size="sm"
-              />
-              <Label className="cursor-pointer">{t("endpointTypes")}</Label>
-            </label>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCopyModelNames}
-              leftIcon={<Copy className="h-4 w-4" />}
-            >
-              {t("copyAllNames")}
-            </Button>
-
-            {onBatchVerifyModels ? (
               <Button
-                variant="secondary"
+                variant="ghost"
                 size="sm"
-                onClick={onBatchVerifyModels}
-                disabled={filteredModels.length === 0}
-                leftIcon={<BeakerIcon className="h-4 w-4" />}
+                onClick={handleCopyModelNames}
+                leftIcon={<Copy className="h-4 w-4" />}
+                analyticsAction={
+                  PRODUCT_ANALYTICS_ACTION_IDS.CopyVisibleModelNames
+                }
               >
-                {t("batchVerify.actions.open")}
+                {t("copyAllNames")}
               </Button>
-            ) : null}
-          </div>
 
-          <div className="flex items-center space-x-4 text-sm">
-            <div className="dark:text-dark-text-secondary flex items-center space-x-2 text-gray-600">
-              <CpuChipIcon className="h-4 w-4" />
-              <span>{t("totalModels", { count: totalModels })}</span>
+              {onBatchVerifyModels ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={onBatchVerifyModels}
+                  disabled={filteredModels.length === 0}
+                  leftIcon={<BeakerIcon className="h-4 w-4" />}
+                  analyticsAction={
+                    PRODUCT_ANALYTICS_ACTION_IDS.OpenBatchModelVerifyDialog
+                  }
+                >
+                  {t("batchVerify.actions.open")}
+                </Button>
+              ) : null}
             </div>
-            <div className="dark:bg-dark-bg-tertiary h-4 w-px bg-gray-300"></div>
-            <div className="text-blue-600 dark:text-blue-400">
-              <span>{t("showing", { count: filteredModels.length })}</span>
+
+            <div className="flex items-center space-x-4 text-sm">
+              <div className="dark:text-dark-text-secondary flex items-center space-x-2 text-gray-600">
+                <CpuChipIcon className="h-4 w-4" />
+                <span>{t("totalModels", { count: totalModels })}</span>
+              </div>
+              <div className="dark:bg-dark-bg-tertiary h-4 w-px bg-gray-300"></div>
+              <div className="text-blue-600 dark:text-blue-400">
+                <span>{t("showing", { count: filteredModels.length })}</span>
+              </div>
             </div>
           </div>
-        </div>
+        </ProductAnalyticsScope>
       </CardContent>
     </Card>
   )

@@ -1,11 +1,21 @@
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { extractApiCheckCredentialsFromText } from "~/services/verification/webAiApiCheck/extractCredentials"
 import {
+  sendWebAiApiCheckMessage,
+  WebAiApiCheckMessageTypes,
+} from "~/services/verification/webAiApiCheck/messaging"
+import {
   checkPermissionViaMessage,
-  sendRuntimeMessage,
+  onRuntimeMessage,
 } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
+import { isHttpUrl } from "~/utils/core/urlParsing"
 
+import {
+  getClipboardEventText,
+  getSelectedText,
+  registerSelectionEndTextDetection,
+} from "../shared/contentTextDetection"
 import { isEventFromAllApiHubContentUi } from "../shared/contentUi"
 import { isLikelyCopyActionTarget } from "../shared/copyActionTarget"
 import { ensureRedemptionToastUi } from "../shared/uiRoot"
@@ -14,6 +24,7 @@ import {
   dispatchOpenApiCheckModal,
   waitForApiCheckModalHostReady,
   type ApiCheckModalClosedDetail,
+  type ApiCheckOpenModalDetail,
 } from "./events"
 import { showApiCheckConfirmToast } from "./utils/apiCheckToasts"
 
@@ -67,10 +78,10 @@ function registerContextMenuTriggerListener() {
     })
   }
 
-  browser.runtime.onMessage.addListener(listener)
+  const cleanup = onRuntimeMessage(listener)
   return () => {
     try {
-      browser.runtime.onMessage.removeListener(listener)
+      cleanup()
     } catch (error) {
       logger.debug("Failed to remove ApiCheck context menu listener", error)
     }
@@ -111,28 +122,38 @@ function setupWebAiApiCheckDetection() {
     return `${hash}:${text.length}`
   }
 
-  const requestShouldPrompt = async (pageUrl: string): Promise<boolean> => {
+  const requestShouldPrompt = async (
+    pageUrl: string,
+  ): Promise<{ shouldPrompt: boolean; enhancedShouldPrompt: boolean }> => {
     try {
-      const response: any = await sendRuntimeMessage({
-        action: RuntimeActionIds.ApiCheckShouldPrompt,
-        pageUrl,
-      })
-      return !!response?.success && !!response?.shouldPrompt
+      const response = await sendWebAiApiCheckMessage(
+        WebAiApiCheckMessageTypes.ShouldPrompt,
+        { pageUrl },
+      )
+      return {
+        shouldPrompt: !!response?.success && !!response?.shouldPrompt,
+        enhancedShouldPrompt:
+          !!response?.success && !!response?.enhancedShouldPrompt,
+      }
     } catch (error) {
       logger.warn("Failed to read ApiCheck shouldPrompt state", error)
-      return false
+      return { shouldPrompt: false, enhancedShouldPrompt: false }
     }
   }
 
   const scanForApiCheckCredentials = async (
     sourceText: string,
-    options?: { pageUrl?: string; shouldPrompt?: boolean },
+    options?: {
+      pageUrl?: string
+      shouldPrompt?: boolean
+      enhancedShouldPrompt?: boolean
+    },
   ) => {
     const text = (sourceText ?? "").trim()
     if (!text) return
 
     const pageUrl = options?.pageUrl || window.location.href
-    if (!/^https?:/i.test(pageUrl)) return
+    if (!isHttpUrl(pageUrl)) return
 
     const now = Date.now()
     if (toastInFlight) return
@@ -140,21 +161,36 @@ function setupWebAiApiCheckDetection() {
 
     const extracted = extractApiCheckCredentialsFromText(text)
     if (!extracted.baseUrl || !extracted.apiKey) return
+    if (
+      extracted.summary.usesEnhancedResult &&
+      !extracted.summary.enhancedAutoPromptEligible
+    ) {
+      return
+    }
 
     toastInFlight = true
 
     try {
-      const shouldPrompt =
+      const promptState =
         typeof options?.shouldPrompt === "boolean"
-          ? options.shouldPrompt
+          ? {
+              shouldPrompt: options.shouldPrompt,
+              enhancedShouldPrompt: !!options.enhancedShouldPrompt,
+            }
           : await requestShouldPrompt(pageUrl)
 
-      if (!shouldPrompt) {
+      const canPrompt = extracted.summary.usesEnhancedResult
+        ? promptState.enhancedShouldPrompt
+        : promptState.shouldPrompt
+
+      if (!canPrompt) {
         return
       }
 
       lastPromptAt = Date.now()
-      const confirmed = await showApiCheckConfirmToast()
+      const confirmed = await showApiCheckConfirmToast({
+        usesEnhancedResult: extracted.summary.usesEnhancedResult,
+      })
       if (!confirmed) {
         return
       }
@@ -163,6 +199,10 @@ function setupWebAiApiCheckDetection() {
         sourceText: text,
         pageUrl,
         trigger: "autoDetect",
+        extraction: {
+          candidates: extracted.candidates,
+          summary: extracted.summary,
+        },
       })
     } catch (error) {
       logger.warn("Auto-detect flow failed", error)
@@ -173,7 +213,11 @@ function setupWebAiApiCheckDetection() {
 
   const scheduleApiCheckScan = async (
     sourceText: string,
-    options?: { pageUrl?: string; shouldPrompt?: boolean },
+    options?: {
+      pageUrl?: string
+      shouldPrompt?: boolean
+      enhancedShouldPrompt?: boolean
+    },
   ) => {
     const text = (sourceText ?? "").trim()
     if (!text) return
@@ -206,9 +250,9 @@ function setupWebAiApiCheckDetection() {
       lastClickScan = now
 
       const pageUrl = window.location.href
-      if (!/^https?:/i.test(pageUrl)) return
+      if (!isHttpUrl(pageUrl)) return
 
-      const selectionText = window.getSelection()?.toString().trim() || ""
+      const selectionText = getSelectedText()
       if (selectionText) {
         void scheduleApiCheckScan(selectionText, { pageUrl })
         return
@@ -223,8 +267,10 @@ function setupWebAiApiCheckDetection() {
       }
 
       void (async () => {
-        const shouldPrompt = await requestShouldPrompt(pageUrl)
-        if (!shouldPrompt) return
+        const promptState = await requestShouldPrompt(pageUrl)
+        if (!promptState.shouldPrompt && !promptState.enhancedShouldPrompt) {
+          return
+        }
 
         const hasPermission = await checkPermissionViaMessage({
           permissions: ["clipboardRead"],
@@ -238,7 +284,8 @@ function setupWebAiApiCheckDetection() {
           if (clipboardText) {
             await scheduleApiCheckScan(clipboardText, {
               pageUrl,
-              shouldPrompt: true,
+              shouldPrompt: promptState.shouldPrompt,
+              enhancedShouldPrompt: promptState.enhancedShouldPrompt,
             })
           }
         } catch (error) {
@@ -254,16 +301,20 @@ function setupWebAiApiCheckDetection() {
     }
 
     const pageUrl = window.location.href
-    if (!/^https?:/i.test(pageUrl)) return
+    if (!isHttpUrl(pageUrl)) return
 
-    const selectionText = window.getSelection()?.toString().trim() || ""
-    const clipboardText = event.clipboardData?.getData("text") || ""
-    const sourceText = selectionText || clipboardText
+    const sourceText = getClipboardEventText(event)
 
     if (sourceText) {
       void scheduleApiCheckScan(sourceText, { pageUrl })
     }
   }
+
+  const cleanupSelectionEndDetection = registerSelectionEndTextDetection(
+    (sourceText) => {
+      void scheduleApiCheckScan(sourceText, { pageUrl: window.location.href })
+    },
+  )
 
   document.addEventListener("click", handleClick, true)
   document.addEventListener("copy", handleClipboardEvent, true)
@@ -277,6 +328,7 @@ function setupWebAiApiCheckDetection() {
     document.removeEventListener("click", handleClick, true)
     document.removeEventListener("copy", handleClipboardEvent, true)
     document.removeEventListener("cut", handleClipboardEvent, true)
+    cleanupSelectionEndDetection()
   }
 }
 
@@ -287,6 +339,7 @@ async function openModal(params: {
   sourceText: string
   pageUrl: string
   trigger: "contextMenu" | "autoDetect"
+  extraction?: ApiCheckOpenModalDetail["extraction"]
 }) {
   await ensureRedemptionToastUi()
   await waitForApiCheckModalHostReady()

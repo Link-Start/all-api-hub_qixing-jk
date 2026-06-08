@@ -5,6 +5,7 @@ const packageRoot = process.cwd()
 const docsRoot = path.join(packageRoot, "docs")
 const localeDirs = new Set(["en", "ja"])
 
+// eslint-disable-next-line no-control-regex -- Slug normalization strips ASCII control characters.
 const rControl = /[\u0000-\u001f]/g
 const rSpecial = /[\s~`!@#$%^&*()\-_+=[\]{}|;:'",.<>/?\\]+/g
 const rCombining = /[\u0300-\u036f]/g
@@ -266,7 +267,7 @@ for (const filePath of files) {
 
             if (!isStableAnchorId(resolvedTarget.fragment)) {
               errors.push(
-                `${relativePath}:${lineNumber} uses unstable anchor ${rawTarget} -> ${targetRelativePath}#${resolvedTarget.fragment}; use an explicit ASCII anchor id such as <a id=\"...\"></a>`
+                `${relativePath}:${lineNumber} uses unstable anchor ${rawTarget} -> ${targetRelativePath}#${resolvedTarget.fragment}; use an explicit ASCII anchor id such as <a id="..."></a>`
               )
             } else if (
               !anchorInfo.explicitAnchors.has(resolvedTarget.fragment) &&

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AUTO_DETECT_ERROR_CODES } from "~/constants/autoDetect"
+import { SITE_TYPES } from "~/constants/siteType"
 import {
   analyzeAutoDetectError,
   AutoDetectErrorType,
@@ -9,6 +10,7 @@ import {
   openLoginTab,
   reloadCurrentTab,
 } from "~/services/accounts/utils/autoDetectUtils"
+import { clearSiteRouteThemeCacheForTests } from "~/services/accounts/utils/siteRouteResolver"
 import { getDocsAutoDetectUrl } from "~/utils/navigation/docsLinks"
 
 const { tMock } = vi.hoisted(() => ({
@@ -39,6 +41,10 @@ afterAll(() => {
 })
 
 describe("autoDetectUtils", () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+  })
+
   describe("analyzeAutoDetectError", () => {
     describe("Timeout errors", () => {
       it("should detect timeout error with Chinese text", () => {
@@ -316,6 +322,18 @@ describe("autoDetectUtils", () => {
       })
     })
 
+    it("maps site-type detection failures to stable local guidance", () => {
+      const result = getAutoDetectErrorByCode(
+        AUTO_DETECT_ERROR_CODES.SITE_TYPE_DETECTION_FAILED,
+      )
+
+      expect(result).toMatchObject({
+        type: AutoDetectErrorType.NOT_FOUND,
+        message: "messages:autodetect.notFound",
+        helpDocUrl: getDocsAutoDetectUrl(),
+      })
+    })
+
     it("returns null for unknown codes", () => {
       expect(getAutoDetectErrorByCode(undefined)).toBeNull()
     })
@@ -364,6 +382,15 @@ describe("autoDetectUtils", () => {
       expect(result).toBe("https://api.example.com/login")
     })
 
+    it("should use the AIHubMix console sign-in route", () => {
+      expect(getLoginUrl("https://console.aihubmix.com/statistics")).toBe(
+        "https://console.aihubmix.com/sign-in",
+      )
+      expect(getLoginUrl("https://aihubmix.com")).toBe(
+        "https://console.aihubmix.com/sign-in",
+      )
+    })
+
     it("should return original URL for invalid URL", () => {
       const invalidUrl = "not a valid url"
       const result = getLoginUrl(invalidUrl)
@@ -398,6 +425,8 @@ describe("autoDetectUtils", () => {
   describe("openLoginTab", () => {
     beforeEach(() => {
       vi.clearAllMocks()
+      clearSiteRouteThemeCacheForTests()
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
     })
 
     it("should create new tab with login URL", async () => {
@@ -407,6 +436,57 @@ describe("autoDetectUtils", () => {
 
       expect(browser.tabs.create).toHaveBeenCalledWith({
         url: "https://example.com/login",
+        active: true,
+      })
+    })
+
+    it("uses the New API default frontend sign-in route when a site type hint is available", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: { theme: "default" },
+          }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )
+
+      await openLoginTab("https://new-api-login.example", SITE_TYPES.NEW_API)
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://new-api-login.example/api/status",
+        expect.objectContaining({
+          method: "GET",
+        }),
+      )
+      expect(browser.tabs.create).toHaveBeenCalledWith({
+        url: "https://new-api-login.example/sign-in",
+        active: true,
+      })
+
+      fetchSpy.mockRestore()
+    })
+
+    it("uses the hinted non-New API site route without probing New API status", async () => {
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+
+      await openLoginTab(
+        "https://console.aihubmix.com/statistics",
+        SITE_TYPES.AIHUBMIX,
+      )
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(browser.tabs.create).toHaveBeenCalledWith({
+        url: "https://console.aihubmix.com/sign-in",
+        active: true,
+      })
+    })
+
+    it("falls back to the generic login URL when the site type hint is unavailable", async () => {
+      await openLoginTab("https://fallback.example/path", SITE_TYPES.UNKNOWN)
+
+      expect(browser.tabs.create).toHaveBeenCalledWith({
+        url: "https://fallback.example/login",
         active: true,
       })
     })
@@ -463,11 +543,10 @@ describe("autoDetectUtils", () => {
       )
     })
 
-    it("should call getLoginUrl internally", async () => {
+    it("should use the best-effort login route when no hint is available", async () => {
       const siteUrl = "https://example.com/dashboard"
       await openLoginTab(siteUrl)
 
-      // Verify that the /login path is appended correctly
       expect(browser.tabs.create).toHaveBeenCalledWith({
         url: "https://example.com/login",
         active: true,

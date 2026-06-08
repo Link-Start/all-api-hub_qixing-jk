@@ -39,6 +39,8 @@ import {
   WorkflowTransitionButton,
 } from "~/components/ui"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
+import { KEY_MANAGEMENT_TEST_IDS } from "~/features/KeyManagement/testIds"
+import { buildApiCredentialProfileName } from "~/features/KeyManagement/utils/apiCredentialProfileName"
 import { resolveDisplayAccountTokenForSecret } from "~/services/accounts/utils/apiServiceRequest"
 import { apiCredentialProfilesStorage } from "~/services/apiCredentialProfiles/apiCredentialProfilesStorage"
 import { OpenInCherryStudio } from "~/services/integrations/cherryStudio"
@@ -51,6 +53,15 @@ import {
   getManagedSiteLabel,
   supportsManagedSiteBaseUrlChannelLookup,
 } from "~/services/managedSites/utils/managedSite"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import {
   API_TYPES,
   type ApiVerificationApiType,
@@ -69,26 +80,6 @@ import {
  * Unified logger scoped to the Key Management token header actions.
  */
 const logger = createLogger("TokenHeader")
-
-/**
- * Build a stable API credential profile name from token and account labels.
- */
-function buildApiCredentialProfileName(params: {
-  accountName: string
-  fallbackAccountName?: string
-  tokenName: string
-}) {
-  const parts = [
-    params.accountName,
-    params.fallbackAccountName ?? "",
-    params.tokenName,
-  ]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .filter((value, index, list) => list.indexOf(value) === index)
-
-  return parts.join(" - ")
-}
 
 interface TokenHeaderProps {
   /**
@@ -186,6 +177,26 @@ const getManagedSiteStatusLabel = (
     return t("keyManagement:managedSiteStatus.badges.notAdded")
   }
 
+  if (
+    params.managedSiteStatus?.status ===
+    MANAGED_SITE_TOKEN_CHANNEL_STATUSES.UNKNOWN
+  ) {
+    switch (params.managedSiteStatus.reason) {
+      case MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.MATCH_REQUIRES_CONFIRMATION:
+        return t("keyManagement:managedSiteStatus.badges.requiresConfirmation")
+      case MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.EXACT_VERIFICATION_UNAVAILABLE:
+        return t(
+          "keyManagement:managedSiteStatus.badges.verificationUnavailable",
+        )
+      case MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.BACKEND_SEARCH_FAILED:
+        return t("keyManagement:managedSiteStatus.badges.checkFailed")
+      case MANAGED_SITE_TOKEN_CHANNEL_STATUS_UNKNOWN_REASONS.CONFIG_MISSING:
+        return t("keyManagement:managedSiteStatus.badges.configMissing")
+      default:
+        break
+    }
+  }
+
   return t("keyManagement:managedSiteStatus.badges.unknown")
 }
 
@@ -260,26 +271,55 @@ function TokenActionButtons({
   const managedSiteLabel = getManagedSiteLabel(t, managedSiteType)
 
   const handleImportToManagedSite = async () => {
-    await openWithAccount(
-      account,
-      token,
-      (result) => {
-        showResultToast(result)
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ManagedSiteChannels,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ImportManagedSiteSingleToken,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.AccountTokenThirdPartyExportDialog,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
 
-        if (result?.success && onManagedSiteImportSuccess) {
-          void Promise.resolve(onManagedSiteImportSuccess(token)).catch(
-            (error) =>
-              logger.error(
-                "Managed-site import success callback failed",
-                error,
-              ),
-          )
-        }
-      },
-      {
-        managedSiteStatus,
-      },
-    )
+    try {
+      const result = await openWithAccount(
+        account,
+        token,
+        (result) => {
+          showResultToast(result)
+
+          if (result?.success && onManagedSiteImportSuccess) {
+            void Promise.resolve(onManagedSiteImportSuccess(token)).catch(
+              (error) =>
+                logger.error(
+                  "Managed-site import success callback failed",
+                  error,
+                ),
+            )
+          }
+        },
+        {
+          managedSiteStatus,
+        },
+      )
+
+      if (result.opened || result.deferred) {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
+        return
+      }
+
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
+    } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
+      showResultToast({
+        success: false,
+        message: t("messages:errors.operation.failed", {
+          error: getErrorMessage(error),
+        }),
+      })
+    }
   }
 
   const handleOpenCliProxyDialog = () => {
@@ -305,13 +345,25 @@ function TokenActionButtons({
   }
 
   const handleUseInCherry = async () => {
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExportAccountTokenToCherryStudio,
+      surfaceId:
+        PRODUCT_ANALYTICS_SURFACE_IDS.AccountTokenThirdPartyExportDialog,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+
     try {
       const resolvedToken = await resolveDisplayAccountTokenForSecret(
         account,
         token,
       )
       OpenInCherryStudio(account, resolvedToken)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
       showResultToast({
         success: false,
         message: t("messages:errors.operation.failed", {
@@ -322,6 +374,13 @@ function TokenActionButtons({
   }
 
   const handleSaveToApiCredentialProfiles = async () => {
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId:
+        PRODUCT_ANALYTICS_ACTION_IDS.SaveAccountTokenToApiCredentialProfile,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
     const apiType: ApiVerificationApiType = API_TYPES.OPENAI_COMPATIBLE
     const profileName = buildApiCredentialProfileName({
       accountName: account.name,
@@ -349,6 +408,7 @@ function TokenActionButtons({
             </span>
             <button
               type="button"
+              data-testid={KEY_MANAGEMENT_TEST_IDS.openApiProfilesToastButton}
               className="shrink-0 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
               onClick={() => {
                 openApiCredentialProfilesPage()
@@ -361,7 +421,11 @@ function TokenActionButtons({
         ),
         { duration: 8000 },
       )
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
       logger.error("Failed to save token to API profiles", {
         message: toSanitizedErrorSummary(
           error,
@@ -378,7 +442,10 @@ function TokenActionButtons({
   }
 
   return (
-    <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+    <div
+      data-testid={KEY_MANAGEMENT_TEST_IDS.tokenRowActions}
+      className="flex w-full flex-wrap items-center justify-start gap-1 sm:w-auto sm:shrink-0 sm:justify-end sm:gap-1.5"
+    >
       <KiloCodeExportDialog
         isOpen={isKiloCodeDialogOpen}
         onClose={() => setIsKiloCodeDialogOpen(false)}
@@ -409,6 +476,7 @@ function TokenActionButtons({
       </IconButton>
       <IconButton
         aria-label={t("keyManagement:actions.saveToApiProfiles")}
+        data-testid={KEY_MANAGEMENT_TEST_IDS.saveToApiProfilesButton}
         size="sm"
         variant="ghost"
         onClick={handleSaveToApiCredentialProfiles}
@@ -562,11 +630,25 @@ export function TokenHeader({
       return
     }
 
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.RetryManagedSiteTokenVerification,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+
     void Promise.resolve(
       onManagedSiteVerificationRetry(token, managedSiteStatus),
-    ).catch((error) =>
-      logger.error("Managed-site verification retry callback failed", error),
     )
+      .then(() => {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
+      })
+      .catch((error) => {
+        logger.error("Managed-site verification retry callback failed", error)
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        })
+      })
   }
 
   const handleOpenManagedSiteSettings = () => {
@@ -576,8 +658,8 @@ export function TokenHeader({
   }
 
   return (
-    <div className="flex min-w-0 items-start gap-2">
-      <div className="min-w-0 flex-1">
+    <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-start">
+      <div className="w-full min-w-0 flex-1 sm:w-auto">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
           <Heading6 className="truncate text-sm sm:text-base md:text-lg">
             {token.name}

@@ -8,6 +8,167 @@ This page records major updates for general users (feature changes / experience 
 - **Troubleshooting**: You can enable console logs in "Settings → General → Logs" and report reproduction steps to [Issues](https://github.com/qixing-jk/all-api-hub/issues).
 :::
 
+## 3.44.0
+- **New Features:**
+  - Settings Overview: The settings page now includes an `Overview` workbench that brings together accounts, API credentials, today's usage, items that need attention, automated tasks, and configuration status, with direct jumps to the pages that need action.
+- **Experience Optimizations:**
+  - Permission Onboarding: Optional permission explanations and grant entry points are now handled by `Overview`; when the extension needs new optional permissions, it explains the purpose of Cookies, web request observation, notifications, and related permissions in one place. See [Permission Management (Optional Permissions)](./permissions.md).
+  - API Credential Library: The add-credential button is now consistently labeled `Save API Key`, better matching the `Base URL + API Key`-only use case. See [API Credential Library](./api-credential-profiles.md).
+  - Extension Popup: Statistics on the `API Key` page now wrap on narrow screens, so balance, today's usage, and related metrics no longer crowd each other.
+- **Bug Fixes:**
+  - WebDAV: Compatible with China Science and Technology Cloud (CSTCloud) overwrite-move failures. The extension now retries replacing the official backup file, reducing upload failures during manual sync or auto sync. See [WebDAV Backup and Auto Sync](./webdav-sync.md).
+  - Older Browser Compatibility: Fixed runtime messages that might not receive responses, improving compatibility for cross-entry tasks such as Auto Check-in, Model Sync, WebDAV Auto Sync, notifications, and in-page detection.
+
+**Location Hints:**
+- Settings Overview: Open "Settings" to enter `Overview` by default.
+- Permission Onboarding: After upgrading, if new optional permissions are needed, check the prompt under "Settings → Overview"; you can also view the full permission status under "Settings → Permission Management".
+- API Credential Library: Click `Save API Key` under "Settings → API Credential Library".
+- WebDAV Sync: Use `WebDAV Settings` and auto-sync actions under "Settings → Import / Export".
+
+## 3.43.0
+- **Experience Optimizations:**
+  - AIHubMix: After adding an account, the extension now checks whether tokens already exist first. If tokens are present, it no longer shows the default key creation prompt; if none exist, it still prompts you to create one and displays the one-time full key. See [Account Management](./account-management.md).
+  - Auto Detect: When detecting certain AIHubMix page URLs from the extension popup, temporary-window minimization no longer causes the popup to close, making detection more stable. See [Auto Detect Troubleshooting Guide](./auto-detect.md).
+- **Bug Fixes:**
+  - AIHubMix: Compatible with cases where the site no longer returns the original numeric ID. The account is saved with an available text identifier instead, so adding, syncing, import / export, duplicate detection, pinning, and related flows no longer fail because the numeric ID is missing. See [Account Management](./account-management.md).
+  - Account Management: Fixed cookie import potentially using the wrong browser cookie environment when adding a `Cookie Authentication` account from an incognito window or a Firefox container tab.
+  - Account Management: Fixed `Use current page`-related prefill sometimes keeping a stale title or URL after fast tab switches, unavailable tabs, or non-webpage addresses.
+  - AIHubMix: Fixed inconsistent duplicate-account warnings and current-site detection across `aihubmix.com`, `www.aihubmix.com`, and `console.aihubmix.com`.
+  - In-page extension UI: Fixed in-page extension interfaces still showing Chinese after switching the extension language.
+  - Cookie Authentication: When multiple accounts on the same site use `Cookie Authentication`, refresh, detection, and related operations now use the Cookie for the current account more accurately.
+  - Model List: After creating a model-compatible key, the dialog now waits for the new key to appear in the site response, reducing cases where it still says no compatible key exists or cannot continue copying / managing the key. See [Model List](./model-list.md).
+
+**Location Hints:**
+- AIHubMix account saving, cookie import, and current-page prefill: Add an account under "Settings → Account Management".
+- AIHubMix default key prompt: Add an `AIHubMix` account with "Automatically create a default token after adding an account" enabled.
+- Auto-detect temporary window: Trigger auto detect from the extension popup after entering a site.
+- Model-compatible keys: Create or copy a key for a model under "Settings → Model List".
+
+## 3.42.0
+- **New Features:**
+  - Web AI API Check: Improved automatic detection of `Base URL` and `API Key` from web page content. When multiple candidates are found, you can choose the pair to verify, and the confirmation prompt can open settings or submit issue feedback directly. See [Web AI API Sniffing and Verification](./web-ai-api-check.md).
+  - API Credential Profiles: One-time API keys can now be saved directly to `API Credential Profiles` from the dialog, reducing the need to copy them and create a profile manually. See [API Credential Profiles](./api-credential-profiles.md).
+- **Experience Optimizations:**
+  - Account Management: When adding an account, the default authentication method is selected more accurately from the site URL. AnyRouter accounts now default to `Cookie Authentication`. See [Account Management](./account-management.md).
+  - Account Management: When `Cookie Authentication` is selected, the form now explains the required permission and provides a grant entry point, reducing trips back and forth to the settings page. See [Account Management](./account-management.md).
+  - Account Management: The duplicate-account warning now includes **`Don't remind me again and continue`**, so you can continue the current add flow and disable future duplicate warnings in one step.
+  - Auto Detect: When detection takes too long, the prompt can reload the extension and let you retry directly. See [Auto Detect Troubleshooting Guide](./auto-detect.md).
+  - Settings Search: Added searchable entries for notification channels, Import / Export, WebDAV auto sync, and related settings. Results now distinguish between page sections and specific controls, making settings easier to locate.
+  - Redemption Assistant: Selected text is now detected after mouse or touch release, making redemption-code capture on web pages more stable.
+  - Web AI API Check: Selected text is now detected after mouse or touch release, making API configuration capture on web pages more stable.
+- **Bug Fixes:**
+  - WebDAV: Backup uploads now write to a temporary file first and verify it before replacing the official backup. If a remote backup is corrupted, you will be prompted to rebuild it from the current device, reducing data risk from interrupted syncs or damaged backups. See [WebDAV Backup and Auto Sync](./webdav-sync.md).
+  - New API: Fixed login, check-in, redemption, usage, and related page shortcuts opening the wrong route on sites that use customized theme paths.
+  - Key Management: Deleting a key now uses an explicit destructive confirmation dialog, reducing accidental deletion risk.
+
+**Location Hints:**
+- Web AI API Check: Select or copy `Base URL + API Key` on a web page and check the confirmation prompt. Related switches are under "Settings → Basic Settings → Web AI API Check".
+- One-time API key saving: Use `Save to API Credential Profiles` from dialogs for adding accounts, creating keys, viewing model keys, or copying one-time keys.
+- Cookie multi-account permission: Add an account under "Settings → Account Management" and select `Cookie Authentication`.
+- Settings Search: Use the search box at the top of the settings page, or press `Ctrl+K` / `Cmd+K`.
+- WebDAV fixes and rebuild: Use `WebDAV Settings` and sync actions under "Settings → Import / Export".
+
+## 3.41.1
+- **Bug Fixes:**
+  - Account Management: Fixed the first add-account auto-detect flow not carrying detected check-in detection and auto check-in settings into the form. You can now confirm whether the account supports check-in, and whether it will join auto check-in, before saving. See [Account Management](./account-management.md).
+  - Auto Check-in: Fixed `Quick Check-in` from an account menu being skipped when global auto check-in is disabled. Manual per-account check-ins now run independently from the background schedule switch. See [Auto Check-in](./auto-checkin.md).
+  - Auto Check-in: Improved Turnstile handling for New API access-token accounts. The assisted flow now tries an incognito temporary window first and falls back to a normal temporary window when needed, reducing failures caused by mixed login states across multiple accounts.
+
+**Location Hints:**
+- Add-account check-in settings: Use auto-detect while adding an account under "Settings → Account Management".
+- `Quick Check-in` and Turnstile results: Check "Settings → Auto Check-in" or the account action menu.
+
+## 3.41.0
+- **New Features:**
+  - AIHubMix: `AIHubMix` accounts can now view available models and prices in Model List, with prices shown from the site's returned per-1M-token rates. When the account-specific model scope cannot be confirmed, a catalog-scope notice is shown so you do not mistake every catalog model as available to the account. See [Model List](./model-list.md).
+  - Balance History: Added an optional, off-by-default "Estimated Today's Income" feature. The popup and Balance History can now show site-reported income separately from income estimated from balance changes. See [Balance History](./balance-history.md).
+  - Account Management: The add/edit account form now includes an **`Exclude from Today's Income`** switch. Specific accounts can be excluded from today's income totals in the popup, account list, and shared overview without affecting refresh, check-in, or account display. See [Account Management](./account-management.md).
+- **Experience Optimizations:**
+  - Add Account: Improved the first-step input experience. Authentication method and site URL now adapt to the available width: narrow screens choose the authentication method first and then fill in the site URL, while wider screens keep them side by side, making the add-account flow less cramped.
+  - Auto Check-in: When a result fails because Turnstile, PoW, or another web verification step is required, the results table now suggests opening the site and completing verification before retrying, reducing confusion from raw error messages. See [Auto Check-in](./auto-checkin.md).
+- **Bug Fixes:**
+  - WebDAV: Fixed an issue where deleted accounts or bookmarks could reappear from an older backup after merged sync. Deletion records now participate in later sync merges. See [WebDAV Backup and Auto Sync](./webdav-sync.md).
+
+**Location Hints:**
+- AIHubMix Model List: Open "Settings → Model List" and select an `AIHubMix` account as the data source.
+- Estimated Today's Income: Enable it under "Settings → Basic Settings → Balance History", then view it in the popup and "Settings → Balance History".
+- `Exclude from Today's Income`: Available in the balance statistics section of the add/edit account dialog under "Settings → Account Management".
+- Auto Check-in Verification Hint: View it in failed account rows in the Auto Check-in execution results list.
+- WebDAV Sync: Use it from `WebDAV Settings` and sync actions under "Settings → Import / Export".
+
+## 3.40.0
+::: warning Site Announcement Auto Polling Is Off by Default
+Starting in this version, background auto polling for Site Announcements is opt-in: the extension will not proactively visit sites linked to your saved accounts on a schedule unless you explicitly enable it. Existing users will also be migrated to the disabled state after upgrading. You can still click **`Check Now`** manually on the Site Announcements page. To keep scheduled background polling, re-enable it under "Settings → General → Site Announcements" and adjust the polling interval as needed.
+:::
+
+- **New Features:**
+  - Site Announcements: Added a custom background polling interval from `15` to `1440` minutes, so you can control how often site announcements are checked. See [Site Announcements](./site-announcements.md).
+  - Settings Shortcuts: Added title-adjacent settings buttons to standalone pages such as Account Management, Auto Check-in, Balance History, Self-Hosted Site Channels, Model Sync, Site Announcements, and Usage Analytics, so you can jump directly to the related setting.
+- **Experience Optimizations:**
+  - Site Announcements: The site filter is now searchable and sorted by announcement count, with counts shown in the list, making the right site easier to find when many accounts are configured.
+  - Site Announcements: Page descriptions, empty states, and title actions now point directly to automatic polling settings, making the next step clearer when polling is off.
+  - Self-Hosted Site Management: Backend configuration is now passed by site type, reducing the risk of using the wrong configuration when switching between self-hosted backends, and sensitive configuration is better protected in diagnostics.
+- **Bug Fixes:**
+  - Site Announcements: Fixed polling cooldown alignment after browser alarm restoration, so background checks follow the configured interval more accurately.
+  - Site Announcements: **`Check Now`** now respects the current filter scope and is disabled while data is loading or when filters have no results, avoiding unnecessary checks for unrelated sites.
+  - Site Announcements: Fixed announcement titles with inline HTML being truncated or displayed incorrectly.
+  - Settings Search: Corrected the Usage Sync interval search target so search results jump to the actual sync interval setting.
+
+**Location Hints:**
+- Site Announcements: Open "Settings → Site Announcements" to view, manually check, and filter announcements.
+- Site Announcement Auto Polling: Open "Settings → General → Site Announcements" to enable or disable polling and set the interval.
+- Page Settings Shortcuts: Use the gear button next to titles on supported standalone pages.
+- Usage Sync Interval: Search for "Usage sync interval" in settings search, or open "Settings → Usage Analytics".
+
+## 3.39.0
+- **New Features:**
+  - Site Support: Added `v-api` site type support. Accounts can now be detected and managed according to this site's compatibility rules. See [Supported Sites](./supported-sites.md).
+  - Site Feedback: Added a "Site Support Request" flow. When auto-detection fails, you can submit feedback with the site URL and error details, and specify the capabilities you want supported, such as balance, keys, models, check-in, or redemption.
+  - Interface Language: Added Vietnamese UI support. You can now select `Tiếng Việt` in the language switcher.
+  - `Claude Code Hub`: Supports searching provider lists and revealing the real `Key`, making provider management and import-status troubleshooting more complete. See [Self-Hosted Site Management](./self-hosted-site-management.md).
+- **Experience Optimizations:**
+  - `API Credential Library`: Unified UI wording such as "Save API Key" and "API Credential Library", making it clearer that this area is for saving `Base URL + API Key` combinations for copying, verification, model lookup, and export.
+  - Settings Navigation: Settings pages are now grouped by General, API, Automation, Insights, Site Management, and System, with adjusted entry order in the settings page and popup so common pages are easier to locate.
+  - Settings Page: Improved the layout of controls such as language, theme, currency, default tab, and task notifications on small screens.
+  - Key Management: Improved token card layout on narrow mobile screens, making key information easier to read and copy.
+- **Bug Fixes:**
+  - Hosted Sites: Improved duplicate channel checks and key matching accuracy, reducing false matches when real `Key` values are hidden or there are many candidate channels.
+  - `sk-` Prefix: Copying, display, and matching now normalize optional `sk-` prefixes only for site types that support that semantics. Other sites keep their original key format, reducing false matches caused by format differences.
+
+**Location Hints:**
+- `v-api` Accounts: Add or auto-detect accounts under "Settings → Account Management".
+- Site Support Feedback: Submit it from the auto-detection failure prompt or the top feedback menu.
+- Vietnamese: Select `VI / Tiếng Việt` from the language switcher on any page.
+- `API Credential Library`: Use it from the extension popup or "Settings → API Credential Library".
+- `Claude Code Hub`: Configure and manage it under "Settings → Self-Hosted Site Management".
+
+## 3.38.0
+- **New Features:**
+  - AIHubMix: Added `AIHubMix` site support. You can detect and manage AIHubMix accounts, with support for one-time key display, account URL normalization, and the correct sign-in entry. See [Supported Sites](./supported-sites.md).
+  - Account Management: Added a foreground token confirmation flow after saving an account. After saving, you can continue creating an API Token, confirming a one-time key, selecting groups, and configuring hosted-site setup, reducing unclear outcomes when background auto-configuration fails.
+  - Site Announcements: Added a site announcement center with background polling for new announcements, notification reminders, manual checks, mark-as-read actions, and per-site announcement viewing. See [Site Announcements](./site-announcements.md).
+  - Task Notifications: Added Telegram, Webhook, Feishu, WeCom, DingTalk, and ntfy notification channels. You can configure different delivery methods for auto check-in, sync, and other tasks, and send test notifications. See [Task Notifications](./task-notifications.md).
+  - Webhook Notifications: Webhook URLs now support template variables such as title, message, task, status, and counts, making it easier to integrate services like Bark that rely on URL parameters.
+  - Product Experience Analytics: Added privacy-friendly product analytics foundations to help understand usage of core features and improve future experiences.
+- **Experience Optimizations:**
+  - Notification Settings: Task notification settings are now grouped under a dedicated entry, with clearer setup guidance, test feedback, and error messages for each channel.
+  - WebDAV: Improved status messages for manual upload, import, sync, and settings save actions, making results more compact and easier to understand.
+  - WebDAV: Added clearer draft-save guidance, reducing confusion about whether unsaved configuration has taken effect.
+  - Add/Edit Account: Auto-detection actions remain available even when the manual form is currently invalid, making it easier to switch to the current login state to complete account details.
+- **Bug Fixes:**
+  - Auto Detection: Fixed request context handling in incognito and current-tab scenarios, improving auto-detection stability.
+  - Content Page: The API check overlay no longer triggers page shortcuts, reducing accidental actions on the target page.
+  - WebDAV: Fixed error handling when reading an empty backup before upload.
+  - WebDAV: Fixed an issue where manual upload, import, and similar actions could stop working after clicking "Sync Now".
+
+**Location Hints:**
+- AIHubMix Accounts: Add or auto-detect accounts under "Settings → Account Management".
+- AIHubMix One-Time Key: After saving an AIHubMix account, follow the dialog to create, view, and copy the key.
+- Site Announcements: View them under "Settings → Site Announcements", or receive new announcement reminders through background notifications.
+- Task Notifications: Configure Browser, Telegram, Webhook, Feishu, WeCom, DingTalk, and ntfy channels under "Settings → General → Notifications".
+- Webhook URL Templates: Fill in and test them in the Webhook notification channel settings.
+- WebDAV Sync: In `WebDAV Settings` and related manual actions under "Settings → Import/Export".
+
 ## 3.37.0
 - **New Features:**
   - Settings Page: Added global settings search. You can search pages, settings tabs, and individual settings from the top search box or with `Ctrl+K` / `Cmd+K`; recently visited items are also remembered so configuration is easier to find.

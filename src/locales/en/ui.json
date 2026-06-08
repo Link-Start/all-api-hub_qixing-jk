@@ -322,6 +322,7 @@
     "community": "Community groups",
     "discussion": "Start a discussion",
     "featureRequest": "Request a feature",
+    "siteSupportRequest": "Request site support",
     "trigger": "Feedback",
     "triggerTooltip": "Open feedback shortcuts"
   },
@@ -358,12 +359,20 @@
   "navigation": {
     "about": "About",
     "account": "Account Management",
-    "apiCredentialProfiles": "API Credential Profiles",
+    "apiCredentialProfiles": "API Credential Library",
     "autoCheckin": "Auto Check-in",
     "autoCheckinRunNow": "Quick check-in",
     "balanceHistory": "Balance History",
     "basic": "Basic Settings",
     "bookmark": "Bookmark Management",
+    "categories": {
+      "api": "API",
+      "automation": "Automation",
+      "general": "General",
+      "insights": "Insights",
+      "siteManagement": "Site Management",
+      "system": "System"
+    },
     "collapseSidebar": "Collapse sidebar",
     "expandSidebar": "Expand sidebar",
     "externalCheckinAll": "Open all external check-ins",
@@ -374,6 +383,7 @@
     "managedSiteModelSync": "Model sync",
     "meshGradientLab": "Mesh Gradient Lab (Dev)",
     "models": "Model List",
+    "overview": "Overview",
     "settings": "Settings",
     "settingsOptions": "Settings Options",
     "sidebarCollapsedHint": "Sidebar collapsed, showing icons only",
@@ -390,6 +400,7 @@
       "control": "Settings Items",
       "page": "Pages",
       "recent": "Recent",
+      "section": "Sections",
       "tab": "Settings Tabs"
     },
     "idleDescription": "Type a setting name, keyword, or technical alias to start searching.",

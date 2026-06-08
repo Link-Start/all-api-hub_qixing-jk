@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import { SITE_TYPES } from "~/constants/siteType"
 import {
+  collectManagedConfigSecrets,
   getManagedSiteAdminConfigForType,
-  getManagedSiteConfigFromPreferences,
   getManagedSiteConfigMissingMessage,
   getManagedSiteContext,
   getManagedSiteLabelKey,
@@ -18,7 +18,39 @@ import {
 const translate = (key: string) => key
 
 describe("managedSite utils", () => {
-  it("defaults to new-api when managedSiteType is missing", () => {
+  it("collects provider secrets from each runtime config shape", () => {
+    expect(
+      collectManagedConfigSecrets({
+        baseUrl: "https://new-api.example.com",
+        adminToken: "admin-token",
+        userId: "1",
+      }),
+    ).toEqual(["admin-token"])
+    expect(
+      collectManagedConfigSecrets({
+        baseUrl: "https://octopus.example.com",
+        username: "admin",
+        password: "octopus-password",
+      }),
+    ).toEqual(["octopus-password"])
+    expect(
+      collectManagedConfigSecrets({
+        baseUrl: "https://token-config.example.com",
+        token: "runtime-token",
+        userId: "1",
+      } as any),
+    ).toEqual(["runtime-token"])
+    expect(
+      collectManagedConfigSecrets({
+        baseUrl: "https://mixed-config.example.com",
+        token: "runtime-token",
+        adminToken: "admin-token",
+        userId: "1",
+      } as any),
+    ).toEqual(["runtime-token", "admin-token"])
+  })
+
+  it("defaults managed-site context to new-api when managedSiteType is missing", () => {
     const prefs = {
       newApi: {
         baseUrl: "https://new-api.example.com",
@@ -27,10 +59,6 @@ describe("managedSite utils", () => {
       },
     }
 
-    expect(getManagedSiteConfigFromPreferences(prefs as any)).toEqual({
-      siteType: SITE_TYPES.NEW_API,
-      config: prefs.newApi,
-    })
     expect(getManagedSiteContext(prefs as any)).toEqual({
       siteType: SITE_TYPES.NEW_API,
       messagesKey: "newapi",
@@ -353,7 +381,7 @@ describe("managedSite utils", () => {
     )
     expect(
       supportsManagedSiteBaseUrlChannelLookup(SITE_TYPES.CLAUDE_CODE_HUB),
-    ).toBe(false)
+    ).toBe(true)
     expect(supportsManagedSiteBaseUrlChannelLookup(SITE_TYPES.NEW_API)).toBe(
       true,
     )

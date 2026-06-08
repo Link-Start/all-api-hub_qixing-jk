@@ -1,12 +1,37 @@
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { accountStorage } from "~/services/accounts/accountStorage"
 import { buildAccountDisplayNameMap } from "~/services/accounts/utils/accountDisplayName"
+import {
+  onAutoCheckinMessage,
+  type AutoCheckinDebugScheduleDailyAlarmForTodayRequest,
+  type AutoCheckinGetAccountInfoRequest,
+  type AutoCheckinPretriggerDailyOnUiOpenRequest,
+  type AutoCheckinRunNowRequest,
+  type AutoCheckinUpdateSettingsRequest,
+} from "~/services/checkin/autoCheckin/messaging"
 import { withExtensionStorageWriteLock } from "~/services/core/storageWriteLock"
 import { notifyTaskResult } from "~/services/notifications/taskNotificationService"
 import {
   DEFAULT_PREFERENCES,
   userPreferences,
 } from "~/services/preferences/userPreferences"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  buildAutoCheckinDiagnostics,
+  trackAutoCheckinConfigSnapshot,
+  trackAutoCheckinRunAnalytics,
+} from "~/services/productAnalytics/autoCheckin"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsResult,
+} from "~/services/productAnalytics/events"
+import { AutoCheckinMessageTypes } from "~/services/runtimeMessaging/messageTypes"
 import type { DisplaySiteData, SiteAccount } from "~/types"
 import {
   AUTO_CHECKIN_RUN_RESULT,
@@ -42,6 +67,7 @@ import {
   onAlarm,
   sendRuntimeMessage,
 } from "~/utils/browser/browserApi"
+import { isDevelopmentMode, isTestMode } from "~/utils/core/environment"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
 import { t } from "~/utils/i18n/core"
@@ -117,6 +143,13 @@ interface AutoCheckinDailyTriggerPlan {
 interface AutoCheckinDailyPlanningOptions {
   allowCatchUp?: boolean
 }
+
+const AUTO_CHECKIN_BACKGROUND_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+  actionId: PRODUCT_ANALYTICS_ACTION_IDS.RunAutoCheckinNow,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.BackgroundAutoCheckinScheduler,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+} as const
 
 /**
  * Scheduler service for Auto Check-in
@@ -331,6 +364,79 @@ class AutoCheckinScheduler {
       return null
     }
     return hours * 60 + minutes
+  }
+
+  private mapRunSummaryToProductAnalyticsResult(
+    summary: Pick<
+      AutoCheckinRunSummary,
+      "executed" | "failedCount" | "skippedCount"
+    >,
+  ): ProductAnalyticsResult {
+    if (summary.failedCount > 0) {
+      return PRODUCT_ANALYTICS_RESULTS.Failure
+    }
+    if (summary.executed === 0) {
+      return PRODUCT_ANALYTICS_RESULTS.Skipped
+    }
+    return PRODUCT_ANALYTICS_RESULTS.Success
+  }
+
+  private trackBackgroundAutoCheckinCompleted(params: {
+    summary: AutoCheckinRunSummary
+    durationMs: number
+    mode: (typeof PRODUCT_ANALYTICS_MODE_IDS)[keyof typeof PRODUCT_ANALYTICS_MODE_IDS]
+    retryAttempted?: boolean
+    retryCount?: number
+  }) {
+    const result = this.mapRunSummaryToProductAnalyticsResult(params.summary)
+
+    void trackProductAnalyticsActionCompleted({
+      ...AUTO_CHECKIN_BACKGROUND_ANALYTICS_CONTEXT,
+      result,
+      durationMs: params.durationMs,
+      diagnostics: buildAutoCheckinDiagnostics({
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Auto,
+        mode: params.mode,
+        summary: params.summary,
+        backgroundExecution: true,
+        ...(typeof params.retryAttempted === "boolean"
+          ? { retryAttempted: params.retryAttempted }
+          : {}),
+        ...(typeof params.retryCount === "number"
+          ? { retryCount: params.retryCount }
+          : {}),
+      }),
+    })
+  }
+
+  private trackBackgroundAutoCheckinRunAnalytics(params: {
+    runKind: AutoCheckinRunKind
+    snapshots: AutoCheckinAccountSnapshot[]
+    accounts: SiteAccount[]
+    retryEnabled: boolean
+    retryPendingBefore: number
+    retryAttempted: number
+    retryRescued: number
+    retryPendingAfter: number
+    retryExhausted: number
+  }) {
+    trackAutoCheckinRunAnalytics({
+      runKind: params.runKind,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+      snapshots: params.snapshots,
+      accountsById: new Map(
+        params.accounts.map((account) => [
+          account.id,
+          { authType: account.authType },
+        ]),
+      ),
+      retryEnabled: params.retryEnabled,
+      retryPendingBefore: params.retryPendingBefore,
+      retryAttempted: params.retryAttempted,
+      retryRescued: params.retryRescued,
+      retryPendingAfter: params.retryPendingAfter,
+      retryExhausted: params.retryExhausted,
+    })
   }
 
   private isMinutesWithinWindow(
@@ -751,20 +857,26 @@ class AutoCheckinScheduler {
     account: SiteAccount,
     accountName: string,
   ): AutoCheckinAccountSnapshot {
+    const disabled = account.disabled === true
     const detectionEnabled = account.checkIn?.enableDetection ?? false
     const autoCheckinEnabled = account.checkIn?.autoCheckInEnabled !== false
-    const provider = resolveAutoCheckinProvider(account)
-    const providerAvailable = provider ? provider.canCheckIn(account) : false
 
     let skipReason: AutoCheckinSkipReason | undefined
 
-    if (!detectionEnabled) {
+    if (disabled) {
+      skipReason = AUTO_CHECKIN_SKIP_REASON.ACCOUNT_DISABLED
+    } else if (!detectionEnabled) {
       skipReason = AUTO_CHECKIN_SKIP_REASON.DETECTION_DISABLED
     } else if (!autoCheckinEnabled) {
       skipReason = AUTO_CHECKIN_SKIP_REASON.AUTO_CHECKIN_DISABLED
-    } else if (!provider) {
+    }
+
+    const provider = skipReason ? null : resolveAutoCheckinProvider(account)
+    const providerAvailable = provider ? provider.canCheckIn(account) : false
+
+    if (!skipReason && !provider) {
       skipReason = AUTO_CHECKIN_SKIP_REASON.NO_PROVIDER
-    } else if (!providerAvailable) {
+    } else if (!skipReason && !providerAvailable) {
       skipReason = AUTO_CHECKIN_SKIP_REASON.PROVIDER_NOT_READY
     }
 
@@ -790,6 +902,22 @@ class AutoCheckinScheduler {
       ...snapshot,
       lastResult: results[snapshot.accountId],
     }))
+  }
+
+  private buildAnalyticsSnapshots(
+    accounts: SiteAccount[],
+    accountDisplayNameById: Map<string, string>,
+    results: Record<string, CheckinAccountResult>,
+  ): AutoCheckinAccountSnapshot[] {
+    return this.attachResultsToSnapshots(
+      accounts.map((account) =>
+        this.buildAccountSnapshot(
+          account,
+          accountDisplayNameById.get(account.id) ?? account.id,
+        ),
+      ),
+      results,
+    )
   }
 
   /**
@@ -964,6 +1092,10 @@ class AutoCheckinScheduler {
     const prefs = await userPreferences.getPreferences()
     const config = prefs.autoCheckin ?? DEFAULT_PREFERENCES.autoCheckin!
     const currentStatus = await autoCheckinStorage.getStatus()
+    trackAutoCheckinConfigSnapshot(
+      config,
+      PRODUCT_ANALYTICS_ENTRYPOINTS.Background,
+    )
 
     // Always remove the legacy single-alarm schedule to prevent duplicate executions.
     await clearAlarm(AutoCheckinScheduler.LEGACY_ALARM_NAME)
@@ -1751,7 +1883,9 @@ class AutoCheckinScheduler {
       // Treat missing values as enabled to preserve backward compatibility with older stored prefs.
       notifyUiOnCompletion = config.notifyUiOnCompletion !== false
 
-      if (!config.globalEnabled) {
+      // The global switch controls scheduled/bulk auto check-in. An explicit
+      // per-account manual run from the account menu should still execute.
+      if (!config.globalEnabled && !targetAccountIdSet) {
         logger.info("Global feature disabled; skipping")
         return
       }
@@ -1846,6 +1980,11 @@ class AutoCheckinScheduler {
           accountSnapshots,
           results,
         )
+        const analyticsSnapshots = this.buildAnalyticsSnapshots(
+          allAccounts,
+          accountDisplayNameById,
+          results,
+        )
         const mergedSummary = mergeSummaryIfNeeded(summary, perAccount)
 
         await autoCheckinStorage.saveStatus({
@@ -1871,6 +2010,26 @@ class AutoCheckinScheduler {
             runKind: runType,
             updatedAccountIds: [],
             summary: mergedSummary,
+          })
+        }
+        if (isDailyRun) {
+          this.trackBackgroundAutoCheckinCompleted({
+            summary: mergedSummary,
+            durationMs: Date.now() - startTime,
+            mode: PRODUCT_ANALYTICS_MODE_IDS.TelemetryAuto,
+            retryAttempted: false,
+            retryCount: 0,
+          })
+          this.trackBackgroundAutoCheckinRunAnalytics({
+            runKind: runType,
+            snapshots: analyticsSnapshots,
+            accounts: allAccounts,
+            retryEnabled: config.retryStrategy?.enabled === true,
+            retryPendingBefore: 0,
+            retryAttempted: 0,
+            retryRescued: 0,
+            retryPendingAfter: 0,
+            retryExhausted: 0,
           })
         }
         return
@@ -1975,6 +2134,11 @@ class AutoCheckinScheduler {
         accountSnapshots,
         results,
       )
+      const analyticsSnapshots = this.buildAnalyticsSnapshots(
+        allAccounts,
+        accountDisplayNameById,
+        results,
+      )
       const mergedSummary = mergeSummaryIfNeeded(summary, perAccount)
 
       await autoCheckinStorage.saveStatus({
@@ -2014,6 +2178,24 @@ class AutoCheckinScheduler {
           failedCount,
           skippedCount,
           total: runnableAccounts.length + skippedCount,
+        })
+        this.trackBackgroundAutoCheckinCompleted({
+          summary: mergedSummary,
+          durationMs: Date.now() - startTime,
+          mode: PRODUCT_ANALYTICS_MODE_IDS.TelemetryAuto,
+          retryAttempted: false,
+          retryCount: 0,
+        })
+        this.trackBackgroundAutoCheckinRunAnalytics({
+          runKind: runType,
+          snapshots: analyticsSnapshots,
+          accounts: allAccounts,
+          retryEnabled: config.retryStrategy?.enabled === true,
+          retryPendingBefore: 0,
+          retryAttempted: 0,
+          retryRescued: 0,
+          retryPendingAfter: retryState?.pendingAccountIds.length ?? 0,
+          retryExhausted: 0,
         })
       }
 
@@ -2079,6 +2261,7 @@ class AutoCheckinScheduler {
    * - Retries stop once `attempts >= retryStrategy.maxAttemptsPerDay`.
    */
   private async runRetryCheckins(): Promise<void> {
+    const startTime = Date.now()
     const now = new Date()
     const today = this.getLocalDay(now)
 
@@ -2118,6 +2301,8 @@ class AutoCheckinScheduler {
     const attemptsByAccount: Record<string, number> = {
       ...(retryState.attemptsByAccount ?? {}),
     }
+    const retryPendingBefore = retryState.pendingAccountIds.length
+    let retryExhausted = 0
 
     const updates: Record<string, CheckinAccountResult> = {}
     const remaining: string[] = []
@@ -2128,6 +2313,7 @@ class AutoCheckinScheduler {
       // Default to 1 to represent the initial daily run failure when the stored map is missing.
       const attempts = attemptsByAccount[accountId] ?? 1
       if (attempts >= maxAttempts) {
+        retryExhausted += 1
         continue
       }
 
@@ -2263,6 +2449,33 @@ class AutoCheckinScheduler {
         failedCount: retryFailedCount,
         skippedCount: retrySkippedCount,
         total: retryResults.length,
+      })
+      this.trackBackgroundAutoCheckinCompleted({
+        summary: {
+          totalEligible: retryResults.length,
+          executed: retrySuccessCount + retryFailedCount,
+          successCount: retrySuccessCount,
+          failedCount: retryFailedCount,
+          skippedCount: retrySkippedCount,
+          needsRetry: retryFailedCount > 0,
+        },
+        durationMs: Date.now() - startTime,
+        mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+        retryAttempted: true,
+        retryCount: retryResults.length,
+      })
+      this.trackBackgroundAutoCheckinRunAnalytics({
+        runKind: "retry",
+        snapshots:
+          accountsSnapshot?.filter((snapshot) => updates[snapshot.accountId]) ??
+          [],
+        accounts: allAccounts,
+        retryEnabled: config.retryStrategy?.enabled === true,
+        retryPendingBefore,
+        retryAttempted: retryResults.length,
+        retryRescued: retrySuccessCount,
+        retryPendingAfter: nextRetryState?.pendingAccountIds.length ?? 0,
+        retryExhausted,
       })
     }
   }
@@ -2473,161 +2686,271 @@ function parseTargetAccountIds(accountIds: unknown):
 }
 
 /**
- * Message handler for Auto Check-in actions (run, retry, get status/settings).
- * Keeps background-only logic centralized for content scripts/options UI calls.
- * @param request Incoming message with action/payload.
- * @param sendResponse Callback to reply to sender.
+ * Run auto check-in immediately for all or selected accounts.
  */
-export const handleAutoCheckinMessage = async (
-  request: any,
-  sendResponse: (response: any) => void,
-) => {
-  try {
-    switch (request.action) {
-      case RuntimeActionIds.AutoCheckinRunNow: {
-        const targetIdsResult = parseTargetAccountIds(request.accountIds)
-        if (!targetIdsResult.success) {
-          sendResponse({ success: false, error: targetIdsResult.error })
-          break
-        }
-
-        try {
-          await autoCheckinScheduler.runCheckins({
-            runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
-            targetAccountIds: targetIdsResult.targetAccountIds,
-          })
-          sendResponse({ success: true })
-        } catch (e) {
-          // Propagate the error to the caller (options UI/content scripts) for user-visible feedback.
-          logger.error("Manual run failed", e)
-          sendResponse({ success: false, error: getErrorMessage(e) })
-        } finally {
-          try {
-            await autoCheckinScheduler.scheduleNextRun({
-              preserveExisting: true,
-            })
-          } catch (error) {
-            logger.warn("Failed to reschedule after manual run", error)
-          }
-        }
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinDebugTriggerDailyAlarmNow: {
-        if (
-          import.meta.env.MODE !== "development" &&
-          import.meta.env.MODE !== "test"
-        ) {
-          sendResponse({
-            success: false,
-            error: `Debug action is only available in development/test mode (${RuntimeActionIds.AutoCheckinDebugTriggerDailyAlarmNow})`,
-          })
-          break
-        }
-        await autoCheckinScheduler.debugTriggerDailyAlarmNow()
-        sendResponse({ success: true })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinDebugTriggerRetryAlarmNow: {
-        if (
-          import.meta.env.MODE !== "development" &&
-          import.meta.env.MODE !== "test"
-        ) {
-          sendResponse({
-            success: false,
-            error: `Debug action is only available in development/test mode (${RuntimeActionIds.AutoCheckinDebugTriggerRetryAlarmNow})`,
-          })
-          break
-        }
-        await autoCheckinScheduler.debugTriggerRetryAlarmNow()
-        sendResponse({ success: true })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinDebugResetLastDailyRunDay: {
-        if (
-          import.meta.env.MODE !== "development" &&
-          import.meta.env.MODE !== "test"
-        ) {
-          sendResponse({
-            success: false,
-            error: `Debug action is only available in development/test mode (${RuntimeActionIds.AutoCheckinDebugResetLastDailyRunDay})`,
-          })
-          break
-        }
-        await autoCheckinScheduler.debugResetLastDailyRunDay()
-        sendResponse({ success: true })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinDebugScheduleDailyAlarmForToday: {
-        if (
-          import.meta.env.MODE !== "development" &&
-          import.meta.env.MODE !== "test"
-        ) {
-          sendResponse({
-            success: false,
-            error: `Debug action is only available in development/test mode (${RuntimeActionIds.AutoCheckinDebugScheduleDailyAlarmForToday})`,
-          })
-          break
-        }
-        const scheduledTime =
-          await autoCheckinScheduler.debugScheduleDailyAlarmForToday({
-            minutesFromNow: request.minutesFromNow,
-          })
-        sendResponse({ success: true, scheduledTime })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinPretriggerDailyOnUiOpen: {
-        const result = await autoCheckinScheduler.pretriggerDailyOnUiOpen({
-          requestId: request.requestId,
-          dryRun: request.dryRun,
-          debug: request.debug,
-        })
-        sendResponse({ success: true, ...result })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinRetryAccount:
-        if (!request.accountId) {
-          sendResponse({ success: false, error: "Missing accountId" })
-          break
-        }
-        await autoCheckinScheduler.retryAccount(request.accountId)
-        sendResponse({ success: true })
-        break
-
-      case RuntimeActionIds.AutoCheckinGetAccountInfo: {
-        if (!request.accountId) {
-          sendResponse({ success: false, error: "Missing accountId" })
-          break
-        }
-        const displayData = await autoCheckinScheduler.getAccountDisplayData(
-          request.accountId,
-          { includeDisabled: request.includeDisabled === true },
-        )
-        sendResponse({ success: true, data: displayData })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinGetStatus: {
-        const status = await autoCheckinStorage.getStatus()
-        sendResponse({ success: true, data: status })
-        break
-      }
-
-      case RuntimeActionIds.AutoCheckinUpdateSettings:
-        await autoCheckinScheduler.updateSettings(request.settings)
-        sendResponse({ success: true })
-        break
-
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
-    }
-  } catch (error) {
-    logger.error("Message handling failed", error)
-    sendResponse({ success: false, error: getErrorMessage(error) })
+export async function runAutoCheckinNow(data: AutoCheckinRunNowRequest = {}) {
+  const targetIdsResult = parseTargetAccountIds(data.accountIds)
+  if (!targetIdsResult.success) {
+    return { success: false as const, error: targetIdsResult.error }
   }
+
+  try {
+    await autoCheckinScheduler.runCheckins({
+      runType: AUTO_CHECKIN_RUN_TYPE.MANUAL,
+      targetAccountIds: targetIdsResult.targetAccountIds,
+    })
+    return { success: true as const }
+  } catch (e) {
+    logger.error("Manual run failed", e)
+    return { success: false as const, error: getErrorMessage(e) }
+  } finally {
+    try {
+      await autoCheckinScheduler.scheduleNextRun({
+        preserveExisting: true,
+      })
+    } catch (error) {
+      logger.warn("Failed to reschedule after manual run", error)
+    }
+  }
+}
+
+/**
+ * Reject debug-only auto check-in actions outside development and test modes.
+ */
+function ensureAutoCheckinDebugAvailable(action: string) {
+  if (!isDevelopmentMode() && !isTestMode()) {
+    return {
+      success: false as const,
+      error: `Debug action is only available in development/test mode (${action})`,
+    }
+  }
+  return null
+}
+
+/**
+ * Trigger the daily auto check-in alarm immediately in debug contexts.
+ */
+export async function triggerAutoCheckinDailyAlarmNow() {
+  const unavailable = ensureAutoCheckinDebugAvailable(
+    AutoCheckinMessageTypes.DebugTriggerDailyAlarmNow,
+  )
+  if (unavailable) return unavailable
+  await autoCheckinScheduler.debugTriggerDailyAlarmNow()
+  return { success: true as const }
+}
+
+/**
+ * Trigger the retry auto check-in alarm immediately in debug contexts.
+ */
+export async function triggerAutoCheckinRetryAlarmNow() {
+  const unavailable = ensureAutoCheckinDebugAvailable(
+    AutoCheckinMessageTypes.DebugTriggerRetryAlarmNow,
+  )
+  if (unavailable) return unavailable
+  await autoCheckinScheduler.debugTriggerRetryAlarmNow()
+  return { success: true as const }
+}
+
+/**
+ * Clear the stored last daily-run day in debug contexts.
+ */
+export async function resetAutoCheckinLastDailyRunDay() {
+  const unavailable = ensureAutoCheckinDebugAvailable(
+    AutoCheckinMessageTypes.DebugResetLastDailyRunDay,
+  )
+  if (unavailable) return unavailable
+  await autoCheckinScheduler.debugResetLastDailyRunDay()
+  return { success: true as const }
+}
+
+/**
+ * Schedule today's daily auto check-in alarm in debug contexts.
+ */
+export async function scheduleAutoCheckinDailyAlarmForToday(
+  data: AutoCheckinDebugScheduleDailyAlarmForTodayRequest = {},
+) {
+  const unavailable = ensureAutoCheckinDebugAvailable(
+    AutoCheckinMessageTypes.DebugScheduleDailyAlarmForToday,
+  )
+  if (unavailable) return unavailable
+  const scheduledTime =
+    await autoCheckinScheduler.debugScheduleDailyAlarmForToday({
+      minutesFromNow: data.minutesFromNow,
+    })
+  return { success: true as const, scheduledTime }
+}
+
+/**
+ * Pretrigger the daily auto check-in flow when the UI opens.
+ */
+export async function pretriggerAutoCheckinDailyOnUiOpen(
+  data: AutoCheckinPretriggerDailyOnUiOpenRequest = {},
+) {
+  const result = await autoCheckinScheduler.pretriggerDailyOnUiOpen({
+    requestId: data.requestId,
+    dryRun: data.dryRun,
+    debug: data.debug,
+  })
+  return { success: true as const, ...result }
+}
+
+/**
+ * Retry auto check-in for one failed account.
+ */
+export async function retryAutoCheckinAccount(accountId?: string) {
+  if (!accountId) {
+    return { success: false as const, error: "Missing accountId" }
+  }
+  await autoCheckinScheduler.retryAccount(accountId)
+  return { success: true as const }
+}
+
+/**
+ * Load display data for one account before opening manual check-in pages.
+ */
+export async function getAutoCheckinAccountInfo(
+  data: AutoCheckinGetAccountInfoRequest,
+) {
+  if (!data.accountId) {
+    return { success: false as const, error: "Missing accountId" }
+  }
+  const displayData = await autoCheckinScheduler.getAccountDisplayData(
+    data.accountId,
+    { includeDisabled: data.includeDisabled === true },
+  )
+  return { success: true as const, data: displayData }
+}
+
+/**
+ * Load the latest persisted auto check-in status.
+ */
+export async function getAutoCheckinStatus() {
+  const status = await autoCheckinStorage.getStatus()
+  return { success: true as const, data: status }
+}
+
+/**
+ * Persist auto check-in scheduler settings.
+ */
+export async function updateAutoCheckinSettings(
+  settings: AutoCheckinUpdateSettingsRequest["settings"],
+) {
+  await autoCheckinScheduler.updateSettings(settings)
+  return { success: true as const }
+}
+
+/**
+ * Convert auto check-in listener errors into runtime responses.
+ */
+function toAutoCheckinFailure(error: unknown) {
+  logger.error("Message handling failed", error)
+  return { success: false as const, error: getErrorMessage(error) }
+}
+
+let autoCheckinMessagingCleanup: (() => void)[] | null = null
+
+/**
+ * Register typed background listeners for auto check-in runtime messages.
+ */
+export function setupAutoCheckinMessagingListeners() {
+  if (autoCheckinMessagingCleanup) {
+    return
+  }
+
+  autoCheckinMessagingCleanup = [
+    onAutoCheckinMessage(AutoCheckinMessageTypes.RunNow, async ({ data }) => {
+      try {
+        return await runAutoCheckinNow(data)
+      } catch (error) {
+        return toAutoCheckinFailure(error)
+      }
+    }),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.DebugTriggerDailyAlarmNow,
+      async () => {
+        try {
+          return await triggerAutoCheckinDailyAlarmNow()
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.DebugTriggerRetryAlarmNow,
+      async () => {
+        try {
+          return await triggerAutoCheckinRetryAlarmNow()
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.DebugResetLastDailyRunDay,
+      async () => {
+        try {
+          return await resetAutoCheckinLastDailyRunDay()
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.DebugScheduleDailyAlarmForToday,
+      async ({ data }) => {
+        try {
+          return await scheduleAutoCheckinDailyAlarmForToday(data)
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.PretriggerDailyOnUiOpen,
+      async ({ data }) => {
+        try {
+          return await pretriggerAutoCheckinDailyOnUiOpen(data)
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.RetryAccount,
+      async ({ data }) => {
+        try {
+          return await retryAutoCheckinAccount(data.accountId)
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.GetAccountInfo,
+      async ({ data }) => {
+        try {
+          return await getAutoCheckinAccountInfo(data)
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+    onAutoCheckinMessage(AutoCheckinMessageTypes.GetStatus, async () => {
+      try {
+        return await getAutoCheckinStatus()
+      } catch (error) {
+        return toAutoCheckinFailure(error)
+      }
+    }),
+    onAutoCheckinMessage(
+      AutoCheckinMessageTypes.UpdateSettings,
+      async ({ data }) => {
+        try {
+          return await updateAutoCheckinSettings(data.settings)
+        } catch (error) {
+          return toAutoCheckinFailure(error)
+        }
+      },
+    ),
+  ]
 }

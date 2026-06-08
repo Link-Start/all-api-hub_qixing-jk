@@ -40,7 +40,31 @@ export interface DailyBalanceHistoryStore {
   snapshotsByAccountId: Record<string, Record<string, DailyBalanceSnapshot>>
 }
 
+export const TODAY_INCOME_ESTIMATE_STATUS = {
+  available: "available",
+  disabled: "disabled",
+  missingCurrentSnapshot: "missing_current_snapshot",
+  missingBaseline: "missing_baseline",
+  missingCashflow: "missing_cashflow",
+  manualBalance: "manual_balance",
+  invalidEstimate: "invalid_estimate",
+} as const
+
+export type TodayIncomeEstimateStatus =
+  (typeof TODAY_INCOME_ESTIMATE_STATUS)[keyof typeof TODAY_INCOME_ESTIMATE_STATUS]
+
+export interface TodayIncomeEstimateResult {
+  reportedTodayIncome: number | null
+  estimatedTodayIncome: number | null
+  compensation: number | null
+  status: TodayIncomeEstimateStatus
+}
+
 export interface BalanceHistoryEndOfDayCapturePreferences {
+  enabled: boolean
+}
+
+export interface BalanceHistoryEstimatedTodayIncomePreferences {
   enabled: boolean
 }
 
@@ -54,11 +78,13 @@ export interface BalanceHistoryEndOfDayCapturePreferences {
 export interface BalanceHistoryPreferences {
   enabled: boolean
   endOfDayCapture: BalanceHistoryEndOfDayCapturePreferences
+  estimatedTodayIncome: BalanceHistoryEstimatedTodayIncomePreferences
   retentionDays: number
 }
 
 export const DEFAULT_BALANCE_HISTORY_PREFERENCES: BalanceHistoryPreferences = {
   enabled: false,
   endOfDayCapture: { enabled: false },
+  estimatedTodayIncome: { enabled: false },
   retentionDays: 365,
 }

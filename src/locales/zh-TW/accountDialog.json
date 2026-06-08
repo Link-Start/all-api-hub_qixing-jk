@@ -8,8 +8,28 @@
     "confirmAdd": "確認新增",
     "helpDocument": "幫助文件",
     "reloadCurrentPage": "重新整理當前頁面",
+    "reloadExtensionAndRetry": "重新載入擴充套件後重試",
+    "reportUnsupportedSite": "反饋未適配站點",
     "saveAccount": "儲存帳號",
-    "saveChanges": "儲存更改"
+    "saveChanges": "儲存更改",
+    "workflow": {
+      "checkingToken": "正在檢查 API 金鑰...",
+      "creatingToken": "正在建立預設金鑰...",
+      "loadingSavedAccount": "正在讀取已儲存帳號...",
+      "openingManagedSiteDialog": "正在開啟渠道配置...",
+      "savingAccount": "正在儲存帳號...",
+      "waitingForOneTimeKey": "請先保存一次性金鑰...",
+      "waitingForSub2ApiGroup": "請選擇 Sub2API 分組..."
+    }
+  },
+  "aihubmixDefaultKeyPrompt": {
+    "cancel": "稍後手動建立",
+    "cancelHint": "取消不會影響帳號儲存。你之後也可以在金鑰管理中手動建立 AIHubMix API 金鑰。",
+    "confirm": "立即建立並查看",
+    "creating": "正在建立...",
+    "description": "{{accountName}} 已儲存。AIHubMix API 金鑰建立後只會顯示一次，請確認你現在可以立即複製並保存完整金鑰。",
+    "title": "建立 AIHubMix 預設金鑰？",
+    "warningTitle": "完整金鑰只顯示一次"
   },
   "form": {
     "accessToken": "訪問令牌",
@@ -19,7 +39,9 @@
     "cookieAuthSessionCookie": "會話 Cookie",
     "cookieAuthSessionCookieDesc": "從當前已登入的瀏覽器標籤頁匯入該帳號的會話 Cookie（同站點多帳號需分別匯入）",
     "cookieAuthSessionCookiePlaceholder": "貼上 Cookie 頭部值",
+    "cookiePermissionEnableCookieAuth": "授予 Cookie 多帳號所需權限",
     "cookiePermissionHelpAction": "前往權限設定",
+    "cookiePermissionRecommendationDesc": "用於從當前登入頁讀取 Cookie，並在重新整理、簽到等請求中按帳號帶上對應 Cookie，支援同站點多帳號穩定工作。",
     "customCheckInDesc": "外部簽到站、福利站等可以獲得帳號餘額或兌換碼的站點地址",
     "customCheckInUrl": "外部簽到站點 URL（可選）",
     "customRedeemUrl": "自定義充值/兌換頁面 URL（可選）",
@@ -27,6 +49,8 @@
     "exchangeRate": "充值金額比例（CNY/USD）",
     "exchangeRateDesc": "表示充值 1 美元需要多少人民幣。系統會嘗試自動獲取，如未獲取到請手動填寫",
     "exchangeRatePlaceholder": "請輸入充值比例",
+    "excludeFromTodayIncome": "不計入今日收入",
+    "excludeFromTodayIncomeDesc": "僅影響“今日收入”合計，不會停用重新整理、簽到或帳號顯示",
     "excludeFromTotalBalance": "不計入總餘額",
     "excludeFromTotalBalanceDesc": "僅影響“總餘額”統計，不會禁用重新整理、簽到等功能",
     "hideAccessToken": "隱藏訪問令牌",
@@ -88,9 +112,12 @@
   },
   "messages": {
     "addSuccess": "帳號 {{name}} 新增成功!",
+    "autoDetectCookiePermissionReloadHint": "如果剛授予 Cookie 多帳號權限後首次識別一直沒有結果，可重新載入擴充套件後再試。",
     "autoDetectFailed": "自動識別失敗: {{error}}",
     "autoDetectSuccess": "自動識別成功！",
     "autoDetectTakingTooLong": "自動識別耗時較長？點擊開啟排查文件",
+    "cookiePermissionGranted": "權限已授權",
+    "cookiePermissionGrantFailed": "未獲得權限授權",
     "importCookiesEmpty": "未找到目前站點的瀏覽器 Cookie，請先確認已在該站點登入後再重試",
     "importCookiesFailed": "匯入 Cookie 失敗：{{error}}",
     "importCookiesFailedUnknown": "匯入 Cookie 失敗，發生未知錯誤",
@@ -102,6 +129,7 @@
     "loadFailed": "載入帳號資料失敗",
     "newApiConfigFailed": "自動配置到 New API失敗: {{error}}",
     "operationFailed": "操作失敗: {{error}}",
+    "reloadExtensionConfirm": "重新載入擴充套件會關閉目前擴充套件頁面，請確認已儲存需要的資訊。",
     "saveAccountFailed": "儲存帳號失敗",
     "saveFailed": "儲存失敗",
     "updateSuccess": "帳號 {{name}} 更新成功!",
@@ -156,7 +184,8 @@
   "warnings": {
     "duplicateAccount": {
       "actions": {
-        "continue": "繼續"
+        "continue": "繼續",
+        "disableAndContinue": "以後不再提醒，並繼續"
       },
       "description_other": "你已在 {{siteUrl}} 新增了 {{count}} 個帳號。繼續新增可能會造成重複，是否繼續？",
       "descriptionExact": "在 {{siteUrl}} 上，使用者 ID {{userId}} 的帳號已存在（{{username}}）。繼續新增可能會造成重複，是否繼續？",
@@ -172,6 +201,10 @@
       "guide": "這個功能會先儲存目前帳號，再自動準備可用的 API Key，並預填到 {{managedSite}} 的新建渠道中，幫你更快完成渠道建立。完成託管站點配置後即可使用。",
       "title": "先配置 {{managedSite}}",
       "warningTitle": "{{managedSite}} 尚未完成配置"
+    },
+    "reloadExtension": {
+      "title": "重新載入擴充套件",
+      "warningTitle": "確認重新載入擴充套件？"
     }
   }
 }

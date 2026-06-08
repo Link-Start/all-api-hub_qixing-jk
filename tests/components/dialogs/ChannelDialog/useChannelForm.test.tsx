@@ -7,12 +7,17 @@ import { DEFAULT_CLAUDE_CODE_HUB_CHANNEL_FIELDS } from "~/constants/claudeCodeHu
 import { DIALOG_MODES } from "~/constants/dialogModes"
 import { ChannelType, DEFAULT_CHANNEL_FIELDS } from "~/constants/managedSite"
 import { SITE_TYPES } from "~/constants/siteType"
+import { getApiService } from "~/services/apiService"
 import { getManagedSiteService } from "~/services/managedSites/managedSiteService"
 import type {
   CreateChannelPayload,
   ManagedSiteChannel,
 } from "~/types/managedSite"
 import { act, renderHook, waitFor } from "~~/tests/test-utils/render"
+
+vi.mock("~/services/apiService", () => ({
+  getApiService: vi.fn(),
+}))
 
 vi.mock("~/services/managedSites/managedSiteService", () => ({
   getManagedSiteService: vi.fn(),
@@ -73,9 +78,15 @@ describe("useChannelForm", () => {
   const mockBuildChannelPayload = vi.fn()
   const mockCreateChannel = vi.fn()
   const mockUpdateChannel = vi.fn()
+  const mockFetchSiteUserGroups = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(getApiService).mockReturnValue({
+      fetchSiteUserGroups: mockFetchSiteUserGroups.mockResolvedValue([
+        "default",
+      ]),
+    } as any)
     vi.mocked(getManagedSiteService).mockResolvedValue({
       siteType: SITE_TYPES.NEW_API,
       checkValidConfig: mockCheckValidConfig.mockResolvedValue(false),
@@ -155,6 +166,41 @@ describe("useChannelForm", () => {
     expect(result.current.formData.groups).not.toBe(
       DEFAULT_CHANNEL_FIELDS.groups,
     )
+  })
+
+  it("loads groups with access-token managed-site auth", async () => {
+    mockCheckValidConfig.mockResolvedValue(true)
+    mockGetConfig.mockResolvedValue({
+      baseUrl: "https://managed.example.com",
+      adminToken: "admin-token",
+      userId: "42",
+    })
+    mockFetchSiteUserGroups.mockResolvedValue(["vip"])
+
+    const { result } = renderHook(() =>
+      useChannelForm({
+        mode: DIALOG_MODES.ADD,
+        channel: null,
+        isOpen: true,
+        onClose: vi.fn(),
+      }),
+    )
+
+    await waitFor(() => {
+      expect(result.current.availableGroups).toEqual([
+        { label: "vip", value: "vip" },
+        { label: "default", value: "default" },
+      ])
+    })
+
+    expect(mockFetchSiteUserGroups).toHaveBeenCalledWith({
+      baseUrl: "https://managed.example.com",
+      auth: {
+        authType: "access_token",
+        accessToken: "admin-token",
+        userId: "42",
+      },
+    })
   })
 
   it("treats handleSubmit as a no-op in view mode", async () => {
@@ -318,6 +364,109 @@ describe("useChannelForm", () => {
       }),
     )
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports an opt-in channel creation outcome after the create request succeeds", async () => {
+    const onClose = vi.fn()
+    const onSuccess = vi.fn()
+    const onMutationOutcome = vi.fn()
+    const preventDefault = vi.fn()
+
+    mockGetConfig.mockResolvedValue({
+      baseUrl: "https://managed.example.com",
+      token: "admin-token",
+      userId: "1",
+    })
+    mockBuildChannelPayload.mockReturnValue({
+      mode: "single",
+      channel: {
+        name: "Alpha",
+        type: ChannelType.OpenAI,
+        key: "sk-test",
+        base_url: "https://source.example.com",
+        models: "gpt-4o",
+        groups: ["default"],
+        priority: 0,
+        weight: 0,
+        status: 1,
+      },
+    } satisfies CreateChannelPayload)
+    mockCreateChannel.mockResolvedValue({ success: true, message: "" })
+
+    const { result } = renderHook(() =>
+      useChannelForm({
+        mode: DIALOG_MODES.ADD,
+        channel: null,
+        isOpen: true,
+        onClose,
+        onSuccess,
+        onMutationOutcome,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(result.current.formData.name).toBe("")
+    })
+
+    await act(async () => {
+      result.current.updateField("name", "Alpha")
+      result.current.updateField("key", "sk-test")
+      result.current.updateField("models", ["gpt-4o"])
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault,
+      } as unknown as FormEvent)
+    })
+
+    expect(onMutationOutcome).toHaveBeenCalledWith({
+      mode: DIALOG_MODES.ADD,
+      result: "success",
+      siteType: SITE_TYPES.NEW_API,
+    })
+  })
+
+  it("reports an opt-in channel update failure when the update request is rejected", async () => {
+    const onMutationOutcome = vi.fn()
+    const preventDefault = vi.fn()
+    const channel = buildManagedSiteChannel()
+
+    mockGetConfig.mockResolvedValue({
+      baseUrl: "https://managed.example.com",
+      token: "admin-token",
+      userId: "1",
+    })
+    mockUpdateChannel.mockResolvedValue({
+      success: false,
+      message: "Update failed",
+    })
+
+    const { result } = renderHook(() =>
+      useChannelForm({
+        mode: DIALOG_MODES.EDIT,
+        channel,
+        isOpen: true,
+        onClose: vi.fn(),
+        onMutationOutcome,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(result.current.formData.name).toBe("Alpha")
+    })
+
+    await act(async () => {
+      await result.current.handleSubmit({
+        preventDefault,
+      } as unknown as FormEvent)
+    })
+
+    expect(onMutationOutcome).toHaveBeenCalledWith({
+      mode: DIALOG_MODES.EDIT,
+      result: "failure",
+      siteType: SITE_TYPES.NEW_API,
+    })
   })
 
   it("does not require a real provider key when editing a Claude Code Hub channel", async () => {

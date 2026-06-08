@@ -9,8 +9,24 @@ import {
   createDisplayAccountApiContext,
   resolveDisplayAccountTokenForSecret,
 } from "~/services/accounts/utils/apiServiceRequest"
+import { formatOptionalSkPrefixSiteTokenAuthKey } from "~/services/apiService/common/apiKey"
 import { getManagedSiteTokenChannelStatus } from "~/services/managedSites/tokenChannelStatus"
 import { supportsManagedSiteBaseUrlChannelLookup } from "~/services/managedSites/utils/managedSite"
+import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  startProductAnalyticsAction,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_MODE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_STATUS_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsErrorCategory,
+} from "~/services/productAnalytics/events"
 import type { AccountToken, DisplaySiteData } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
@@ -24,12 +40,87 @@ import { buildTokenIdentityKey } from "../utils"
  */
 const logger = createLogger("KeyManagementHook")
 
+const keyManagementAnalyticsContext = (
+  actionId:
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccountTokens
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteTokenStatus
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.CopyAccountTokenKey
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.RevealAccountTokenKey
+    | typeof PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccountToken,
+  surfaceId:
+    | typeof PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader
+    | typeof PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+) => ({
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.KeyManagement,
+  actionId,
+  surfaceId,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+})
+
+const managedSiteTokenStatusKindByStatus = (
+  status: ManagedSiteTokenChannelStatusResult["status"],
+) => {
+  switch (status) {
+    case "added":
+      return PRODUCT_ANALYTICS_STATUS_KINDS.Healthy
+    case "not-added":
+      return PRODUCT_ANALYTICS_STATUS_KINDS.Warning
+    default:
+      return PRODUCT_ANALYTICS_STATUS_KINDS.Unknown
+  }
+}
+
+const summarizeManagedSiteTokenStatusResults = (
+  resultsByIdentityKey: Record<string, ManagedSiteTokenChannelStatusResult>,
+  itemCount: number,
+) => {
+  const results = Object.values(resultsByIdentityKey)
+  const failureCount = Math.max(itemCount - results.length, 0)
+  const hasWarning = results.some((result) => result.status !== "added")
+
+  if (failureCount > 0 || hasWarning) {
+    return {
+      successCount: results.length,
+      failureCount,
+      statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Warning,
+    }
+  }
+
+  return {
+    successCount: results.length,
+    failureCount: 0,
+    statusKind:
+      results[0] !== undefined
+        ? managedSiteTokenStatusKindByStatus(results[0].status)
+        : undefined,
+  }
+}
+
+const isClipboardPermissionError = (error: unknown) => {
+  if (error instanceof DOMException) {
+    return (
+      error.name === "NotAllowedError" ||
+      error.name === "SecurityError" ||
+      error.name === "NotFoundError"
+    )
+  }
+
+  if (error instanceof Error) {
+    return /clipboard|denied|permission|notallowed|security/i.test(
+      `${error.name} ${error.message}`,
+    )
+  }
+
+  return false
+}
+
 type TokenLoadStatus = "idle" | "loading" | "loaded" | "error"
 
 interface TokenInventoryState {
   status: TokenLoadStatus
   tokens: AccountToken[]
   errorMessage?: string
+  errorCategory?: ProductAnalyticsErrorCategory
 }
 
 interface FailedAccountTokenLoad {
@@ -43,6 +134,12 @@ interface TokenLoadProgress {
   loaded: number
   loading: number
   error: number
+}
+
+interface TokenLoadAggregateResult {
+  successCount: number
+  failureCount: number
+  errorCategory?: ProductAnalyticsErrorCategory
 }
 
 interface ManagedSiteTokenStatusState {
@@ -59,6 +156,14 @@ type ManagedSiteTokenChannelStatusResult = Awaited<
 
 interface RefreshManagedSiteTokenStatusOptions {
   resolvedChannelKeysById?: Record<number, string>
+}
+
+const toDisplayManagedSiteTokenStatusResult = (
+  result: ManagedSiteTokenChannelStatusResult,
+): ManagedSiteTokenChannelStatusResult => {
+  const displayResult = { ...result }
+  delete displayResult.resolvedChannelKeysById
+  return displayResult
 }
 
 const isFailedAccountTokenLoad = (
@@ -138,6 +243,21 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
   >({})
   const managedSiteTokenStatusesRef = useRef(managedSiteTokenStatuses)
   managedSiteTokenStatusesRef.current = managedSiteTokenStatuses
+  const updateManagedSiteTokenStatuses = useCallback(
+    (
+      updater: (
+        prev: Record<string, ManagedSiteTokenStatusState>,
+      ) => Record<string, ManagedSiteTokenStatusState>,
+    ) => {
+      const next = updater(managedSiteTokenStatusesRef.current)
+      managedSiteTokenStatusesRef.current = next
+      setManagedSiteTokenStatuses(next)
+    },
+    [],
+  )
+  const resolvedChannelKeysByIdentityKeyRef = useRef<
+    Record<string, Record<number, string>>
+  >({})
   const [isManagedSiteStatusRefreshing, setIsManagedSiteStatusRefreshing] =
     useState(false)
 
@@ -217,6 +337,9 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
   const accountRequestEpochRef = useRef<Record<string, number>>({})
   const managedSiteStatusRunIdRef = useRef(0)
   const isMountedRef = useRef(true)
+  const tokenLoadErrorCategoriesRef = useRef<
+    Record<string, ProductAnalyticsErrorCategory>
+  >({})
 
   const startNewLoadEpoch = useCallback(() => {
     selectionEpochRef.current += 1
@@ -252,7 +375,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
 
   const invalidateManagedSiteStatuses = useCallback(
     (shouldRemove: (identityKey: string) => boolean) => {
-      setManagedSiteTokenStatuses((prev) => {
+      updateManagedSiteTokenStatuses((prev) => {
         let didChange = false
         const next: Record<string, ManagedSiteTokenStatusState> = {}
 
@@ -268,7 +391,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
         return didChange ? next : prev
       })
     },
-    [],
+    [updateManagedSiteTokenStatuses],
   )
 
   const invalidateManagedSiteStatusesForAccount = useCallback(
@@ -288,6 +411,26 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       )
     },
     [invalidateManagedSiteStatuses],
+  )
+
+  const mergeResolvedChannelKeysForIdentity = useCallback(
+    (identityKey: string, resolvedChannelKeysById?: Record<number, string>) => {
+      if (
+        !resolvedChannelKeysById ||
+        Object.keys(resolvedChannelKeysById).length === 0
+      ) {
+        return
+      }
+
+      resolvedChannelKeysByIdentityKeyRef.current = {
+        ...resolvedChannelKeysByIdentityKeyRef.current,
+        [identityKey]: {
+          ...(resolvedChannelKeysByIdentityKeyRef.current[identityKey] ?? {}),
+          ...resolvedChannelKeysById,
+        },
+      }
+    },
+    [],
   )
 
   const runManagedSiteStatusChecks = useCallback(
@@ -341,7 +484,8 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
           identityKey,
           cacheKey,
           resolvedChannelKeysById:
-            resolvedChannelKeysByIdentityKey[identityKey],
+            resolvedChannelKeysByIdentityKey[identityKey] ??
+            resolvedChannelKeysByIdentityKeyRef.current[identityKey],
         })
       }
 
@@ -359,7 +503,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
         managedSiteStatusRunIdRef.current = runId
       }
 
-      setManagedSiteTokenStatuses((prev) => {
+      updateManagedSiteTokenStatuses((prev) => {
         const next = { ...prev }
 
         for (const target of targets) {
@@ -393,13 +537,26 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
               token: target.token,
               resolvedChannelKeysById: target.resolvedChannelKeysById,
             })
-            resultsByIdentityKey[target.identityKey] = result
+            const displayResult = toDisplayManagedSiteTokenStatusResult(result)
 
             if (!isMountedRef.current) {
               return
             }
 
-            setManagedSiteTokenStatuses((prev) => {
+            const latestEntry =
+              managedSiteTokenStatusesRef.current[target.identityKey]
+
+            if (
+              !latestEntry ||
+              latestEntry.cacheKey !== target.cacheKey ||
+              latestEntry.runId !== runId
+            ) {
+              continue
+            }
+
+            resultsByIdentityKey[target.identityKey] = displayResult
+
+            updateManagedSiteTokenStatuses((prev) => {
               const currentEntry = prev[target.identityKey]
 
               if (
@@ -410,13 +567,18 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
                 return prev
               }
 
+              mergeResolvedChannelKeysForIdentity(
+                target.identityKey,
+                result.resolvedChannelKeysById,
+              )
+
               return {
                 ...prev,
                 [target.identityKey]: {
                   cacheKey: target.cacheKey,
                   runId,
                   isChecking: false,
-                  result,
+                  result: displayResult,
                   checkedAt: Date.now(),
                 },
               }
@@ -431,6 +593,8 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       accountById,
       buildManagedSiteStatusCacheKey,
       isManagedSiteChannelStatusSupported,
+      mergeResolvedChannelKeysForIdentity,
+      updateManagedSiteTokenStatuses,
     ],
   )
 
@@ -444,14 +608,14 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       accountId: string
       loadEpoch: number
       toastOnError: boolean
-    }) => {
+    }): Promise<TokenLoadStatus | null> => {
       const { accountId, loadEpoch, toastOnError } = params
       const account = accountById.get(accountId)
-      if (!account) return
+      if (!account) return null
 
       const requestEpoch = getNextAccountRequestEpoch(accountId)
 
-      if (!isEpochActive(loadEpoch)) return
+      if (!isEpochActive(loadEpoch)) return null
       invalidateManagedSiteStatusesForAccount(accountId)
       setTokenInventories((prev) => ({
         ...prev,
@@ -459,6 +623,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
           status: "loading",
           tokens: prev[accountId]?.tokens ?? [],
           errorMessage: undefined,
+          errorCategory: undefined,
         },
       }))
 
@@ -466,23 +631,26 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
         const { service, request } = createDisplayAccountApiContext(account)
         const tokens = await service.fetchAccountTokens(request)
 
-        if (!isEpochActive(loadEpoch)) return
-        if (!isLatestAccountRequest(accountId, requestEpoch)) return
+        if (!isEpochActive(loadEpoch)) return null
+        if (!isLatestAccountRequest(accountId, requestEpoch)) return null
 
         if (!Array.isArray(tokens)) {
           const errorMessage = loadFailedMessageRef.current
+          const errorCategory = PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+          tokenLoadErrorCategoriesRef.current[accountId] = errorCategory
           setTokenInventories((prev) => ({
             ...prev,
             [accountId]: {
               status: "error",
               tokens: prev[accountId]?.tokens ?? [],
               errorMessage,
+              errorCategory,
             },
           }))
           if (toastOnError) {
             toast.error(errorMessage)
           }
-          return
+          return "error"
         }
 
         const tokensWithAccount = tokens.map((token) => ({
@@ -497,14 +665,20 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
             status: "loaded",
             tokens: tokensWithAccount,
             errorMessage: undefined,
+            errorCategory: undefined,
           },
         }))
+        delete tokenLoadErrorCategoriesRef.current[accountId]
+        return "loaded"
       } catch (error) {
-        if (!isEpochActive(loadEpoch)) return
-        if (!isLatestAccountRequest(accountId, requestEpoch)) return
+        if (!isEpochActive(loadEpoch)) return null
+        if (!isLatestAccountRequest(accountId, requestEpoch)) return null
 
         const errorMessage =
           getErrorMessage(error) || loadFailedMessageRef.current
+        const errorCategory =
+          resolveProductAnalyticsErrorCategoryFromError(error)
+        tokenLoadErrorCategoriesRef.current[accountId] = errorCategory
         logger.error("获取账号密钥失败", errorMessage)
         setTokenInventories((prev) => ({
           ...prev,
@@ -512,11 +686,13 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
             status: "error",
             tokens: prev[accountId]?.tokens ?? [],
             errorMessage,
+            errorCategory,
           },
         }))
         if (toastOnError) {
           toast.error(errorMessage)
         }
+        return "error"
       }
     },
     [
@@ -534,8 +710,12 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
    * - different origins load concurrently
    */
   const loadTokensForAccounts = useCallback(
-    async (params: { accountIds: string[]; loadEpoch: number }) => {
+    async (params: {
+      accountIds: string[]
+      loadEpoch: number
+    }): Promise<TokenLoadAggregateResult> => {
       const { accountIds, loadEpoch } = params
+      tokenLoadErrorCategoriesRef.current = {}
       const targetAccounts = accountIds.flatMap((id) => {
         const account = accountById.get(id)
         return account ? [account] : []
@@ -552,24 +732,55 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       const originEntries = Array.from(accountsByOrigin.entries())
       const results = await Promise.allSettled(
         originEntries.map(async ([, originAccountIds]) => {
+          const statuses: TokenLoadStatus[] = []
           for (const accountId of originAccountIds) {
-            if (!isEpochActive(loadEpoch)) return
-            await loadTokensForAccount({
+            if (!isEpochActive(loadEpoch)) return statuses
+            const status = await loadTokensForAccount({
               accountId,
               loadEpoch,
               toastOnError: false,
             })
+            if (status === "loaded" || status === "error") {
+              statuses.push(status)
+            }
           }
+          return statuses
         }),
       )
 
+      let successCount = 0
+      let failureCount = 0
       results.forEach((result, index) => {
-        if (result.status !== "rejected") return
+        if (result.status === "fulfilled") {
+          successCount += result.value.filter(
+            (status) => status === "loaded",
+          ).length
+          failureCount += result.value.filter(
+            (status) => status === "error",
+          ).length
+          return
+        }
         logger.error("All-accounts token load worker failed unexpectedly", {
           origin: originEntries[index]?.[0] ?? "unknown",
           error: result.reason,
         })
+        failureCount +=
+          accountsByOrigin.get(originEntries[index]?.[0] ?? "")?.length ?? 0
       })
+      const failureCategories = targetAccounts
+        .map((account) => tokenLoadErrorCategoriesRef.current[account.id])
+        .filter(
+          (category): category is ProductAnalyticsErrorCategory =>
+            category !== undefined,
+        )
+      const nonUnknownFailureCategory = failureCategories.find(
+        (category) => category !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      )
+      return {
+        successCount,
+        failureCount,
+        errorCategory: nonUnknownFailureCategory ?? failureCategories[0],
+      }
     },
     [accountById, isEpochActive, loadTokensForAccount],
   )
@@ -584,31 +795,77 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       const targetAccountId = accountId ?? selectedAccount
       if (!targetAccountId || enabledDisplayData.length === 0) return
 
+      const tracker = startProductAnalyticsAction(
+        keyManagementAnalyticsContext(
+          PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccountTokens,
+          PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+        ),
+      )
       const loadEpoch = startNewLoadEpoch()
       setVisibleKeys(new Set())
       setResolvedVisibleKeys({})
       setResolvingVisibleKeys(new Set())
 
       if (targetAccountId === KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE) {
+        const targetAccountIds = enabledDisplayData.map((account) => account.id)
         setTokenInventories((prev) => {
           const next: Record<string, TokenInventoryState> = {}
           for (const account of enabledDisplayData) {
-            next[account.id] = prev[account.id] ?? {
-              status: "idle",
-              tokens: [],
+            next[account.id] = {
+              ...(prev[account.id] ?? {
+                status: "idle",
+                tokens: [],
+              }),
+              errorCategory: undefined,
             }
           }
           return next
         })
-        await loadTokensForAccounts({
-          accountIds: enabledDisplayData.map((account) => account.id),
+        const loadResult = await loadTokensForAccounts({
+          accountIds: targetAccountIds,
           loadEpoch,
         })
+        if (!isEpochActive(loadEpoch)) {
+          tracker.complete(PRODUCT_ANALYTICS_RESULTS.Skipped, {
+            insights: {
+              mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+              itemCount: targetAccountIds.length,
+            },
+          })
+          return
+        }
+        const successCount = loadResult.successCount
+        const failureCount = loadResult.failureCount
+        tracker.complete(
+          failureCount > 0
+            ? PRODUCT_ANALYTICS_RESULTS.Failure
+            : PRODUCT_ANALYTICS_RESULTS.Success,
+          {
+            ...(failureCount > 0 &&
+            loadResult.errorCategory &&
+            loadResult.errorCategory !==
+              PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+              ? { errorCategory: loadResult.errorCategory }
+              : {}),
+            insights: {
+              mode: PRODUCT_ANALYTICS_MODE_IDS.All,
+              itemCount: targetAccountIds.length,
+              successCount,
+              failureCount,
+            },
+          },
+        )
         return
       }
 
       if (!accountById.get(targetAccountId)) {
         setTokenInventories({})
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+          },
+        })
         return
       }
 
@@ -620,10 +877,33 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
         },
       }))
 
-      await loadTokensForAccount({
+      const status = await loadTokensForAccount({
         accountId: targetAccountId,
         loadEpoch,
         toastOnError: true,
+      })
+      const result =
+        status === "loaded"
+          ? PRODUCT_ANALYTICS_RESULTS.Success
+          : status === null
+            ? PRODUCT_ANALYTICS_RESULTS.Skipped
+            : PRODUCT_ANALYTICS_RESULTS.Failure
+      const errorCategory =
+        result === PRODUCT_ANALYTICS_RESULTS.Failure
+          ? tokenLoadErrorCategoriesRef.current[targetAccountId] ??
+            tokenInventoriesRef.current[targetAccountId]?.errorCategory ??
+            PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+          : undefined
+      tracker.complete(result, {
+        ...(errorCategory &&
+        errorCategory !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+          ? { errorCategory }
+          : result === PRODUCT_ANALYTICS_RESULTS.Failure
+            ? { errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown }
+            : {}),
+        insights: {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.Single,
+        },
       })
     },
     [
@@ -633,6 +913,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       loadTokensForAccount,
       loadTokensForAccounts,
       startNewLoadEpoch,
+      isEpochActive,
     ],
   )
 
@@ -650,10 +931,36 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       .map((account) => account.id)
 
     if (failedAccountIds.length === 0) return
-    await loadTokensForAccounts({
+    const tracker = startProductAnalyticsAction(
+      keyManagementAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.RefreshAccountTokens,
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+      ),
+    )
+    const loadResult = await loadTokensForAccounts({
       accountIds: failedAccountIds,
       loadEpoch: selectionEpochRef.current,
     })
+    const successCount = loadResult.successCount
+    const failureCount = loadResult.failureCount
+    tracker.complete(
+      failureCount > 0
+        ? PRODUCT_ANALYTICS_RESULTS.Failure
+        : PRODUCT_ANALYTICS_RESULTS.Success,
+      {
+        ...(failureCount > 0 &&
+        loadResult.errorCategory &&
+        loadResult.errorCategory !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+          ? { errorCategory: loadResult.errorCategory }
+          : {}),
+        insights: {
+          mode: PRODUCT_ANALYTICS_MODE_IDS.RetryFailed,
+          itemCount: failedAccountIds.length,
+          successCount,
+          failureCount,
+        },
+      },
+    )
   }, [enabledDisplayData, isAllAccountsMode, loadTokensForAccounts])
 
   useEffect(() => {
@@ -836,12 +1143,35 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
     }
 
     setIsManagedSiteStatusRefreshing(true)
+    const targetTokenCount = statusCheckTokens.length
+    const tracker = startProductAnalyticsAction(
+      keyManagementAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.RefreshManagedSiteTokenStatus,
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementHeader,
+      ),
+    )
 
     try {
-      await runManagedSiteStatusChecks({
+      const results = await runManagedSiteStatusChecks({
         tokens: statusCheckTokens,
         force: true,
       })
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+        insights: {
+          itemCount: targetTokenCount,
+          ...summarizeManagedSiteTokenStatusResults(results, targetTokenCount),
+        },
+      })
+    } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          itemCount: targetTokenCount,
+          failureCount: targetTokenCount,
+          statusKind: PRODUCT_ANALYTICS_STATUS_KINDS.Error,
+        },
+      })
+      throw error
     } finally {
       if (isMountedRef.current) {
         setIsManagedSiteStatusRefreshing(false)
@@ -899,8 +1229,9 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
 
   useEffect(() => {
     managedSiteStatusRunIdRef.current += 1
-    setManagedSiteTokenStatuses({})
-  }, [managedSiteConfigFingerprint])
+    resolvedChannelKeysByIdentityKeyRef.current = {}
+    updateManagedSiteTokenStatuses(() => ({}))
+  }, [managedSiteConfigFingerprint, updateManagedSiteTokenStatuses])
 
   useEffect(() => {
     if (
@@ -926,6 +1257,12 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
   }, [isManagedSiteChannelStatusSupported])
 
   const copyKey = async (account: DisplaySiteData, token: AccountToken) => {
+    const tracker = startProductAnalyticsAction(
+      keyManagementAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.CopyAccountTokenKey,
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      ),
+    )
     try {
       const resolvedToken = await resolveDisplayAccountTokenForSecret(
         account,
@@ -933,20 +1270,30 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       )
       await navigator.clipboard.writeText(resolvedToken.key)
       toast.success(t("keyManagement:messages.keyCopied", { name: token.name }))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
       toast.error(
         getErrorMessage(error, t("keyManagement:messages.copyFailed")),
       )
       logger.warn("Failed to copy key to clipboard", error)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: isClipboardPermissionError(error)
+          ? PRODUCT_ANALYTICS_ERROR_CATEGORIES.Permission
+          : resolveProductAnalyticsErrorCategoryFromError(error),
+      })
     }
   }
 
   const getVisibleTokenKey = useCallback(
     (token: Pick<AccountToken, "accountId" | "id" | "key">) => {
       const tokenIdentityKey = buildTokenIdentityKey(token.accountId, token.id)
-      return resolvedVisibleKeys[tokenIdentityKey] ?? token.key
+      const account = accountById.get(token.accountId)
+      return formatOptionalSkPrefixSiteTokenAuthKey(
+        resolvedVisibleKeys[tokenIdentityKey] ?? token.key,
+        account?.siteType,
+      )
     },
-    [resolvedVisibleKeys],
+    [accountById, resolvedVisibleKeys],
   )
 
   const toggleKeyVisibility = async (
@@ -978,6 +1325,12 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
     }
 
     const visibilityRequestEpoch = selectionEpochRef.current
+    const tracker = startProductAnalyticsAction(
+      keyManagementAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.RevealAccountTokenKey,
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      ),
+    )
     setResolvingVisibleKeys((prev) => {
       const next = new Set(prev)
       next.add(tokenIdentityKey)
@@ -1003,11 +1356,15 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
         newSet.add(tokenIdentityKey)
         return newSet
       })
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
     } catch (error) {
       toast.error(
         getErrorMessage(error, t("keyManagement:messages.revealFailed")),
       )
       logger.warn("Failed to resolve key for visibility", error)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
     } finally {
       if (isMountedRef.current) {
         setResolvingVisibleKeys((prev) => {
@@ -1074,20 +1431,21 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
   }
 
   const handleDeleteToken = async (token: AccountToken) => {
-    if (
-      !window.confirm(
-        t("keyManagement:messages.deleteConfirm", { name: token.name }),
-      )
-    ) {
-      return
-    }
-
+    const tracker = startProductAnalyticsAction(
+      keyManagementAnalyticsContext(
+        PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccountToken,
+        PRODUCT_ANALYTICS_SURFACE_IDS.OptionsKeyManagementRowActions,
+      ),
+    )
     try {
       const account = enabledDisplayData.find(
         (acc) => acc.id === token.accountId,
       )
       if (!account) {
         toast.error(t("keyManagement:messages.accountNotFound"))
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        })
         return
       }
 
@@ -1098,6 +1456,7 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       toast.success(
         t("keyManagement:messages.deleteSuccess", { name: token.name }),
       )
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success)
 
       if (selectedAccount === KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE) {
         void loadTokensForAccount({
@@ -1112,6 +1471,9 @@ export function useKeyManagement(routeParams?: Record<string, string>) {
       const errorMessage = getErrorMessage(error) || String(error)
       logger.error("删除密钥失败", errorMessage)
       toast.error(errorMessage)
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      })
     }
   }
 

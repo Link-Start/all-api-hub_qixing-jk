@@ -132,6 +132,44 @@ describe("autoCheckin utils", () => {
       ).toBe("execution.hints.invalidAccessToken")
     })
 
+    it.each([
+      "Turnstile token not available",
+      "Cloudflare Turnstile token is not available yet",
+      "PoW challenge and nonce are required",
+      "POW verification failed: challenge and nonce missing",
+      "Turnstile校验失败，请刷新重试!",
+      "Turnstile 验证失败，请刷新重试",
+      "请打开网站后再签到",
+      "请先打开站点完成验证后再签到",
+    ])(
+      "returns the manual verification hint for protected check-in failures: %s",
+      (message) => {
+        expect(
+          resolveAutoCheckinTroubleshootingHintKey({
+            status: CHECKIN_RESULT_STATUS.FAILED,
+            message,
+          }),
+        ).toBe("execution.hints.manualVerificationRequired")
+      },
+    )
+
+    it.each([
+      "Turnstile configuration was rejected by the backend",
+      "PoW verification failed",
+      "请打开网站查看公告",
+      "请稍后再签到",
+    ])(
+      "does not overmatch unrelated protected-flow messages: %s",
+      (message) => {
+        expect(
+          resolveAutoCheckinTroubleshootingHintKey({
+            status: CHECKIN_RESULT_STATUS.FAILED,
+            message,
+          }),
+        ).toBeNull()
+      },
+    )
+
     it("does not return a raw-message hint for skipped rows without a known message key", () => {
       expect(
         resolveAutoCheckinTroubleshootingHintKey({

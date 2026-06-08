@@ -1,11 +1,13 @@
+import { SITE_TYPES } from "~/constants/siteType"
 import { resolveDisplayAccountTokenForSecret } from "~/services/accounts/utils/apiServiceRequest"
-import { fetchAnthropicModelIds } from "~/services/apiService/anthropic"
+import { fetchAnthropicModelIds } from "~/services/aiApi/anthropic"
+import { fetchGoogleModelIds } from "~/services/aiApi/google"
+import { fetchOpenAICompatibleModelIds } from "~/services/aiApi/openaiCompatible"
+import { getApiService } from "~/services/apiService"
 import type {
   ModelPricing,
   PricingResponse,
 } from "~/services/apiService/common/type"
-import { fetchGoogleModelIds } from "~/services/apiService/google"
-import { fetchOpenAICompatibleModelIds } from "~/services/apiService/openaiCompatible"
 import {
   API_TYPES,
   type ApiVerificationApiType,
@@ -78,6 +80,20 @@ export async function loadAccountTokenFallbackPricingResponse(
   params: LoadAccountTokenFallbackPricingParams,
 ): Promise<PricingResponse> {
   const declaredModelIds = parseDelimitedList(params.token.models)
+
+  if (params.account.siteType === SITE_TYPES.AIHUBMIX) {
+    return getApiService(params.account.siteType).fetchModelPricing({
+      baseUrl: params.account.baseUrl,
+      accountId: params.account.id,
+      auth: {
+        authType: params.account.authType,
+        userId: params.account.userId,
+        accessToken: params.account.token,
+        cookie: params.account.cookieAuthSessionCookie,
+      },
+    })
+  }
+
   let resolvedTokenKey = ""
 
   try {
@@ -111,7 +127,9 @@ export async function loadAccountTokenFallbackPricingResponse(
       resolvedTokenKey,
     ])
 
-    throw new Error(sanitizedMessage || ACCOUNT_TOKEN_FALLBACK_LOAD_FAILED)
+    throw new Error(sanitizedMessage || ACCOUNT_TOKEN_FALLBACK_LOAD_FAILED, {
+      cause: error,
+    })
   }
 }
 

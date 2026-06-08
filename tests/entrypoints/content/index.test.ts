@@ -8,6 +8,7 @@ const setupRedemptionAssistContentMock = vi.fn()
 const setupWebAiApiCheckContentMock = vi.fn()
 const setupContentMessageHandlersMock = vi.fn()
 const setContentScriptContextMock = vi.fn()
+const ensureContentI18nReadyMock = vi.fn()
 const logger = {
   debug: vi.fn(),
   warn: vi.fn(),
@@ -43,6 +44,10 @@ vi.mock("~/entrypoints/content/shared/uiRoot", () => ({
   setContentScriptContext: setContentScriptContextMock,
 }))
 
+vi.mock("~/utils/i18n/content", () => ({
+  ensureContentI18nReady: ensureContentI18nReadyMock,
+}))
+
 vi.mock("~/utils/core/logger", () => ({
   createLogger: vi.fn(() => logger),
 }))
@@ -58,7 +63,10 @@ describe("content entrypoint", () => {
     setupRedemptionAssistContentMock.mockReset()
     setupWebAiApiCheckContentMock.mockReset()
     setupContentMessageHandlersMock.mockReset()
+    setupContentMessageHandlersMock.mockReturnValue(vi.fn())
     setContentScriptContextMock.mockReset()
+    ensureContentI18nReadyMock.mockReset()
+    ensureContentI18nReadyMock.mockResolvedValue(undefined)
     logger.debug.mockReset()
     logger.warn.mockReset()
 
@@ -130,6 +138,7 @@ describe("content entrypoint", () => {
     await module.default.main(ctx)
 
     expect(setContentScriptContextMock).toHaveBeenCalledWith(ctx)
+    expect(ensureContentI18nReadyMock).toHaveBeenCalledTimes(1)
     expect(setupContentMessageHandlersMock).toHaveBeenCalledTimes(1)
     expect(onInvalidated).toHaveBeenCalledTimes(1)
 
@@ -202,6 +211,48 @@ describe("content entrypoint", () => {
     expect(secondApiCheckCleanup).toHaveBeenCalledTimes(1)
   })
 
+  it("cleans up message handlers when the content context is invalidated", async () => {
+    const cleanupMessageHandlers = vi.fn()
+    const cleanupRedemption = vi.fn()
+    const cleanupApiCheck = vi.fn()
+
+    setupContentMessageHandlersMock.mockReturnValue(cleanupMessageHandlers)
+    setupRedemptionAssistContentMock.mockReturnValue(cleanupRedemption)
+    setupWebAiApiCheckContentMock.mockReturnValue(cleanupApiCheck)
+    storageGetMock.mockResolvedValueOnce({
+      redemptionAssist: {
+        enabled: true,
+        contextMenu: { enabled: true },
+      },
+      webAiApiCheck: {
+        enabled: true,
+        contextMenu: { enabled: true },
+        autoDetect: { enabled: true },
+      },
+    })
+
+    const module = await import("~/entrypoints/content/index")
+    const onInvalidated = vi.fn()
+
+    await module.default.main({ onInvalidated } as any)
+
+    const cleanup = onInvalidated.mock.calls[0]?.[0]
+    expect(cleanup).toBeTypeOf("function")
+
+    await waitFor(() => {
+      expect(setupRedemptionAssistContentMock).toHaveBeenCalledTimes(1)
+      expect(setupWebAiApiCheckContentMock).toHaveBeenCalledTimes(1)
+    })
+
+    cleanup()
+
+    expect(cleanupMessageHandlers).toHaveBeenCalledTimes(1)
+    await waitFor(() => {
+      expect(cleanupRedemption).toHaveBeenCalledTimes(1)
+      expect(cleanupApiCheck).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it("falls back to default feature preferences when storage lookup fails", async () => {
     const redemptionCleanup = vi.fn()
     const apiCheckCleanup = vi.fn()
@@ -221,7 +272,7 @@ describe("content entrypoint", () => {
         enableContextMenu: true,
       })
       expect(setupWebAiApiCheckContentMock).toHaveBeenCalledWith({
-        enableDetection: false,
+        enableDetection: true,
         enableContextMenu: true,
       })
     })
@@ -236,6 +287,42 @@ describe("content entrypoint", () => {
 
     expect(redemptionCleanup).toHaveBeenCalledTimes(1)
     expect(apiCheckCleanup).toHaveBeenCalledTimes(1)
+  })
+
+  it("logs and continues when content i18n initialization fails", async () => {
+    const initError = new Error("i18n unavailable")
+
+    ensureContentI18nReadyMock.mockRejectedValueOnce(initError)
+    setupRedemptionAssistContentMock.mockReturnValue(vi.fn())
+    setupWebAiApiCheckContentMock.mockReturnValue(vi.fn())
+    storageGetMock.mockResolvedValueOnce({
+      redemptionAssist: {
+        enabled: true,
+        contextMenu: { enabled: true },
+      },
+      webAiApiCheck: {
+        enabled: true,
+        contextMenu: { enabled: true },
+        autoDetect: { enabled: true },
+      },
+    })
+
+    const module = await import("~/entrypoints/content/index")
+    const onInvalidated = vi.fn()
+
+    await module.default.main({ onInvalidated } as any)
+
+    await waitFor(() => {
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Content i18n initialization failed",
+        initError,
+      )
+    })
+    expect(setupContentMessageHandlersMock).toHaveBeenCalledTimes(1)
+    expect(setupRedemptionAssistContentMock).toHaveBeenCalledTimes(1)
+    expect(setupWebAiApiCheckContentMock).toHaveBeenCalledTimes(1)
+
+    onInvalidated.mock.calls[0]?.[0]()
   })
 
   it("ignores unrelated local storage changes that do not include user preferences", async () => {

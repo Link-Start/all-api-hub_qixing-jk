@@ -4,6 +4,15 @@ import React from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import AccountList from "~/features/AccountManagement/components/AccountList"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { SiteHealthStatus } from "~/types"
 import { buildDisplaySiteData, buildTag } from "~~/tests/test-utils/factories"
 import { act, render, screen, waitFor } from "~~/tests/test-utils/render"
@@ -18,6 +27,15 @@ type SortableMockState = {
   isDragging: boolean
 }
 
+const TEST_IDS = vi.hoisted(() => ({
+  dndContext: "dnd-context",
+  sortableContext: "sortable-context",
+  singleTagFilter: "single-tag-filter",
+  multiTagFilter: "multi-tag-filter",
+  accountRow: "account-row",
+  accountFilterBar: "account-filter-bar",
+}))
+
 const {
   mockUseAccountDataContext,
   mockUseUserPreferencesContext,
@@ -25,6 +43,9 @@ const {
   handleDeleteAccountMock,
   handleDeleteAccountsMock,
   handleSetAccountsDisabledMock,
+  startProductAnalyticsActionMock,
+  trackProductAnalyticsActionStartedMock,
+  trackProductAnalyticsActionCompletedMock,
   dndState,
   sortableKeyboardCoordinatesMock,
   sortableReturnState,
@@ -37,6 +58,9 @@ const {
   handleDeleteAccountMock: vi.fn(),
   handleDeleteAccountsMock: vi.fn(),
   handleSetAccountsDisabledMock: vi.fn(),
+  startProductAnalyticsActionMock: vi.fn(),
+  trackProductAnalyticsActionStartedMock: vi.fn(),
+  trackProductAnalyticsActionCompletedMock: vi.fn(),
   dndState: {
     onDragEnd: undefined as ((event: any) => void) | undefined,
   },
@@ -73,7 +97,7 @@ vi.mock("@dnd-kit/core", () => ({
     onDragEnd: (event: any) => void
   }) => {
     dndState.onDragEnd = onDragEnd
-    return <div data-testid="dnd-context">{children}</div>
+    return <div data-testid={TEST_IDS.dndContext}>{children}</div>
   },
   KeyboardSensor: vi.fn(),
   PointerSensor: vi.fn(),
@@ -89,7 +113,7 @@ vi.mock("@dnd-kit/sortable", () => ({
     return next
   },
   SortableContext: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="sortable-context">{children}</div>
+    <div data-testid={TEST_IDS.sortableContext}>{children}</div>
   ),
   sortableKeyboardCoordinates: sortableKeyboardCoordinatesMock,
   verticalListSortingStrategy: vi.fn(),
@@ -136,7 +160,9 @@ vi.mock("~/components/ui", () => {
 
     return (
       <div
-        data-testid={isSingleMode ? "single-tag-filter" : "multi-tag-filter"}
+        data-testid={
+          isSingleMode ? TEST_IDS.singleTagFilter : TEST_IDS.multiTagFilter
+        }
       >
         <button type="button" onClick={handleAllClick}>
           {allLabel}
@@ -197,7 +223,16 @@ vi.mock("~/components/ui", () => {
           </button>
         </div>
       ) : null,
-    EmptyState: ({ title }: any) => <div>{title}</div>,
+    EmptyState: ({ title, action }: any) => (
+      <div>
+        <div>{title}</div>
+        {action ? (
+          <button type="button" onClick={action.onClick}>
+            {action.label}
+          </button>
+        ) : null}
+      </div>
+    ),
     IconButton: ({ children, ...props }: any) => (
       <button type="button" {...props}>
         {children}
@@ -232,6 +267,18 @@ vi.mock("~/hooks/useAddAccountHandler", () => ({
   }),
 }))
 
+vi.mock("~/services/productAnalytics/actions", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/actions")>()
+  return {
+    ...actual,
+    startProductAnalyticsAction: startProductAnalyticsActionMock,
+    trackProductAnalyticsActionStarted: trackProductAnalyticsActionStartedMock,
+    trackProductAnalyticsActionCompleted:
+      trackProductAnalyticsActionCompletedMock,
+  }
+})
+
 vi.mock("~/hooks/useMediaQuery", () => ({
   useIsDesktop: () => false,
   useIsSmallScreen: () => false,
@@ -241,7 +288,7 @@ vi.mock(
   "~/features/AccountManagement/components/AccountList/AccountListItem",
   () => ({
     default: ({ site }: any) => (
-      <div data-testid="account-row">{site.name}</div>
+      <div data-testid={TEST_IDS.accountRow}>{site.name}</div>
     ),
   }),
 )
@@ -271,7 +318,7 @@ vi.mock(
       onRefreshChange,
       onCheckInChange,
     }: any) => (
-      <div data-testid="account-filter-bar">
+      <div data-testid={TEST_IDS.accountFilterBar}>
         {disabledOptions.map((option: any) => (
           <button
             key={`disabled-${option.value}`}
@@ -454,6 +501,21 @@ describe("AccountList", () => {
       showTodayCashflow: true,
     })
     mockUseAccountDataContext.mockReturnValue(createAccountDataContextValue())
+    startProductAnalyticsActionMock.mockImplementation((context) => {
+      trackProductAnalyticsActionStartedMock(context)
+      return {
+        complete: (
+          result: unknown = PRODUCT_ANALYTICS_RESULTS.Success,
+          options: Record<string, unknown> = {},
+        ) => {
+          trackProductAnalyticsActionCompletedMock({
+            ...context,
+            result,
+            ...options,
+          })
+        },
+      }
+    })
   })
 
   afterEach(() => {
@@ -472,6 +534,30 @@ describe("AccountList", () => {
     render(<AccountList />)
 
     expect(screen.queryByText("account:emptyState")).not.toBeInTheDocument()
+  })
+
+  it("tracks the empty-state create-account action before opening the dialog", async () => {
+    const user = userEvent.setup()
+    mockUseAccountDataContext.mockReturnValue(
+      createAccountDataContextValue({
+        sortedData: [],
+        displayData: [],
+      }),
+    )
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getByRole("button", { name: "account:addFirstAccount" }),
+    )
+
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenCreateAccountDialog,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(handleAddAccountClickMock).toHaveBeenCalledTimes(1)
   })
 
   it("renders the created-time sort control", () => {
@@ -493,8 +579,10 @@ describe("AccountList", () => {
 
     render(<AccountList />)
 
-    expect(screen.queryByTestId("dnd-context")).not.toBeInTheDocument()
-    expect(screen.queryByTestId("sortable-context")).not.toBeInTheDocument()
+    expect(screen.queryByTestId(TEST_IDS.dndContext)).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId(TEST_IDS.sortableContext),
+    ).not.toBeInTheDocument()
     expect(useSortableMock).not.toHaveBeenCalled()
 
     await act(async () => {
@@ -504,8 +592,8 @@ describe("AccountList", () => {
       })
     })
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
-    expect(screen.getByTestId("sortable-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+    expect(screen.getByTestId(TEST_IDS.sortableContext)).toBeInTheDocument()
     expect(useSensorMock).toHaveBeenCalledWith(expect.any(Function))
     expect(useSensorMock).toHaveBeenCalledWith(expect.any(Function), {
       coordinateGetter: sortableKeyboardCoordinatesMock,
@@ -525,15 +613,15 @@ describe("AccountList", () => {
 
       render(<AccountList />)
 
-      expect(screen.queryByTestId("dnd-context")).not.toBeInTheDocument()
+      expect(screen.queryByTestId(TEST_IDS.dndContext)).not.toBeInTheDocument()
 
       await act(async () => {
         await vi.runOnlyPendingTimersAsync()
       })
 
       vi.useRealTimers()
-      expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
-      expect(screen.getByTestId("sortable-context")).toBeInTheDocument()
+      expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+      expect(screen.getByTestId(TEST_IDS.sortableContext)).toBeInTheDocument()
     } finally {
       vi.useRealTimers()
     }
@@ -570,8 +658,8 @@ describe("AccountList", () => {
       })[0],
     )
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
-    expect(screen.getByTestId("sortable-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+    expect(screen.getByTestId(TEST_IDS.sortableContext)).toBeInTheDocument()
     expect(useSortableMock).toHaveBeenCalledTimes(4)
   })
 
@@ -594,7 +682,7 @@ describe("AccountList", () => {
       })[0],
     )
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
     expect(dndState.onDragEnd).toBeTypeOf("function")
 
     dndState.onDragEnd?.({
@@ -627,7 +715,7 @@ describe("AccountList", () => {
       screen.getByRole("button", { name: "common:status.enabled" }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(3)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(3)
 
     await user.click(
       screen.getAllByRole("button", {
@@ -635,7 +723,7 @@ describe("AccountList", () => {
       })[0],
     )
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
     expect(dndState.onDragEnd).toBeTypeOf("function")
 
     dndState.onDragEnd?.({
@@ -648,6 +736,53 @@ describe("AccountList", () => {
       "enabled-alpha",
       "unsynced-delta",
     ])
+  })
+
+  it("tracks completed manual reorder with aggregate metadata only", async () => {
+    const user = userEvent.setup()
+    const handleReorder = vi.fn().mockResolvedValue(undefined)
+
+    mockUseAccountDataContext.mockReturnValue(
+      createAccountDataContextValue({
+        isManualSortFeatureEnabled: true,
+        handleReorder,
+      }),
+    )
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getAllByRole("button", {
+        name: "account:list.dragHandle",
+      })[0],
+    )
+
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+    expect(dndState.onDragEnd).toBeTypeOf("function")
+
+    dndState.onDragEnd?.({
+      active: { id: "enabled-alpha" },
+      over: { id: "enabled-gamma" },
+    })
+
+    await waitFor(() => {
+      expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.ReorderAccounts,
+        surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+        result: PRODUCT_ANALYTICS_RESULTS.Success,
+        insights: {
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+          itemCount: 4,
+        },
+      })
+    })
+    const completionPayload =
+      trackProductAnalyticsActionCompletedMock.mock.calls[0][0]
+    expect(completionPayload).not.toHaveProperty("accountIds")
+    expect(completionPayload).not.toHaveProperty("fromAccountId")
+    expect(completionPayload).not.toHaveProperty("toAccountId")
   })
 
   it("does not activate dnd from disabled search handles or bulk mode", async () => {
@@ -668,7 +803,7 @@ describe("AccountList", () => {
 
     await user.click(searchHandle)
 
-    expect(screen.queryByTestId("dnd-context")).not.toBeInTheDocument()
+    expect(screen.queryByTestId(TEST_IDS.dndContext)).not.toBeInTheDocument()
     expect(useSortableMock).not.toHaveBeenCalled()
 
     unmount()
@@ -682,7 +817,7 @@ describe("AccountList", () => {
     expect(
       screen.queryByRole("button", { name: "account:list.dragHandle" }),
     ).not.toBeInTheDocument()
-    expect(screen.queryByTestId("dnd-context")).not.toBeInTheDocument()
+    expect(screen.queryByTestId(TEST_IDS.dndContext)).not.toBeInTheDocument()
     expect(useSortableMock).not.toHaveBeenCalled()
   })
 
@@ -703,15 +838,17 @@ describe("AccountList", () => {
       })[0],
     )
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
-    expect(screen.getByTestId("sortable-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+    expect(screen.getByTestId(TEST_IDS.sortableContext)).toBeInTheDocument()
 
     rerender(<AccountList initialSearchQuery="Alpha" />)
 
     await waitFor(() => {
       expect(screen.getByRole("textbox")).toHaveValue("Alpha")
-      expect(screen.queryByTestId("dnd-context")).not.toBeInTheDocument()
-      expect(screen.queryByTestId("sortable-context")).not.toBeInTheDocument()
+      expect(screen.queryByTestId(TEST_IDS.dndContext)).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId(TEST_IDS.sortableContext),
+      ).not.toBeInTheDocument()
       expect(
         screen.getByRole("button", { name: "account:list.dragHandle" }),
       ).toBeDisabled()
@@ -745,8 +882,8 @@ describe("AccountList", () => {
       })[0],
     )
 
-    expect(await screen.findByTestId("dnd-context")).toBeInTheDocument()
-    expect(screen.getByTestId("sortable-context")).toBeInTheDocument()
+    expect(await screen.findByTestId(TEST_IDS.dndContext)).toBeInTheDocument()
+    expect(screen.getByTestId(TEST_IDS.sortableContext)).toBeInTheDocument()
     expect(useSortableMock).toHaveBeenCalled()
 
     const sortableHandle = screen.getAllByRole("button", {
@@ -766,13 +903,13 @@ describe("AccountList", () => {
 
     render(<AccountList />)
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(4)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(4)
 
     await user.click(
       screen.getByRole("button", { name: "common:status.enabled" }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(3)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(3)
     expect(screen.getByText("Enabled Alpha")).toBeInTheDocument()
     expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
     expect(screen.getByText("Unsynced Delta")).toBeInTheDocument()
@@ -781,7 +918,7 @@ describe("AccountList", () => {
 
     await user.click(screen.getByRole("button", { name: "Team A" }))
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Enabled Alpha")).toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
     expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
@@ -794,7 +931,7 @@ describe("AccountList", () => {
 
     render(<AccountList initialSearchQuery="beta" />)
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Disabled Beta")).toBeInTheDocument()
     expect(screen.getByText("common:total: 1")).toBeInTheDocument()
 
@@ -803,7 +940,7 @@ describe("AccountList", () => {
     )
 
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
-    expect(screen.queryAllByTestId("account-row")).toHaveLength(0)
+    expect(screen.queryAllByTestId(TEST_IDS.accountRow)).toHaveLength(0)
     expect(screen.getByText("account:search.noResults")).toBeInTheDocument()
     expect(screen.getByText("common:total: 0")).toBeInTheDocument()
 
@@ -811,7 +948,7 @@ describe("AccountList", () => {
       screen.getByRole("button", { name: "common:status.disabled" }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Disabled Beta")).toBeInTheDocument()
     expect(
       screen.queryByText("account:search.noResults"),
@@ -826,7 +963,7 @@ describe("AccountList", () => {
 
     await user.click(screen.getByRole("button", { name: "one-api" }))
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(2)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(2)
     expect(screen.getByText("Enabled Alpha")).toBeInTheDocument()
     expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
@@ -836,7 +973,7 @@ describe("AccountList", () => {
       screen.getByRole("button", { name: "account:healthStatus.warning" }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
     expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
     expect(screen.getByText("common:total: 1")).toBeInTheDocument()
@@ -853,7 +990,7 @@ describe("AccountList", () => {
       }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Unsynced Delta")).toBeInTheDocument()
     expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
@@ -872,7 +1009,7 @@ describe("AccountList", () => {
       }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Enabled Alpha")).toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
     expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
@@ -890,7 +1027,7 @@ describe("AccountList", () => {
       }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Disabled Beta")).toBeInTheDocument()
     expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
     expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
@@ -908,7 +1045,7 @@ describe("AccountList", () => {
       }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
     expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
@@ -926,7 +1063,7 @@ describe("AccountList", () => {
       }),
     )
 
-    expect(screen.getAllByTestId("account-row")).toHaveLength(1)
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
     expect(screen.getByText("Unsynced Delta")).toBeInTheDocument()
     expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
     expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
@@ -953,6 +1090,68 @@ describe("AccountList", () => {
     )
   })
 
+  it("shows filtered balance, consumption, and income totals for visible accounts", async () => {
+    const user = userEvent.setup()
+    const includedAccount = buildDisplaySiteData({
+      id: "included",
+      name: "Included Account",
+      disabled: false,
+      balance: { USD: 10, CNY: 70 },
+      todayConsumption: { USD: 1, CNY: 7 },
+      todayIncome: { USD: 2, CNY: 14 },
+    })
+    const incomeOptOutAccount = buildDisplaySiteData({
+      id: "income-opt-out",
+      name: "Income Opt Out",
+      disabled: false,
+      balance: { USD: 20, CNY: 140 },
+      todayConsumption: { USD: 3, CNY: 21 },
+      todayIncome: { USD: 4, CNY: 28 },
+      excludeFromTodayIncome: true,
+    })
+    const disabledAccount = buildDisplaySiteData({
+      id: "disabled",
+      name: "Disabled Account",
+      disabled: true,
+      balance: { USD: 100, CNY: 700 },
+      todayConsumption: { USD: 100, CNY: 700 },
+      todayIncome: { USD: 100, CNY: 700 },
+    })
+
+    mockUseAccountDataContext.mockReturnValue(
+      createAccountDataContextValue({
+        sortedData: [includedAccount, incomeOptOutAccount, disabledAccount],
+        displayData: [includedAccount, incomeOptOutAccount, disabledAccount],
+        tags: [],
+        tagCountsById: {},
+      }),
+    )
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getByRole("button", { name: "common:status.enabled" }),
+    )
+
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(2)
+    expect(screen.getByText("Included Account")).toBeInTheDocument()
+    expect(screen.getByText("Income Opt Out")).toBeInTheDocument()
+    expect(screen.queryByText("Disabled Account")).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "account:filteredTotals.balance: USD 30.00 / CNY 210.00",
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "account:filteredTotals.consumption: USD 4.00 / CNY 28.00",
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("account:filteredTotals.income: USD 2.00 / CNY 14.00"),
+    ).toBeInTheDocument()
+  })
+
   it("keeps site-type options visible when search narrows counts to zero", () => {
     render(<AccountList initialSearchQuery="beta" />)
 
@@ -964,6 +1163,40 @@ describe("AccountList", () => {
       "data-count",
       "1",
     )
+  })
+
+  it("tracks entering and exiting bulk mode without per-selection telemetry", async () => {
+    const user = userEvent.setup()
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.manage" }),
+    )
+
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.EnterAccountBulkMode,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+
+    trackProductAnalyticsActionStartedMock.mockClear()
+    trackProductAnalyticsActionCompletedMock.mockClear()
+
+    await user.click(screen.getAllByRole("checkbox")[0])
+    await user.click(
+      screen.getAllByRole("button", { name: "account:bulk.exit" })[0],
+    )
+
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExitAccountBulkMode,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledTimes(1)
+    expect(trackProductAnalyticsActionCompletedMock).not.toHaveBeenCalled()
   })
 
   it("keeps selections across search changes for bulk disable", async () => {
@@ -1185,5 +1418,112 @@ describe("AccountList", () => {
     expect(handleDeleteAccountsMock).toHaveBeenNthCalledWith(2, [
       expect.objectContaining({ id: "enabled-gamma" }),
     ])
+  })
+
+  it("tracks confirmed bulk delete with aggregate counts only", async () => {
+    const user = userEvent.setup()
+    handleDeleteAccountsMock.mockResolvedValueOnce({
+      deletedCount: 1,
+      deletedIds: ["enabled-alpha"],
+    })
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.manage" }),
+    )
+    await user.click(screen.getAllByRole("checkbox")[0])
+
+    const searchInput = screen.getByPlaceholderText(
+      "account:search.placeholder",
+    )
+    await user.clear(searchInput)
+    await user.type(searchInput, "Gamma")
+    await user.click(await screen.findByRole("checkbox"))
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.deleteSelected" }),
+    )
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.deleteConfirmAction" }),
+    )
+
+    const expectedContext = {
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    }
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith(
+      expectedContext,
+    )
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      ...expectedContext,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      insights: {
+        itemCount: 2,
+        selectedCount: 2,
+        successCount: 1,
+        failureCount: 1,
+      },
+    })
+    const completionPayload =
+      trackProductAnalyticsActionCompletedMock.mock.calls[0][0]
+    expect(completionPayload).not.toHaveProperty("durationMs")
+    expect(completionPayload).not.toHaveProperty("error")
+    expect(completionPayload).not.toHaveProperty("message")
+    expect(completionPayload).not.toHaveProperty("accountIds")
+  })
+
+  it("tracks bulk disable persistence with aggregate counts only", async () => {
+    const user = userEvent.setup()
+    handleSetAccountsDisabledMock.mockResolvedValueOnce({
+      updatedCount: 1,
+      updatedIds: ["enabled-alpha"],
+    })
+
+    render(<AccountList />)
+
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.manage" }),
+    )
+    await user.click(screen.getAllByRole("checkbox")[0])
+
+    const searchInput = screen.getByPlaceholderText(
+      "account:search.placeholder",
+    )
+    await user.clear(searchInput)
+    await user.type(searchInput, "Gamma")
+    await user.click(await screen.findByRole("checkbox"))
+    await user.click(
+      screen.getByRole("button", { name: "account:bulk.disableSelected" }),
+    )
+
+    const expectedContext = {
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DisableSelectedAccounts,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    }
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith(
+      expectedContext,
+    )
+    expect(trackProductAnalyticsActionCompletedMock).toHaveBeenCalledWith({
+      ...expectedContext,
+      result: PRODUCT_ANALYTICS_RESULTS.Failure,
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      insights: {
+        itemCount: 2,
+        selectedCount: 2,
+        successCount: 1,
+        failureCount: 1,
+      },
+    })
+    const completionPayload =
+      trackProductAnalyticsActionCompletedMock.mock.calls[0][0]
+    expect(completionPayload).not.toHaveProperty("durationMs")
+    expect(completionPayload).not.toHaveProperty("error")
+    expect(completionPayload).not.toHaveProperty("message")
+    expect(completionPayload).not.toHaveProperty("accountIds")
   })
 })

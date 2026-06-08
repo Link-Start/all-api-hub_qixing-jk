@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import KeyManagement from "~/entrypoints/options/pages/KeyManagement"
 import { KEY_MANAGEMENT_ALL_ACCOUNTS_VALUE } from "~/features/KeyManagement/constants"
 import { render, screen, waitFor } from "~~/tests/test-utils/render"
-import { createAccount } from "~~/tests/utils/keyManagementFactories"
+import {
+  createAccount,
+  createToken,
+} from "~~/tests/utils/keyManagementFactories"
 
 const {
   sendRuntimeActionMessageMock,
@@ -123,6 +126,15 @@ vi.mock("~/features/KeyManagement/components/TokenList", () => ({
         <button type="button" onClick={props.onRequestAccountSelection}>
           trigger-account-selection
         </button>
+        {props.filteredTokens?.map((token: any) => (
+          <button
+            key={token.id}
+            type="button"
+            onClick={() => props.handleDeleteToken(token)}
+          >
+            trigger-delete-token-{token.id}
+          </button>
+        ))}
       </div>
     )
   },
@@ -177,6 +189,7 @@ const createHookResult = (
   resolvingVisibleKeys: new Set(),
   isAddTokenOpen: false,
   editingToken: null,
+  tokenInventories: {},
   tokenLoadProgress: null,
   failedAccounts: [],
   accountSummaryItems: [],
@@ -263,6 +276,61 @@ describe("KeyManagement empty-state actions", () => {
     await waitFor(() =>
       expect(selectorTrigger).toHaveAttribute("aria-expanded", "true"),
     )
+  })
+
+  it("uses the destructive confirmation dialog before deleting a token", async () => {
+    const user = userEvent.setup()
+    const handleDeleteToken = vi.fn()
+    const token = createToken({
+      id: 31,
+      name: "Dialog Token",
+      accountId: "acc-1",
+      accountName: "Account 1",
+    })
+
+    useKeyManagementMock.mockReturnValue(
+      createHookResult({
+        selectedAccount: "acc-1",
+        tokens: [token],
+        filteredTokens: [token],
+        handleDeleteToken,
+      }),
+    )
+
+    render(<KeyManagement />)
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "trigger-delete-token-31",
+      }),
+    )
+
+    expect(handleDeleteToken).not.toHaveBeenCalled()
+    expect(
+      await screen.findByText("keyManagement:messages.deleteConfirm"),
+    ).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole("button", { name: "common:actions.cancel" }),
+    )
+
+    expect(handleDeleteToken).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(
+        screen.queryByText("keyManagement:messages.deleteConfirm"),
+      ).toBeNull(),
+    )
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "trigger-delete-token-31",
+      }),
+    )
+    await user.click(
+      await screen.findByRole("button", { name: "common:actions.delete" }),
+    )
+
+    expect(handleDeleteToken).toHaveBeenCalledWith(token)
   })
 
   it("preselects the filtered account in the add-token dialog while viewing all accounts", async () => {

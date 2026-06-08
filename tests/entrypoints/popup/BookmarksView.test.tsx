@@ -1,14 +1,24 @@
 import { useState, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { getPopupViewTestId } from "~/entrypoints/popup/testIds"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import { fireEvent, render, screen, within } from "~~/tests/test-utils/render"
 
-const { bookmarksPreloadMock, apiCredentialProfilesPreloadMock } = vi.hoisted(
-  () => ({
-    bookmarksPreloadMock: vi.fn(),
-    apiCredentialProfilesPreloadMock: vi.fn(),
-  }),
-)
+const {
+  apiCredentialProfilesPreloadMock,
+  bookmarksPreloadMock,
+  trackProductAnalyticsActionStartedMock,
+} = vi.hoisted(() => ({
+  bookmarksPreloadMock: vi.fn(),
+  apiCredentialProfilesPreloadMock: vi.fn(),
+  trackProductAnalyticsActionStartedMock: vi.fn(),
+}))
 
 vi.mock("~/components/AppLayout", () => ({
   AppLayout: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -23,6 +33,15 @@ vi.mock("~/features/AccountManagement/hooks/AccountManagementProvider", () => ({
 vi.mock("~/utils/browser", () => ({
   isExtensionSidePanel: () => false,
   isMobileDevice: () => false,
+}))
+
+vi.mock("~/hooks/useProductAnalyticsPageView", () => ({
+  useProductAnalyticsPageView: vi.fn(),
+}))
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionStarted: (...args: any[]) =>
+    trackProductAnalyticsActionStartedMock(...args),
 }))
 
 vi.mock("~/entrypoints/popup/components/HeaderSection", () => ({
@@ -115,14 +134,26 @@ describe("popup bookmarks view", () => {
     expect(screen.getByText("AccountList")).toBeInTheDocument()
     expect(screen.queryByText("BookmarksList")).not.toBeInTheDocument()
 
-    const accountsView = screen.getByTestId("popup-view-accounts")
+    const accountsView = screen.getByTestId(getPopupViewTestId("accounts"))
     expect(within(accountsView).getByText("AccountList")).toBeInTheDocument()
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "bookmark:switch.accounts",
+      "apiCredentialProfiles:popup.tabLabel",
+      "bookmark:switch.bookmarks",
+    ])
 
     fireEvent.click(
       await screen.findByRole("tab", { name: "bookmark:switch.bookmarks" }),
     )
 
     expect(bookmarksPreloadMock).toHaveBeenCalledTimes(1)
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.BookmarkManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.SelectBookmarksView,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.PopupViewTabs,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Popup,
+    })
     expect(await screen.findByText("HeaderRefresh:false")).toBeInTheDocument()
     expect(screen.queryByText("BalanceSection")).not.toBeInTheDocument()
     expect(screen.getByText("BookmarkStatsSection")).toBeInTheDocument()
@@ -132,7 +163,7 @@ describe("popup bookmarks view", () => {
     expect(screen.getByText("ActionButtons")).toBeInTheDocument()
     expect(screen.queryByText("AccountList")).not.toBeInTheDocument()
 
-    const bookmarksView = screen.getByTestId("popup-view-bookmarks")
+    const bookmarksView = screen.getByTestId(getPopupViewTestId("bookmarks"))
     expect(within(bookmarksView).getByText("BookmarksList")).toBeInTheDocument()
 
     fireEvent.click(
@@ -147,6 +178,12 @@ describe("popup bookmarks view", () => {
     )
 
     expect(apiCredentialProfilesPreloadMock).toHaveBeenCalledTimes(1)
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ApiCredentialProfiles,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.SelectApiCredentialProfilesView,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.PopupViewTabs,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Popup,
+    })
     expect(await screen.findByText("HeaderRefresh:false")).toBeInTheDocument()
     expect(screen.queryByText("BalanceSection")).not.toBeInTheDocument()
     expect(screen.queryByText("BookmarkStatsSection")).not.toBeInTheDocument()
@@ -158,7 +195,7 @@ describe("popup bookmarks view", () => {
     expect(screen.queryByText("BookmarksList")).not.toBeInTheDocument()
 
     const apiCredentialProfilesView = screen.getByTestId(
-      "popup-view-apiCredentialProfiles",
+      getPopupViewTestId("apiCredentialProfiles"),
     )
     expect(
       within(apiCredentialProfilesView).getByText(

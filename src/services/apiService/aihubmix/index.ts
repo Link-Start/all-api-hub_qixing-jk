@@ -1,5 +1,6 @@
-import { AIHUBMIX_API_ORIGIN } from "~/constants/siteType"
+import { AIHUBMIX_API_ORIGIN, SITE_TYPES } from "~/constants/siteType"
 import { UI_CONSTANTS } from "~/constants/ui"
+import { normalizeAccountIdentity } from "~/services/accounts/accountIdentity"
 import { determineHealthStatus } from "~/services/apiService/common"
 import {
   hasUsableApiTokenKey,
@@ -8,20 +9,23 @@ import {
   normalizeApiTokenKeyValue,
 } from "~/services/apiService/common/apiKey"
 import { API_ERROR_CODES, ApiError } from "~/services/apiService/common/errors"
-import type {
-  AccessTokenInfo,
-  AccountData,
-  ApiResponse,
-  ApiServiceAccountRequest,
-  ApiServiceRequest,
-  CreateTokenRequest,
-  CreateTokenResult,
-  RefreshAccountResult,
-  SiteStatusInfo,
-  TodayIncomeData,
-  TodayUsageData,
-  UserGroupInfo,
-  UserInfo,
+import {
+  MODEL_LIST_SOURCE_KINDS,
+  type AccessTokenInfo,
+  type AccountData,
+  type ApiResponse,
+  type ApiServiceAccountRequest,
+  type ApiServiceRequest,
+  type CreateTokenRequest,
+  type CreateTokenResult,
+  type ModelPricing,
+  type PricingResponse,
+  type RefreshAccountResult,
+  type SiteStatusInfo,
+  type TodayIncomeData,
+  type TodayUsageData,
+  type UserGroupInfo,
+  type UserInfo,
 } from "~/services/apiService/common/type"
 import { fetchApiData } from "~/services/apiService/common/utils"
 import { AuthTypeEnum, SiteHealthStatus, type ApiToken } from "~/types"
@@ -37,6 +41,9 @@ const AIHUBMIX_API_USER_SELF_ENDPOINT = "/api/user/self"
 // importing an account from the logged-in browser session.
 const AIHUBMIX_USER_INFO_ENDPOINT = "/call/usr/self"
 const AIHUBMIX_ACCESS_TOKEN_ENDPOINT = "/call/usr/tkn"
+const AIHUBMIX_MODEL_CATALOG_ENDPOINT = "/api/v1/models"
+const AIHUBMIX_USER_AVAILABLE_MODELS_ENDPOINT = "/api/user/available_models"
+const AIHUBMIX_WEB_AVAILABLE_MODELS_ENDPOINT = "/call/usr/avail_mdls"
 
 const EMPTY_TODAY_USAGE: TodayUsageData = {
   today_quota_consumption: 0,
@@ -49,7 +56,10 @@ const EMPTY_TODAY_INCOME: TodayIncomeData = {
   today_income: 0,
 }
 
-type AIHubMixUserInfo = UserInfo & {
+type AIHubMixUserInfo = {
+  username: string
+  display_name: string
+  access_token?: string | null
   quota?: number | string
   used_quota?: number | string
   request_count?: number | string
@@ -70,15 +80,24 @@ type AIHubMixUserAvailableModel = {
   order?: number
 }
 
-type AIHubMixCatalogModel = {
-  id: string
+type AIHubMixModelCatalogItem = {
+  model_id?: string
+  id?: string
   name?: string
-  channel?: string
-  type?: string
+  desc?: string
   description?: string
+  developer_id?: number | string
+  developer_name?: string
+  developer?: string
+  owner_by?: string
+  type?: string
+  endpoints?: string[] | string
+  pricing?: {
+    cache_read?: number | string
+    input?: number | string
+    output?: number | string
+  }
 }
-
-type AIHubMixCatalogModels = Record<string, AIHubMixCatalogModel[]>
 
 // AIHubMix create-key docs define the management payload as:
 // name, expired_time, unlimited_quota, remain_quota, models, subnet.
@@ -258,11 +277,18 @@ const normalizeModelIds = (payload: unknown): string[] => {
     return Array.from(
       new Set(
         payload.flatMap((item) => {
-          if (typeof item === "string") return [item]
+          if (typeof item === "string") {
+            const normalized = item.trim()
+            return normalized ? [normalized] : []
+          }
           if (item && typeof item === "object") {
             const record = item as Record<string, unknown>
             const id = record.id ?? record.model ?? record.name
-            return typeof id === "string" ? [id] : []
+            if (typeof id === "string") {
+              const normalized = id.trim()
+              return normalized ? [normalized] : []
+            }
+            return []
           }
           return []
         }),
@@ -276,7 +302,10 @@ const normalizeModelIds = (payload: unknown): string[] => {
       new Set(
         Object.values(record).flatMap((value) => {
           if (Array.isArray(value)) return normalizeModelIds(value)
-          if (typeof value === "string") return [value]
+          if (typeof value === "string") {
+            const normalized = value.trim()
+            return normalized ? [normalized] : []
+          }
           return []
         }),
       ),
@@ -286,13 +315,105 @@ const normalizeModelIds = (payload: unknown): string[] => {
   return []
 }
 
+const normalizeUserScopedModelIds = (
+  payload: unknown,
+  endpoint: string,
+): string[] => {
+  if (Array.isArray(payload)) {
+    return normalizeModelIds(payload)
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>
+    for (const field of ["data", "items", "models"]) {
+      const value = record[field]
+      if (Array.isArray(value)) {
+        return normalizeModelIds(value)
+      }
+    }
+  }
+
+  throw new ApiError(
+    t("messages:errors.api.invalidResponseFormat"),
+    undefined,
+    endpoint,
+  )
+}
+
+const normalizeStringList = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  return []
+}
+
+const getAIHubMixCatalogModelId = (model: AIHubMixModelCatalogItem): string => {
+  const candidate = model.model_id ?? model.id ?? model.name ?? ""
+  return typeof candidate === "string" ? candidate.trim() : ""
+}
+
+const buildAIHubMixModelPricing = (
+  modelId: string,
+  catalogItem?: AIHubMixModelCatalogItem,
+): ModelPricing => {
+  const inputPrice = toFiniteNumber(catalogItem?.pricing?.input)
+  const outputPrice = toFiniteNumber(catalogItem?.pricing?.output)
+  const cacheReadPrice = toFiniteNumber(catalogItem?.pricing?.cache_read)
+  const hasTokenPricing = inputPrice > 0 || outputPrice > 0
+
+  return {
+    model_name: modelId,
+    model_description:
+      typeof catalogItem?.desc === "string"
+        ? catalogItem.desc
+        : typeof catalogItem?.description === "string"
+          ? catalogItem.description
+          : "",
+    quota_type: 0,
+    model_ratio: 0,
+    model_price: 0,
+    // AIHubMix /api/v1/models pricing fields are direct USD-per-1M-token prices.
+    // Do not route them through the New API ratio formula where ratio 1 maps to $2/M.
+    token_price_usd_per_million: hasTokenPricing
+      ? {
+          cache_read: cacheReadPrice,
+          input: inputPrice,
+          output: outputPrice,
+        }
+      : undefined,
+    owner_by:
+      typeof catalogItem?.developer_name === "string"
+        ? catalogItem.developer_name
+        : typeof catalogItem?.developer === "string"
+          ? catalogItem.developer
+          : typeof catalogItem?.owner_by === "string"
+            ? catalogItem.owner_by
+            : catalogItem?.developer_id != null
+              ? String(catalogItem.developer_id)
+              : undefined,
+    completion_ratio: 0,
+    enable_groups: [],
+    supported_endpoint_types: normalizeStringList(catalogItem?.endpoints),
+  }
+}
+
 /**
  * Fetch the current AIHubMix user using the endpoint required by the active auth mode.
  * Cookie mode is only for import-time web-session reads; saved accounts use
  * AccessToken mode and `/api/user/self`.
  */
 export async function fetchUserInfo(request: ApiServiceRequest): Promise<{
-  id: number
+  id: string
   username: string
   access_token: string
   user: UserInfo
@@ -316,11 +437,23 @@ export async function fetchUserInfo(request: ApiServiceRequest): Promise<{
           },
         )
 
+  const id = normalizeAccountIdentity(userData.username) ?? ""
+  const username = normalizeAccountIdentity(userData.display_name) ?? ""
+  const accessToken = normalizeAccessToken(userData.access_token)
+
   return {
-    id: userData.id,
-    username: userData.username,
-    access_token: normalizeAccessToken(userData.access_token),
-    user: userData,
+    // AIHubMix intentionally omits database ids from web-session user info.
+    // Upstream confirms username is unique and stable for third-party account ids:
+    // https://github.com/jerlinn/inferHub/issues/2
+    id,
+    username,
+    access_token: accessToken,
+    user: {
+      ...userData,
+      id,
+      username,
+      access_token: accessToken,
+    },
   }
 }
 
@@ -644,25 +777,137 @@ export async function deleteApiToken(
   return true
 }
 
+const fetchAIHubMixModelCatalog = async (
+  request: ApiServiceRequest,
+): Promise<AIHubMixModelCatalogItem[]> => {
+  const payload = await fetchAIHubMixData<unknown>(
+    request,
+    AIHUBMIX_MODEL_CATALOG_ENDPOINT,
+  )
+
+  if (Array.isArray(payload)) {
+    return payload.filter(
+      (item): item is AIHubMixModelCatalogItem =>
+        !!item && typeof item === "object",
+    )
+  }
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>
+    if (Array.isArray(record.data)) {
+      return record.data.filter(
+        (item): item is AIHubMixModelCatalogItem =>
+          !!item && typeof item === "object",
+      )
+    }
+  }
+
+  throw new ApiError(
+    t("messages:errors.api.invalidResponseFormat"),
+    undefined,
+    AIHUBMIX_MODEL_CATALOG_ENDPOINT,
+  )
+}
+
+const fetchAIHubMixUserScopedModelIds = async (
+  request: ApiServiceRequest,
+): Promise<string[] | null> => {
+  try {
+    const payload = await fetchAIHubMixData<AIHubMixUserAvailableModel[]>(
+      request,
+      AIHUBMIX_USER_AVAILABLE_MODELS_ENDPOINT,
+    )
+    return normalizeUserScopedModelIds(
+      payload,
+      AIHUBMIX_USER_AVAILABLE_MODELS_ENDPOINT,
+    )
+  } catch (error) {
+    logger.warn(
+      "Failed to fetch AIHubMix API user available models; trying web available models",
+      error,
+    )
+  }
+
+  try {
+    const payload = await fetchAIHubMixData<AIHubMixUserAvailableModel[]>(
+      request,
+      AIHUBMIX_WEB_AVAILABLE_MODELS_ENDPOINT,
+    )
+    return normalizeUserScopedModelIds(
+      payload,
+      AIHUBMIX_WEB_AVAILABLE_MODELS_ENDPOINT,
+    )
+  } catch (error) {
+    logger.warn(
+      "Failed to fetch AIHubMix web available models; using catalog fallback",
+      error,
+    )
+    return null
+  }
+}
+
+const buildAIHubMixPricingResponse = (params: {
+  catalog: AIHubMixModelCatalogItem[]
+  userScopedModelIds: string[] | null
+}): PricingResponse => {
+  const catalogByModelId = new Map<string, AIHubMixModelCatalogItem>()
+
+  for (const item of params.catalog) {
+    const modelId = getAIHubMixCatalogModelId(item)
+    if (modelId && !catalogByModelId.has(modelId)) {
+      catalogByModelId.set(modelId, item)
+    }
+  }
+
+  const modelIds =
+    params.userScopedModelIds === null
+      ? Array.from(catalogByModelId.keys())
+      : params.userScopedModelIds
+
+  return {
+    success: true,
+    group_ratio: {},
+    usable_group: {},
+    model_list_source: {
+      kind:
+        params.userScopedModelIds === null
+          ? MODEL_LIST_SOURCE_KINDS.CATALOG_FALLBACK
+          : MODEL_LIST_SOURCE_KINDS.USER_SCOPED,
+      provider: SITE_TYPES.AIHUBMIX,
+    },
+    data: modelIds.map((modelId) =>
+      buildAIHubMixModelPricing(modelId, catalogByModelId.get(modelId)),
+    ),
+  }
+}
+
+/**
+ * Fetch AIHubMix model pricing from the complete catalog and current user scope.
+ */
+export async function fetchModelPricing(
+  request: ApiServiceRequest,
+): Promise<PricingResponse> {
+  const catalog = await fetchAIHubMixModelCatalog(request)
+  const userScopedModelIds = await fetchAIHubMixUserScopedModelIds(request)
+
+  return buildAIHubMixPricingResponse({
+    catalog,
+    userScopedModelIds,
+  })
+}
+
 /**
  * Fetch AIHubMix model ids available to the current account.
  */
 export async function fetchAccountAvailableModels(
   request: ApiServiceRequest,
 ): Promise<string[]> {
-  try {
-    const payload = await fetchAIHubMixData<AIHubMixUserAvailableModel[]>(
-      request,
-      "/api/user/available_models",
-    )
-    return normalizeModelIds(payload)
-  } catch (error) {
-    logger.warn(
-      "Failed to fetch AIHubMix user available models; falling back to all models",
-      error,
-    )
-    return fetchAllModels(request)
+  const userScopedModelIds = await fetchAIHubMixUserScopedModelIds(request)
+  if (userScopedModelIds !== null) {
+    return userScopedModelIds
   }
+
+  return fetchAllModels(request)
 }
 
 /**
@@ -671,9 +916,8 @@ export async function fetchAccountAvailableModels(
 export async function fetchAllModels(
   request: ApiServiceRequest,
 ): Promise<string[]> {
-  const payload = await fetchAIHubMixData<AIHubMixCatalogModels>(
-    request,
-    "/api/models",
+  const catalog = await fetchAIHubMixModelCatalog(request)
+  return Array.from(
+    new Set(catalog.map(getAIHubMixCatalogModelId).filter(Boolean)),
   )
-  return normalizeModelIds(payload)
 }

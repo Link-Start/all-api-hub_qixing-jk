@@ -69,6 +69,6 @@
 
 ## 関連ドキュメント
 
-- [API認証情報プロファイル](./api-credential-profiles.md): アカウントなしでインターフェースを追加する方法。
+- [API 認証情報庫](./api-credential-profiles.md): アカウントなしで `Base URL + API Key` を保存する方法。
 - [使用状況分析](./usage-analytics.md): これらのモデルによって発生した実際の支出を表示します。
 - [サポートされているサイト](./supported-sites.md): 自動価格認識をサポートするアーキテクチャタイプを表示します。

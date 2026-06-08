@@ -3,6 +3,7 @@ import toast from "react-hot-toast/headless"
 
 import { RuntimeActionIds } from "~/constants/runtimeActions"
 import { ensureRedemptionToastUi } from "~/entrypoints/content/shared/uiRoot"
+import { recordShieldBypassPromptShown } from "~/services/productAnalytics/shieldBypassSummary"
 import { sendRuntimeMessage } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
 
@@ -20,6 +21,8 @@ const logger = createLogger("ShieldBypassToasts")
  */
 export async function showShieldBypassPromptToast() {
   await ensureRedemptionToastUi()
+
+  void recordShieldBypassPromptShown()
 
   toast.custom(
     () =>

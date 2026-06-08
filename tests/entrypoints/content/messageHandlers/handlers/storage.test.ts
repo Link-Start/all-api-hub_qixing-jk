@@ -396,6 +396,75 @@ describe("content storage handler", () => {
     expect(mockFetchUserInfo).not.toHaveBeenCalled()
   })
 
+  it("normalizes numeric standard local user ids to string identities", async () => {
+    localStorage.setItem(
+      "user",
+      JSON.stringify({ id: 42, username: "alice", role: "admin" }),
+    )
+
+    const response = await new Promise<any>((resolve) => {
+      handleGetUserFromLocalStorage({ url: "https://example.com" }, resolve)
+    })
+
+    expect(response).toEqual({
+      success: true,
+      data: {
+        userId: "42",
+        user: {
+          id: 42,
+          username: "alice",
+          role: "admin",
+        },
+      },
+    })
+    expect(mockFetchUserInfo).not.toHaveBeenCalled()
+  })
+
+  it("uses AIHubMix localStorage username as the account identity", async () => {
+    localStorage.setItem(
+      "user",
+      JSON.stringify({ username: "aihubmix-user", display_name: "Alice" }),
+    )
+
+    const response = await new Promise<any>((resolve) => {
+      handleGetUserFromLocalStorage(
+        { url: "https://console.aihubmix.com", siteType: "AIHubMix" },
+        resolve,
+      )
+    })
+
+    expect(response).toEqual({
+      success: true,
+      data: {
+        userId: "aihubmix-user",
+        siteTypeHint: "AIHubMix",
+        user: {
+          username: "aihubmix-user",
+          display_name: "Alice",
+        },
+      },
+    })
+    expect(mockFetchUserInfo).not.toHaveBeenCalled()
+  })
+
+  it("does not infer AIHubMix identity from url without an explicit site type", async () => {
+    localStorage.setItem(
+      "user",
+      JSON.stringify({ username: "aihubmix-user", display_name: "Alice" }),
+    )
+
+    const response = await new Promise<any>((resolve) => {
+      handleGetUserFromLocalStorage(
+        { url: "https://console.aihubmix.com" },
+        resolve,
+      )
+    })
+
+    expect(response.success).toBe(false)
+    expect(response.error).toBe("messages:content.userInfoNotFound")
+    expect(mockFetchUserInfo).not.toHaveBeenCalled()
+  })
+
   it("returns userInfoNotFound when no user payload exists", async () => {
     const response = await new Promise<any>((resolve) => {
       handleGetUserFromLocalStorage({ url: "https://example.com" }, resolve)

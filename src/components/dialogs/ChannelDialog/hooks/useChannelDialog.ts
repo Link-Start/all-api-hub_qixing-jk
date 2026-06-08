@@ -13,6 +13,7 @@ import {
   ensureAccountApiToken,
   resolveSub2ApiQuickCreateResolution,
 } from "~/services/accounts/accountOperations"
+import { selectSingleNewApiTokenByIdDiff } from "~/services/accounts/accountPostSaveWorkflow"
 import { accountStorage } from "~/services/accounts/accountStorage"
 import {
   createDisplayAccountApiContext,
@@ -32,6 +33,7 @@ import {
   type ManagedSiteTokenChannelStatus,
 } from "~/services/managedSites/tokenChannelStatus"
 import {
+  collectManagedConfigSecrets,
   getManagedSiteConfigMissingMessage,
   supportsManagedSiteBaseUrlChannelLookup,
 } from "~/services/managedSites/utils/managedSite"
@@ -55,11 +57,17 @@ const logger = createLogger("ChannelDialogHook")
 
 interface PrefilledChannelOpenOptions {
   managedSiteStatus?: ManagedSiteTokenChannelStatus
+  shouldContinue?: () => boolean
 }
 
 interface PrefilledDialogDuplicateState {
   existingChannelName: string | null
   advisoryWarning: ChannelDialogAdvisoryWarning | null
+}
+
+export interface OpenWithAccountResult {
+  opened: boolean
+  deferred?: boolean
 }
 
 /**
@@ -69,6 +77,15 @@ function isSiteAccount(
   account: DisplaySiteData | SiteAccount,
 ): account is SiteAccount {
   return "site_name" in account && "account_info" in account
+}
+
+/**
+ * Extracts numeric token IDs from potentially sparse token lists.
+ */
+function getApiTokenIds(tokens: ApiToken[]): number[] {
+  return tokens
+    .map((token) => token?.id)
+    .filter((tokenId): tokenId is number => typeof tokenId === "number")
 }
 
 /**
@@ -84,7 +101,7 @@ export function useChannelDialog() {
     account: DisplaySiteData,
     options?: {
       notice?: string
-      onSuccess?: () => void | Promise<void>
+      onSuccess?: (createdToken?: ApiToken) => void | Promise<void>
     },
   ): Promise<boolean> => {
     const { service, request } = createDisplayAccountApiContext(account)
@@ -132,7 +149,8 @@ export function useChannelDialog() {
       siteType: SITE_TYPES.UNKNOWN,
       baseUrl: options.baseUrl,
       token: "",
-      userId: 0,
+      // Raw credential profiles are synthetic account rows without an upstream user.
+      userId: "",
       authType: AuthTypeEnum.None,
       checkIn: {
         enableDetection: false,
@@ -306,12 +324,17 @@ export function useChannelDialog() {
     accountToken: AccountToken | ApiToken | null,
     onSuccess?: (result: any) => void,
     options?: PrefilledChannelOpenOptions,
-  ) => {
+  ): Promise<OpenWithAccountResult> => {
     const toastId = toast.loading(
       t("messages:accountOperations.checkingApiKeys"),
     )
     let displaySiteData: DisplaySiteData | null = null
     let secretsToRedact: string[] = []
+    const shouldContinue = () => options?.shouldContinue?.() ?? true
+    const cancelOpen = (): OpenWithAccountResult => {
+      toast.dismiss(toastId)
+      return { opened: false }
+    }
 
     try {
       // Get full account if needed
@@ -340,48 +363,104 @@ export function useChannelDialog() {
             id: toastId,
           },
         )
-        return
+        return { opened: false }
       }
 
       let apiToken = accountToken
+      let accountApiService:
+        | ReturnType<typeof createDisplayAccountApiContext>["service"]
+        | null = null
+      let accountApiRequest:
+        | ReturnType<typeof createDisplayAccountApiContext>["request"]
+        | null = null
+      let existingTokenIds: number[] = []
 
       if (!apiToken) {
-        const { service: accountApiService, request: accountApiRequest } =
+        const accountApiContext =
           createDisplayAccountApiContext(displaySiteData)
+        accountApiService = accountApiContext.service
+        accountApiRequest = accountApiContext.request
         const existingTokens =
           await accountApiService.fetchAccountTokens(accountApiRequest)
+        const existingTokenList = Array.isArray(existingTokens)
+          ? existingTokens
+          : []
+        existingTokenIds = getApiTokenIds(existingTokenList)
 
-        apiToken = Array.isArray(existingTokens)
-          ? existingTokens.at(-1) ?? null
-          : null
+        apiToken = existingTokenList.at(-1) ?? null
       }
 
       if (!apiToken) {
-        if (displaySiteData.siteType === "sub2api") {
+        if (displaySiteData.siteType === SITE_TYPES.SUB2API) {
           const resolution =
             await resolveSub2ApiQuickCreateResolution(displaySiteData)
+          if (!shouldContinue()) {
+            return cancelOpen()
+          }
 
           if (resolution.kind === "blocked") {
             toast.error(resolution.message, { id: toastId })
-            return
+            return { opened: false }
           }
 
           if (resolution.kind === "selection_required") {
+            if (!shouldContinue()) {
+              return cancelOpen()
+            }
             toast.dismiss(toastId)
             openSub2ApiTokenDialog({
               account: displaySiteData,
               allowedGroups: resolution.allowedGroups,
               notice: t("messages:sub2api.createRequiresGroupSelection"),
-              onSuccess: async () => {
+              onSuccess: async (createdToken?: ApiToken) => {
+                if (!shouldContinue()) {
+                  return
+                }
+
+                if (createdToken) {
+                  await openWithAccount(
+                    displaySiteData!,
+                    createdToken,
+                    onSuccess,
+                    options,
+                  )
+                  return
+                }
+
+                if (!shouldContinue()) {
+                  return
+                }
+
+                const refetchedTokens =
+                  accountApiService && accountApiRequest
+                    ? await accountApiService.fetchAccountTokens(
+                        accountApiRequest,
+                      )
+                    : null
+                if (!shouldContinue()) {
+                  return
+                }
+                const recoveredToken = Array.isArray(refetchedTokens)
+                  ? selectSingleNewApiTokenByIdDiff({
+                      existingTokenIds,
+                      tokens: refetchedTokens,
+                    })
+                  : null
+
+                if (!recoveredToken) {
+                  toast.error(t("messages:accountOperations.createTokenFailed"))
+                  return
+                }
+
                 await openWithAccount(
                   displaySiteData!,
-                  null,
+                  recoveredToken,
                   onSuccess,
                   options,
                 )
               },
             })
-            return
+            return { opened: false, deferred: true }
           }
 
           apiToken = await ensureAccountApiToken(siteAccount, displaySiteData, {
@@ -397,6 +476,9 @@ export function useChannelDialog() {
           )
         }
       }
+      if (!shouldContinue()) {
+        return cancelOpen()
+      }
 
       const resolvedToken = await resolveDisplayAccountTokenForSecret(
         displaySiteData,
@@ -405,7 +487,7 @@ export function useChannelDialog() {
       secretsToRedact = [
         apiToken.key,
         resolvedToken.key,
-        managedConfig.token,
+        ...collectManagedConfigSecrets(managedConfig),
         displaySiteData.token,
         displaySiteData.cookieAuthSessionCookie,
       ].filter(Boolean) as string[]
@@ -413,6 +495,9 @@ export function useChannelDialog() {
         displaySiteData,
         resolvedToken,
       )
+      if (!shouldContinue()) {
+        return cancelOpen()
+      }
 
       const duplicateState = await resolvePrefilledDialogDuplicateState({
         service,
@@ -422,17 +507,23 @@ export function useChannelDialog() {
         key: formData.key,
         managedSiteStatus: options?.managedSiteStatus,
       })
+      if (!shouldContinue()) {
+        return cancelOpen()
+      }
 
       if (duplicateState.existingChannelName) {
         toast.dismiss(toastId)
-        const shouldContinue = await requestDuplicateChannelWarning({
+        const confirmedDuplicate = await requestDuplicateChannelWarning({
           existingChannelName: duplicateState.existingChannelName,
         })
-        if (!shouldContinue) {
-          return
+        if (!confirmedDuplicate) {
+          return { opened: false }
         }
       } else {
         toast.dismiss(toastId)
+      }
+      if (!shouldContinue()) {
+        return cancelOpen()
       }
 
       // Open dialog
@@ -449,6 +540,7 @@ export function useChannelDialog() {
           }
         },
       })
+      return { opened: true }
     } catch (error) {
       const diagnostic = toSanitizedErrorSummary(error, secretsToRedact)
       toast.error(
@@ -461,6 +553,7 @@ export function useChannelDialog() {
         accountId: displaySiteData?.id,
         diagnostic,
       })
+      return { opened: false }
     }
   }
 
@@ -471,7 +564,7 @@ export function useChannelDialog() {
   const openWithCredentials = async (
     credentials: { name: string; baseUrl: string; apiKey: string },
     onSuccess?: (result: any) => void,
-  ) => {
+  ): Promise<OpenWithAccountResult> => {
     const toastId = toast.loading(
       t("messages:accountOperations.checkingApiKeys"),
     )
@@ -487,7 +580,7 @@ export function useChannelDialog() {
             id: toastId,
           },
         )
-        return
+        return { opened: false }
       }
 
       const displaySiteData = createCredentialDisplaySiteData({
@@ -498,9 +591,10 @@ export function useChannelDialog() {
         name: credentials.name,
         apiKey: credentials.apiKey,
       })
-      secretsToRedact = [apiToken.key, managedConfig.token].filter(
-        Boolean,
-      ) as string[]
+      secretsToRedact = [
+        apiToken.key,
+        ...collectManagedConfigSecrets(managedConfig),
+      ].filter(Boolean) as string[]
 
       const formData = await service.prepareChannelFormData(
         displaySiteData,
@@ -517,11 +611,11 @@ export function useChannelDialog() {
 
       if (duplicateState.existingChannelName) {
         toast.dismiss(toastId)
-        const shouldContinue = await requestDuplicateChannelWarning({
+        const confirmedDuplicate = await requestDuplicateChannelWarning({
           existingChannelName: duplicateState.existingChannelName,
         })
-        if (!shouldContinue) {
-          return
+        if (!confirmedDuplicate) {
+          return { opened: false }
         }
       } else {
         toast.dismiss(toastId)
@@ -538,6 +632,7 @@ export function useChannelDialog() {
           onSuccess?.(result)
         },
       })
+      return { opened: true }
     } catch (error) {
       const diagnostic = toSanitizedErrorSummary(error, secretsToRedact)
       toast.error(
@@ -547,6 +642,7 @@ export function useChannelDialog() {
         { id: toastId },
       )
       logger.error("Failed to prepare channel data", { diagnostic })
+      return { opened: false }
     }
   }
 
@@ -564,6 +660,7 @@ export function useChannelDialog() {
       setKey: (key: string) => void
     }) => Promise<void>
     onSuccess?: (channel: any) => void
+    onMutationOutcome?: Parameters<typeof openDialog>[0]["onMutationOutcome"]
   }) => {
     openDialog(options)
   }

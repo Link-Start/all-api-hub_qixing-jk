@@ -1,7 +1,9 @@
 import { cva, type VariantProps } from "class-variance-authority"
 import React from "react"
 
+import { useProductAnalyticsActionTracking } from "~/hooks/useProductAnalyticsActionTracking"
 import { cn } from "~/lib/utils"
+import type { ProductAnalyticsScopedActionConfig } from "~/services/productAnalytics/actionConfig"
 
 const iconButtonVariants = cva(
   "inline-flex items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none ring-offset-background",
@@ -26,9 +28,9 @@ const iconButtonVariants = cva(
         none: "",
         xs: "h-5 w-5 sm:h-6 sm:w-6",
         sm: "h-6 w-6 sm:h-8 sm:w-8",
-        default: "h-8 w-8 sm:h-10 sm:w-10",
-        lg: "h-10 w-10 sm:h-12 sm:w-12",
-        xl: "h-12 w-12 sm:h-14 sm:w-14",
+        default: "h-8 w-8 sm:h-9 sm:w-9",
+        lg: "h-10 w-10",
+        xl: "h-12 w-12",
       },
     },
     defaultVariants: {
@@ -43,20 +45,47 @@ export interface IconButtonProps
     VariantProps<typeof iconButtonVariants> {
   loading?: boolean
   "aria-label": string
+  analyticsAction?: ProductAnalyticsScopedActionConfig
 }
 
 const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
   (
-    { className, variant, size, loading, children, disabled, ...props },
+    {
+      className,
+      variant,
+      size,
+      loading,
+      children,
+      disabled,
+      analyticsAction,
+      onClick,
+      ...props
+    },
     ref,
   ) => {
     const isDisabled = disabled || loading
+    const analytics = useProductAnalyticsActionTracking({
+      analyticsAction,
+      disabled: Boolean(isDisabled),
+    })
+    const trackingProps = analytics.getActionTrackingProps()
+
+    const handleClick: React.MouseEventHandler<HTMLButtonElement> = (event) => {
+      onClick?.(event)
+
+      if (event.defaultPrevented || isDisabled || !analyticsAction) {
+        return
+      }
+
+      trackingProps.onClick(event)
+    }
 
     return (
       <button
         className={cn(iconButtonVariants({ variant, size, className }))}
         ref={ref}
         disabled={isDisabled}
+        onClick={handleClick}
         {...props}
       >
         {loading ? (

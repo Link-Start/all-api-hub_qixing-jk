@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { SITE_TYPES } from "~/constants/siteType"
 import {
   buildApiToken,
   buildDisplaySiteData,
@@ -145,6 +146,30 @@ describe("doneHubService additional flows", () => {
       groups: ["ops", "default"],
     })
     expect(result.modelPrefillFetchFailed).toBeUndefined()
+  })
+
+  it("uses the AIHubMix API origin for managed-site channel imports", async () => {
+    const { prepareChannelFormData } = await import(
+      "~/services/managedSites/providers/doneHubService"
+    )
+    const account = buildDisplaySiteData({
+      siteType: SITE_TYPES.AIHUBMIX,
+      baseUrl: "https://console.aihubmix.com",
+    })
+    const token = buildApiToken({
+      key: "aihubmix-key",
+      name: "AIHubMix Token",
+    })
+
+    const result = await prepareChannelFormData(account, token)
+
+    expect(mockFetchTokenScopedModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: "https://aihubmix.com",
+      }),
+      token,
+    )
+    expect(result.base_url).toBe("https://aihubmix.com")
   })
 
   it("marks model prefill failure and trims payload fields when building a channel payload", async () => {
@@ -321,9 +346,12 @@ describe("doneHubService additional flows", () => {
 
     const result = await autoConfigToDoneHub(buildSiteAccount(), "toast-3")
 
-    expect(result.success).toBe(false)
+    expect(result).toEqual({
+      success: false,
+      message: expect.stringContaining("channelExists"),
+    })
+    expect(mockSearchChannel).toHaveBeenCalledTimes(1)
     expect(mockCreateChannel).not.toHaveBeenCalled()
-    expect(result.message).toContain("messages:donehub.channelExists")
   })
 
   it("proxies search, create, update, delete, and available-model fetches with Done Hub auth", async () => {
@@ -343,15 +371,19 @@ describe("doneHubService additional flows", () => {
     })
 
     await searchChannel(
-      "https://done-hub.example.com",
-      "done-hub-token",
-      "100",
+      {
+        baseUrl: "https://done-hub.example.com",
+        adminToken: "done-hub-token",
+        userId: "100",
+      },
       "proxy",
     )
     await createChannel(
-      "https://done-hub.example.com",
-      "done-hub-token",
-      "100",
+      {
+        baseUrl: "https://done-hub.example.com",
+        adminToken: "done-hub-token",
+        userId: "100",
+      },
       {
         mode: "single",
         channel: {
@@ -368,9 +400,11 @@ describe("doneHubService additional flows", () => {
       } as any,
     )
     await updateChannel(
-      "https://done-hub.example.com",
-      "done-hub-token",
-      "100",
+      {
+        baseUrl: "https://done-hub.example.com",
+        adminToken: "done-hub-token",
+        userId: "100",
+      },
       {
         id: 7,
         name: "Updated Channel",
@@ -385,9 +419,11 @@ describe("doneHubService additional flows", () => {
       } as any,
     )
     await deleteChannel(
-      "https://done-hub.example.com",
-      "done-hub-token",
-      "100",
+      {
+        baseUrl: "https://done-hub.example.com",
+        adminToken: "done-hub-token",
+        userId: "100",
+      },
       7,
     )
     const models = await fetchAvailableModels(account, token)
@@ -503,21 +539,31 @@ describe("doneHubService additional flows", () => {
 
     await expect(
       fetchChannelSecretKey(
-        "https://done-hub.example.com",
-        "done-hub-token",
-        "100",
+        {
+          baseUrl: "https://done-hub.example.com",
+          adminToken: "done-hub-token",
+          userId: "100",
+        },
         42,
       ),
     ).rejects.toThrow("done_hub_channel_key_missing")
   })
 
-  it("skips key-detail fetches for channels without ids and ignores detail fetch failures", async () => {
-    const { findMatchingChannel } = await import(
+  it("preserves channels without ids and maps detail fetch failures to unresolved hydration", async () => {
+    const { hydrateComparableChannelKeys } = await import(
       "~/services/managedSites/providers/doneHubService"
     )
+    const { MatchResolutionUnresolvedError } = await import(
+      "~/services/managedSites/channelMatch"
+    )
 
-    mockSearchChannel.mockResolvedValueOnce({
-      items: [
+    const result = await hydrateComparableChannelKeys(
+      {
+        baseUrl: "https://done-hub.example.com",
+        adminToken: "done-hub-token",
+        userId: "100",
+      },
+      [
         buildManagedSiteChannel({
           id: undefined as any,
           name: "No Id Channel",
@@ -525,31 +571,38 @@ describe("doneHubService additional flows", () => {
           models: "gpt-4o",
           key: "",
         }),
-        buildManagedSiteChannel({
-          id: 22,
-          name: "Broken Detail Channel",
-          base_url: "https://proxy.example.com",
-          models: "gpt-4o",
-          key: "",
-        }),
       ],
-      total: 2,
-      type_counts: {},
-    })
+    )
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        name: "No Id Channel",
+      }),
+    ])
+    expect(mockFetchDoneHubChannel).not.toHaveBeenCalled()
+
     mockFetchDoneHubChannel.mockRejectedValueOnce(
       Object.assign(new Error("detail request failed"), { code: "ECONNRESET" }),
     )
 
-    const result = await findMatchingChannel(
-      "https://done-hub.example.com",
-      "done-hub-token",
-      "100",
-      "https://proxy.example.com",
-      ["gpt-4o"],
-      "target-key",
-    )
-
-    expect(result).toBeNull()
+    await expect(
+      hydrateComparableChannelKeys(
+        {
+          baseUrl: "https://done-hub.example.com",
+          adminToken: "done-hub-token",
+          userId: "100",
+        },
+        [
+          buildManagedSiteChannel({
+            id: 22,
+            name: "Broken Detail Channel",
+            base_url: "https://proxy.example.com",
+            models: "gpt-4o",
+            key: "",
+          }),
+        ],
+      ),
+    ).rejects.toBeInstanceOf(MatchResolutionUnresolvedError)
     expect(mockFetchDoneHubChannel).toHaveBeenCalledTimes(1)
     expect(mockFetchDoneHubChannel).toHaveBeenCalledWith(
       {

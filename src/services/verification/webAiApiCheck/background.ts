@@ -1,13 +1,14 @@
-import { RuntimeActionIds } from "~/constants/runtimeActions"
+import { fetchAnthropicModelIds } from "~/services/aiApi/anthropic"
+import { fetchGoogleModelIds } from "~/services/aiApi/google"
+import { fetchOpenAICompatibleModelIds } from "~/services/aiApi/openaiCompatible"
 import { apiCredentialProfilesStorage } from "~/services/apiCredentialProfiles/apiCredentialProfilesStorage"
-import { fetchAnthropicModelIds } from "~/services/apiService/anthropic"
-import { fetchGoogleModelIds } from "~/services/apiService/google"
-import { fetchOpenAICompatibleModelIds } from "~/services/apiService/openaiCompatible"
 import {
   DEFAULT_PREFERENCES,
   userPreferences,
   type UserPreferences,
 } from "~/services/preferences/userPreferences"
+import { resolveProductAnalyticsErrorCategoryFromError } from "~/services/productAnalytics/actions"
+import { PRODUCT_ANALYTICS_ERROR_CATEGORIES } from "~/services/productAnalytics/events"
 import {
   API_TYPES,
   runApiVerificationProbe,
@@ -17,6 +18,7 @@ import {
 } from "~/services/verification/aiApiVerification"
 import {
   inferHttpStatus,
+  inferStructuredHttpStatus,
   summaryKeyFromHttpStatus,
   toSanitizedErrorSummary,
 } from "~/services/verification/aiApiVerification/utils"
@@ -28,11 +30,15 @@ import {
 import { createLogger } from "~/utils/core/logger"
 import { isUrlAllowedByRegexList } from "~/utils/core/urlWhitelist"
 
+import { onWebAiApiCheckMessage, WebAiApiCheckMessageTypes } from "./messaging"
 import type {
+  ApiCheckFetchModelsRequest,
   ApiCheckFetchModelsResponse,
+  ApiCheckRunProbeRequest,
   ApiCheckRunProbeResponse,
-  ApiCheckRuntimeRequest,
+  ApiCheckSaveProfileRequest,
   ApiCheckSaveProfileResponse,
+  ApiCheckShouldPromptRequest,
   ApiCheckShouldPromptResponse,
 } from "./types"
 
@@ -55,7 +61,8 @@ function getWebAiApiCheckPreferences(
         enabled: true,
       },
       autoDetect: {
-        enabled: false,
+        enabled: true,
+        enhanced: { enabled: true },
         urlWhitelist: { patterns: [] },
       },
     }
@@ -117,251 +124,304 @@ function buildDefaultProfileName(params: {
 }
 
 /**
- * Message handler for ApiCheck runtime actions.
- * Centralizes background decision logic and sanitizes all outputs.
+ * Creates the generic failure response used for unexpected handler errors.
  */
-export async function handleWebAiApiCheckMessage(
-  request: ApiCheckRuntimeRequest,
-  sendResponse: (response: unknown) => void,
-) {
+function toGenericFailureResponse() {
+  return { success: false as const, error: "Failed to handle request" }
+}
+
+/**
+ * Resolve whether content auto-detection can prompt on the current page.
+ */
+export async function resolveWebAiApiCheckShouldPromptMessage(
+  request: ApiCheckShouldPromptRequest,
+): Promise<ApiCheckShouldPromptResponse> {
   try {
-    switch (request.action) {
-      case RuntimeActionIds.ApiCheckShouldPrompt: {
-        const { pageUrl } = request
-        if (!pageUrl?.trim()) {
-          const response: ApiCheckShouldPromptResponse = {
-            success: false,
-            error: "Missing pageUrl",
-          }
-          sendResponse(response)
-          return
-        }
-
-        const prefs = await userPreferences.getPreferences()
-        const config = getWebAiApiCheckPreferences(prefs)
-        const patterns = config.autoDetect?.urlWhitelist?.patterns ?? []
-        const shouldPrompt =
-          config.enabled &&
-          !!config.autoDetect?.enabled &&
-          isUrlAllowedByRegexList(pageUrl, patterns)
-
-        const response: ApiCheckShouldPromptResponse = {
-          success: true,
-          shouldPrompt,
-        }
-        sendResponse(response)
-        return
+    const { pageUrl } = request
+    if (!pageUrl?.trim()) {
+      return {
+        success: false,
+        error: "Missing pageUrl",
       }
+    }
 
-      case RuntimeActionIds.ApiCheckFetchModels: {
-        const { apiType, baseUrl, apiKey } = request
+    const prefs = await userPreferences.getPreferences()
+    const config = getWebAiApiCheckPreferences(prefs)
+    const patterns = config.autoDetect?.urlWhitelist?.patterns ?? []
+    const autoDetectEnabled = config.enabled && !!config.autoDetect?.enabled
+    const urlAllowed = isUrlAllowedByRegexList(pageUrl, patterns)
+    const shouldPrompt = autoDetectEnabled && urlAllowed
+    const enhancedShouldPrompt =
+      shouldPrompt && !!config.autoDetect?.enhanced?.enabled
 
-        if (!apiType || !baseUrl?.trim() || !apiKey?.trim()) {
-          const response: ApiCheckFetchModelsResponse = {
-            success: false,
-            error: "Missing apiType, baseUrl, or apiKey",
-          }
-          sendResponse(response)
-          return
-        }
-
-        const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
-        if (!normalizedBaseUrl) {
-          const response: ApiCheckFetchModelsResponse = {
-            success: false,
-            error: "Invalid baseUrl",
-          }
-          sendResponse(response)
-          return
-        }
-
-        try {
-          const modelIds = await (async () => {
-            if (
-              apiType === API_TYPES.OPENAI_COMPATIBLE ||
-              apiType === API_TYPES.OPENAI
-            ) {
-              return await fetchOpenAICompatibleModelIds({
-                baseUrl: normalizedBaseUrl,
-                apiKey,
-              })
-            }
-
-            if (apiType === API_TYPES.GOOGLE) {
-              return await fetchGoogleModelIds({
-                baseUrl: normalizedBaseUrl,
-                apiKey,
-              })
-            }
-
-            if (apiType === API_TYPES.ANTHROPIC) {
-              return await fetchAnthropicModelIds({
-                baseUrl: normalizedBaseUrl,
-                apiKey,
-              })
-            }
-
-            throw new Error("Unsupported apiType")
-          })()
-          const response: ApiCheckFetchModelsResponse = {
-            success: true,
-            modelIds,
-          }
-          sendResponse(response)
-          return
-        } catch (error) {
-          const message = toSanitizedErrorSummary(error, [apiKey])
-          logger.error("Failed to fetch models", {
-            apiType,
-            baseUrl: normalizedBaseUrl,
-            message,
-          })
-
-          const response: ApiCheckFetchModelsResponse = {
-            success: false,
-            error: message,
-          }
-          sendResponse(response)
-          return
-        }
-      }
-
-      case RuntimeActionIds.ApiCheckRunProbe: {
-        const { apiType, baseUrl, apiKey, modelId, probeId } = request
-
-        if (!apiType || !baseUrl?.trim() || !apiKey?.trim() || !probeId) {
-          const response: ApiCheckRunProbeResponse = {
-            success: false,
-            error: "Missing apiType, baseUrl, apiKey, or probeId",
-          }
-          sendResponse(response)
-          return
-        }
-
-        const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
-        if (!normalizedBaseUrl) {
-          const response: ApiCheckRunProbeResponse = {
-            success: false,
-            error: "Invalid baseUrl",
-          }
-          sendResponse(response)
-          return
-        }
-
-        try {
-          const result = await runApiVerificationProbe({
-            baseUrl: normalizedBaseUrl,
-            apiKey,
-            apiType,
-            modelId: modelId?.trim() || undefined,
-            probeId: probeId as ApiVerificationProbeId,
-          })
-
-          const response: ApiCheckRunProbeResponse = { success: true, result }
-          sendResponse(response)
-          return
-        } catch (error) {
-          const message = toSanitizedErrorSummary(error, [apiKey])
-          const status = inferHttpStatus(error, message)
-          const summaryKey = summaryKeyFromHttpStatus(status)
-
-          logger.error("Probe execution failed", {
-            apiType,
-            probeId,
-            baseUrl: normalizedBaseUrl,
-            message,
-            status,
-          })
-
-          const result: ApiVerificationProbeResult = {
-            id: probeId as ApiVerificationProbeId,
-            status: "fail",
-            latencyMs: 0,
-            summary: message,
-            summaryKey,
-            summaryParams: summaryKey ? { status } : undefined,
-            input: {
-              apiType,
-              baseUrl: normalizedBaseUrl,
-            },
-          }
-
-          const response: ApiCheckRunProbeResponse = { success: true, result }
-          sendResponse(response)
-          return
-        }
-      }
-
-      case RuntimeActionIds.ApiCheckSaveProfile: {
-        const { apiType, baseUrl, apiKey, name, pageUrl } = request
-
-        if (!apiType || !baseUrl?.trim() || !apiKey?.trim()) {
-          const response: ApiCheckSaveProfileResponse = {
-            success: false,
-            error: "Missing apiType, baseUrl, or apiKey",
-          }
-          sendResponse(response)
-          return
-        }
-
-        const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
-        if (!normalizedBaseUrl) {
-          const response: ApiCheckSaveProfileResponse = {
-            success: false,
-            error: "Invalid baseUrl",
-          }
-          sendResponse(response)
-          return
-        }
-
-        const providedName = typeof name === "string" ? name.trim() : ""
-        const profileName =
-          providedName ||
-          buildDefaultProfileName({ normalizedBaseUrl, pageUrl })
-
-        try {
-          const profile = await apiCredentialProfilesStorage.createProfile({
-            name: profileName,
-            apiType,
-            baseUrl: normalizedBaseUrl,
-            apiKey,
-            tagIds: [],
-            notes: "",
-          })
-
-          const response: ApiCheckSaveProfileResponse = {
-            success: true,
-            profileId: profile.id,
-            name: profile.name,
-            apiType: profile.apiType,
-            baseUrl: profile.baseUrl,
-          }
-          sendResponse(response)
-          return
-        } catch (error) {
-          const message = toSanitizedErrorSummary(error, [apiKey])
-          logger.error("Failed to save ApiCheck credentials to profiles", {
-            apiType,
-            baseUrl: normalizedBaseUrl,
-            message,
-          })
-
-          const response: ApiCheckSaveProfileResponse = {
-            success: false,
-            error: message,
-          }
-          sendResponse(response)
-          return
-        }
-      }
-
-      default:
-        sendResponse({ success: false, error: "Unknown action" })
+    return {
+      success: true,
+      shouldPrompt,
+      enhancedShouldPrompt,
     }
   } catch (error) {
     logger.error("ApiCheck message handling failed", {
       message: toSanitizedErrorSummary(error, []),
     })
-    sendResponse({ success: false, error: "Failed to handle request" })
+    return toGenericFailureResponse()
   }
+}
+
+/**
+ * Fetch upstream model IDs for API-check credentials.
+ */
+export async function resolveWebAiApiCheckFetchModelsMessage(
+  request: ApiCheckFetchModelsRequest,
+): Promise<ApiCheckFetchModelsResponse> {
+  try {
+    const { apiType, baseUrl, apiKey } = request
+
+    if (!apiType || !baseUrl?.trim() || !apiKey?.trim()) {
+      return {
+        success: false,
+        error: "Missing apiType, baseUrl, or apiKey",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
+    if (!normalizedBaseUrl) {
+      return {
+        success: false,
+        error: "Invalid baseUrl",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    try {
+      const modelIds = await (async () => {
+        if (
+          apiType === API_TYPES.OPENAI_COMPATIBLE ||
+          apiType === API_TYPES.OPENAI
+        ) {
+          return await fetchOpenAICompatibleModelIds({
+            baseUrl: normalizedBaseUrl,
+            apiKey,
+          })
+        }
+
+        if (apiType === API_TYPES.GOOGLE) {
+          return await fetchGoogleModelIds({
+            baseUrl: normalizedBaseUrl,
+            apiKey,
+          })
+        }
+
+        if (apiType === API_TYPES.ANTHROPIC) {
+          return await fetchAnthropicModelIds({
+            baseUrl: normalizedBaseUrl,
+            apiKey,
+          })
+        }
+
+        throw new Error("Unsupported apiType")
+      })()
+
+      return {
+        success: true,
+        modelIds,
+      }
+    } catch (error) {
+      const message = toSanitizedErrorSummary(error, [apiKey])
+      const status = inferStructuredHttpStatus(error)
+      logger.error("Failed to fetch models", {
+        apiType,
+        baseUrl: normalizedBaseUrl,
+        message,
+        status,
+      })
+
+      return {
+        success: false,
+        error: message,
+        ...(typeof status === "number" ? { errorStatusCode: status } : {}),
+      }
+    }
+  } catch (error) {
+    logger.error("ApiCheck message handling failed", {
+      message: toSanitizedErrorSummary(error, []),
+    })
+    return toGenericFailureResponse()
+  }
+}
+
+/**
+ * Run a single API verification probe for API-check credentials.
+ */
+export async function resolveWebAiApiCheckRunProbeMessage(
+  request: ApiCheckRunProbeRequest,
+): Promise<ApiCheckRunProbeResponse> {
+  try {
+    const { apiType, baseUrl, apiKey, modelId, probeId } = request
+
+    if (!apiType || !baseUrl?.trim() || !apiKey?.trim() || !probeId) {
+      return {
+        success: false,
+        error: "Missing apiType, baseUrl, apiKey, or probeId",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
+    if (!normalizedBaseUrl) {
+      return {
+        success: false,
+        error: "Invalid baseUrl",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    try {
+      const result = await runApiVerificationProbe({
+        baseUrl: normalizedBaseUrl,
+        apiKey,
+        apiType,
+        modelId: modelId?.trim() || undefined,
+        probeId: probeId as ApiVerificationProbeId,
+      })
+
+      return { success: true, result }
+    } catch (error) {
+      const message = toSanitizedErrorSummary(error, [apiKey])
+      const status = inferHttpStatus(error, message)
+      const analyticsStatus = inferStructuredHttpStatus(error)
+      const summaryKey = summaryKeyFromHttpStatus(status)
+
+      logger.error("Probe execution failed", {
+        apiType,
+        probeId,
+        baseUrl: normalizedBaseUrl,
+        message,
+        status,
+      })
+
+      const result: ApiVerificationProbeResult = {
+        id: probeId as ApiVerificationProbeId,
+        status: "fail",
+        latencyMs: 0,
+        summary: message,
+        summaryKey,
+        summaryParams: summaryKey ? { status } : undefined,
+        input: {
+          apiType,
+          baseUrl: normalizedBaseUrl,
+        },
+        output:
+          typeof analyticsStatus === "number"
+            ? { inferredHttpStatus: analyticsStatus }
+            : undefined,
+      }
+
+      return { success: true, result }
+    }
+  } catch (error) {
+    logger.error("ApiCheck message handling failed", {
+      message: toSanitizedErrorSummary(error, []),
+    })
+    return toGenericFailureResponse()
+  }
+}
+
+/**
+ * Save API-check credentials as an API credential profile.
+ */
+export async function resolveWebAiApiCheckSaveProfileMessage(
+  request: ApiCheckSaveProfileRequest,
+): Promise<ApiCheckSaveProfileResponse> {
+  try {
+    const { apiType, baseUrl, apiKey, name, pageUrl } = request
+
+    if (!apiType || !baseUrl?.trim() || !apiKey?.trim()) {
+      return {
+        success: false,
+        error: "Missing apiType, baseUrl, or apiKey",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    const normalizedBaseUrl = normalizeProbeBaseUrl({ apiType, baseUrl })
+    if (!normalizedBaseUrl) {
+      return {
+        success: false,
+        error: "Invalid baseUrl",
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+      }
+    }
+
+    const providedName = typeof name === "string" ? name.trim() : ""
+    const profileName =
+      providedName || buildDefaultProfileName({ normalizedBaseUrl, pageUrl })
+
+    try {
+      const profile = await apiCredentialProfilesStorage.createProfile({
+        name: profileName,
+        apiType,
+        baseUrl: normalizedBaseUrl,
+        apiKey,
+        tagIds: [],
+        notes: "",
+      })
+
+      return {
+        success: true,
+        profileId: profile.id,
+        name: profile.name,
+        apiType: profile.apiType,
+        baseUrl: profile.baseUrl,
+      }
+    } catch (error) {
+      const message = toSanitizedErrorSummary(error, [apiKey])
+      logger.error("Failed to save ApiCheck credentials to profiles", {
+        apiType,
+        baseUrl: normalizedBaseUrl,
+        message,
+      })
+
+      return {
+        success: false,
+        error: message,
+        errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+      }
+    }
+  } catch (error) {
+    logger.error("ApiCheck message handling failed", {
+      message: toSanitizedErrorSummary(error, []),
+    })
+    return toGenericFailureResponse()
+  }
+}
+
+let webAiApiCheckMessagingCleanup: Array<() => void> | null = null
+
+/**
+ * Register typed background listeners for Web AI API Check runtime RPCs.
+ */
+export function setupWebAiApiCheckMessagingListeners() {
+  if (webAiApiCheckMessagingCleanup) {
+    return
+  }
+
+  webAiApiCheckMessagingCleanup = [
+    onWebAiApiCheckMessage(
+      WebAiApiCheckMessageTypes.ShouldPrompt,
+      async ({ data }) => resolveWebAiApiCheckShouldPromptMessage(data),
+    ),
+    onWebAiApiCheckMessage(
+      WebAiApiCheckMessageTypes.FetchModels,
+      async ({ data }) => resolveWebAiApiCheckFetchModelsMessage(data),
+    ),
+    onWebAiApiCheckMessage(
+      WebAiApiCheckMessageTypes.RunProbe,
+      async ({ data }) => resolveWebAiApiCheckRunProbeMessage(data),
+    ),
+    onWebAiApiCheckMessage(
+      WebAiApiCheckMessageTypes.SaveProfile,
+      async ({ data }) => resolveWebAiApiCheckSaveProfileMessage(data),
+    ),
+  ]
 }

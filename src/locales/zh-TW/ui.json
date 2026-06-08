@@ -317,6 +317,7 @@
     "community": "社羣交流群",
     "discussion": "參與討論",
     "featureRequest": "提出功能建議",
+    "siteSupportRequest": "反饋未適配站點",
     "trigger": "反饋",
     "triggerTooltip": "開啟反饋快捷入口"
   },
@@ -353,12 +354,20 @@
   "navigation": {
     "about": "關於",
     "account": "帳戶管理",
-    "apiCredentialProfiles": "API 憑證",
+    "apiCredentialProfiles": "API 憑據庫",
     "autoCheckin": "自動簽到",
     "autoCheckinRunNow": "快速簽到",
     "balanceHistory": "餘額歷史",
     "basic": "基礎設定",
     "bookmark": "書籤管理",
+    "categories": {
+      "api": "介面",
+      "automation": "自動化",
+      "general": "一般",
+      "insights": "洞察",
+      "siteManagement": "站點管理",
+      "system": "系統"
+    },
     "collapseSidebar": "摺疊側邊欄",
     "expandSidebar": "展開側邊欄",
     "externalCheckinAll": "一鍵開啟外部簽到",
@@ -369,6 +378,7 @@
     "managedSiteModelSync": "模型同步",
     "meshGradientLab": "網格漸變實驗室 (Dev)",
     "models": "模型列表",
+    "overview": "總覽",
     "settings": "設定",
     "settingsOptions": "設定選項",
     "sidebarCollapsedHint": "側邊欄已摺疊，僅顯示圖示",
@@ -385,6 +395,7 @@
       "control": "設定項目",
       "page": "頁面",
       "recent": "最近使用",
+      "section": "設定分區",
       "tab": "設定標籤"
     },
     "idleDescription": "輸入設定名稱、關鍵字或技術別名後開始搜尋。",

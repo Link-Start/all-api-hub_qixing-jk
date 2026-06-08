@@ -1,4 +1,9 @@
-import { AutoDetectError } from "~/services/accounts/utils/autoDetectUtils"
+import type {
+  AutoDetectAnalyticsContext,
+  AutoDetectError,
+  AutoDetectFailureReason,
+} from "~/services/accounts/utils/autoDetectUtils"
+import type { ApiServiceFetchContext } from "~/services/apiService/common/type"
 
 import type {
   ApiToken,
@@ -31,8 +36,12 @@ export interface AccountValidationResponse
     siteType?: string
     authType?: AuthTypeEnum
     sub2apiAuth?: Sub2ApiAuthConfig
+    fetchContext?: ApiServiceFetchContext
+    autoDetectContext?: AutoDetectAnalyticsContext
   }> {
   detailedError?: AutoDetectError // Keep for backwards compatibility
+  autoDetectFailureReason?: AutoDetectFailureReason
+  autoDetectContext?: AutoDetectAnalyticsContext
 }
 
 /**

@@ -2,16 +2,34 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import AutoCheckinSettings from "~/features/BasicSettings/components/tabs/CheckinRedeem/AutoCheckinSettings"
 import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+} from "~/services/productAnalytics/events"
+import {
   AUTO_CHECKIN_SCHEDULE_MODE,
   type AutoCheckinPreferences,
 } from "~/types/autoCheckin"
-import { fireEvent, render, screen, waitFor } from "~~/tests/test-utils/render"
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "~~/tests/test-utils/render"
 
-const { toastMocks, useUserPreferencesContextMock } = vi.hoisted(() => ({
+const {
+  toastMocks,
+  trackProductAnalyticsActionStartedMock,
+  trackProductAnalyticsEventMock,
+  useUserPreferencesContextMock,
+} = vi.hoisted(() => ({
   toastMocks: {
     error: vi.fn(),
     success: vi.fn(),
   },
+  trackProductAnalyticsActionStartedMock: vi.fn(),
+  trackProductAnalyticsEventMock: vi.fn(),
   useUserPreferencesContextMock: vi.fn(),
 }))
 
@@ -38,6 +56,22 @@ vi.mock("~/utils/navigation", async (importOriginal) => {
     ...actual,
     pushWithinOptionsPage: (...args: unknown[]) =>
       pushWithinOptionsPageMock(...args),
+  }
+})
+
+vi.mock("~/services/productAnalytics/actions", () => ({
+  trackProductAnalyticsActionStarted: (...args: unknown[]) =>
+    trackProductAnalyticsActionStartedMock(...args),
+}))
+
+vi.mock("~/services/productAnalytics/events", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("~/services/productAnalytics/events")>()
+
+  return {
+    ...actual,
+    trackProductAnalyticsEvent: (...args: unknown[]) =>
+      trackProductAnalyticsEventMock(...args),
   }
 })
 
@@ -141,6 +175,121 @@ describe("AutoCheckinSettings", () => {
     })
     expect(toastMocks.success).toHaveBeenCalled()
     expect(pushWithinOptionsPageMock).toHaveBeenCalledWith("#autoCheckin")
+    expect(trackProductAnalyticsActionStartedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AutoCheckin,
+        actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshAutoCheckinStatus,
+        entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+      }),
+    )
+  })
+
+  it("lets schedule mode options wrap inside narrow settings cards", async () => {
+    render(<AutoCheckinSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    const randomButton = screen.getByRole("button", {
+      name: "autoCheckin:settings.scheduleModeRandom",
+    })
+    const optionGroup = randomButton.parentElement
+
+    expect(optionGroup).toHaveClass(
+      "flex",
+      "w-full",
+      "flex-wrap",
+      "[@container(min-width:42rem)]:w-auto",
+    )
+    expect(randomButton).toHaveClass(
+      "min-w-fit",
+      "flex-1",
+      "[@container(min-width:42rem)]:flex-none",
+    )
+
+    await act(async () => {
+      fireEvent.click(randomButton)
+    })
+
+    expect(updateAutoCheckin).toHaveBeenCalledWith({
+      scheduleMode: AUTO_CHECKIN_SCHEDULE_MODE.RANDOM,
+    })
+  })
+
+  it("disables schedule mode changes while preferences are saving", async () => {
+    let resolveSave: (value: boolean) => void
+    updateAutoCheckin.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSave = resolve
+      }),
+    )
+
+    render(<AutoCheckinSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(screen.getAllByRole("switch")[0])
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: "autoCheckin:settings.scheduleModeRandom",
+        }),
+      ).toBeDisabled()
+    })
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "autoCheckin:settings.scheduleModeRandom",
+      }),
+    )
+
+    expect(updateAutoCheckin).toHaveBeenCalledTimes(1)
+    expect(updateAutoCheckin).toHaveBeenCalledWith({ globalEnabled: false })
+
+    resolveSave!(true)
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: "autoCheckin:settings.scheduleModeRandom",
+        }),
+      ).toBeEnabled()
+    })
+  })
+
+  it("leaves settings snapshot tracking to the preferences context", async () => {
+    render(<AutoCheckinSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(screen.getAllByRole("switch")[0])
+    await waitFor(() => {
+      expect(updateAutoCheckin).toHaveBeenCalledWith({ globalEnabled: false })
+    })
+
+    expect(trackProductAnalyticsEventMock).not.toHaveBeenCalled()
+  })
+
+  it("does not emit component-level settings analytics on reset", async () => {
+    render(<AutoCheckinSettings />, {
+      withUserPreferencesProvider: false,
+      withThemeProvider: false,
+    })
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "common:actions.reset" }),
+    )
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "common:actions.reset" })[1],
+    )
+
+    await waitFor(() => {
+      expect(resetAutoCheckinConfig).toHaveBeenCalled()
+    })
+    expect(trackProductAnalyticsEventMock).not.toHaveBeenCalled()
   })
 
   it("reports invalid retry numbers and save failures", async () => {

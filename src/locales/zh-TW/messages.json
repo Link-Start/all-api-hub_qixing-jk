@@ -15,7 +15,9 @@
     "tokenNotFound": "無法建立或找到 API 令牌"
   },
   "aihubmix": {
-    "createRequiresOneTimeKeyDialog": "AIHubMix 建立的金鑰只能查看一次，請在金鑰管理中手動建立並立即保存完整金鑰。"
+    "createRequiresOneTimeKeyDialog": "AIHubMix 建立的金鑰只能查看一次，請在金鑰管理中手動建立並立即保存完整金鑰。",
+    "oneTimeKeyPromptCancelled": "帳號已儲存。你之後可以在金鑰管理中手動建立 AIHubMix API 金鑰。",
+    "oneTimeKeyUnavailableAfterCreate": "帳號已儲存，但未能取得完整 AIHubMix API 金鑰。AIHubMix 金鑰只在建立時顯示一次，請在金鑰管理中重新建立並立即保存完整金鑰。"
   },
   "autodetect": {
     "currentTabNeedsReload": "當前頁面可能是在安裝或更新擴充套件前開啟的，外掛暫時無法讀取這個標籤頁的資訊。請重新整理當前頁面後再試一次自動識別。",
@@ -36,7 +38,8 @@
     "importFailed": "匯入失敗，發生未知錯誤",
     "importSuccess": "成功匯入新渠道 {{channelName}}",
     "modelsMissing": "請至少填寫一個模型",
-    "noChannelsToSync": "沒有可同步的渠道"
+    "noChannelsToSync": "沒有可同步的渠道",
+    "unsupportedModelSync": "目前版本不支援 AxonHub 管理站點模型同步"
   },
   "background": {
     "cannotCreateWindow": "無法建立視窗",
@@ -154,8 +157,12 @@
   "operations": {
     "detection": {
       "failed": "自動檢測失敗，請手動輸入資訊或確保已在目標站點登入",
+      "getAccessTokenFailedDetailed": "已識別到帳號，但未能取得存取權杖。請確認帳號有建立或查看 API 權杖的權限，或改用手動輸入。",
       "getInfoFailed": "未能獲取到使用者名稱或訪問令牌",
-      "getUserIdFailed": "無法獲取使用者 ID"
+      "getSiteStatusFailedDetailed": "已識別到帳號，但讀取站點狀態失敗。請稍後重試；如果仍失敗，可先手動儲存帳號。",
+      "getUserIdFailed": "無法獲取使用者 ID",
+      "getUserIdFailedDetailed": "已連線到站點，但未能讀取使用者 ID。請確認已在目標站點登入後重試。",
+      "getUsernameFailedDetailed": "已識別到帳號，但站點未返回使用者名稱。請確認已登入，或改用手動輸入。"
     }
   },
   "storage": {
@@ -235,7 +242,10 @@
     "downloadFailed": "下載失敗，狀態碼: {{status}}",
     "encryptFailedNoPassword": "已開啟加密，但未設定密碼",
     "fileNotFound": "遠端備份檔案不存在",
+    "invalidBackupJson": "雲端備份檔案不完整，無法用於同步。為避免合併損壞的資料，本次同步已停止。如果目前裝置的本機資料是完整的，請使用「上傳到 WebDAV」重新建立雲端備份；如果目前裝置資料不完整，請先在另一台資料完整的裝置上傳，或先匯入一份完整備份檔案。",
+    "safeCommitFailed": "雲端硬碟未能完成安全儲存，原有雲端備份已保留。請稍後重試，或改用支援移動/重新命名檔案的 WebDAV 服務。",
     "syncDataSelectionRequired": "請至少選擇一個要同步的資料型別",
-    "uploadFailed": "上傳失敗，狀態碼: {{status}}"
+    "uploadFailed": "上傳失敗，狀態碼: {{status}}",
+    "uploadVerificationFailed": "備份上傳後校驗未通過，雲端硬碟可能未完整儲存檔案。原有雲端備份已保留。"
   }
 }

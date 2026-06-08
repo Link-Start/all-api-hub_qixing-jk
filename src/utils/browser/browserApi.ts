@@ -121,6 +121,22 @@ export async function updateTab(
 }
 
 /**
+ * Retrieves a tab by id.
+ * @param tabId Target tab ID.
+ */
+export async function getTab(tabId: number): Promise<browser.tabs.Tab> {
+  return await browser.tabs.get(tabId)
+}
+
+/**
+ * Reloads a tab by id.
+ * @param tabId Target tab ID.
+ */
+export async function reloadTab(tabId: number): Promise<void> {
+  await browser.tabs.reload(tabId)
+}
+
+/**
  * 查询标签页
  * @param queryInfo 标签查询条件对象。
  */
@@ -128,6 +144,23 @@ export async function queryTabs(
   queryInfo: browser.tabs._QueryQueryInfo,
 ): Promise<browser.tabs.Tab[]> {
   return await browser.tabs.query(queryInfo)
+}
+
+/**
+ * Sends a message to a tab without retrying.
+ *
+ * Use this when a caller intentionally owns missing-receiver fallback behavior.
+ */
+export async function sendTabMessage<TResponse = any>(
+  tabId: number,
+  message: unknown,
+  options?: browser.tabs._SendMessageOptions,
+): Promise<TResponse> {
+  if (typeof options === "undefined") {
+    return (await browser.tabs.sendMessage(tabId, message)) as TResponse
+  }
+
+  return (await browser.tabs.sendMessage(tabId, message, options)) as TResponse
 }
 
 /**
@@ -166,6 +199,31 @@ export async function createWindow(
 ): Promise<browser.windows.Window | null> {
   if (hasWindowsAPI()) {
     return await browser.windows.create(createData)
+  }
+  return null
+}
+
+/**
+ * Retrieves a browser window by id when the windows API is available.
+ */
+export async function getWindow(
+  windowId: number,
+): Promise<browser.windows.Window | null> {
+  if (hasWindowsAPI()) {
+    return await browser.windows.get(windowId)
+  }
+  return null
+}
+
+/**
+ * Updates a browser window when the windows API is available.
+ */
+export async function updateWindow(
+  windowId: number,
+  updateInfo: browser.windows._UpdateUpdateInfo,
+): Promise<browser.windows.Window | null> {
+  if (hasWindowsAPI()) {
+    return await browser.windows.update(windowId, updateInfo)
   }
   return null
 }
@@ -282,6 +340,19 @@ export async function sendRuntimeMessage<TResponse>(
   options?: SendMessageRetryOptions,
 ): Promise<TResponse> {
   return await sendMessageWithRetry<TResponse>(message, options)
+}
+
+/**
+ * Sends a runtime message without retrying.
+ *
+ * Use this for transports that need to preserve the raw WebExtension messaging
+ * contract and handle missing responses themselves.
+ */
+export async function sendRuntimeMessageOnce<TResponse = any>(
+  message: unknown,
+  options?: browser.runtime._SendMessageOptions,
+): Promise<TResponse> {
+  return (await browser.runtime.sendMessage(message, options)) as TResponse
 }
 
 /**
@@ -441,6 +512,52 @@ export function getExtensionURL(path: string): string {
 }
 
 /**
+ * Returns the current extension runtime id when available.
+ */
+export function getRuntimeId(): string | undefined {
+  const runtimeId = (globalThis as any).browser?.runtime?.id
+  return typeof runtimeId === "string" ? runtimeId : undefined
+}
+
+export interface BrowserApiCapabilities {
+  hasWindows: boolean
+  hasTabs: boolean
+  hasBackgroundMessaging: boolean
+}
+
+/**
+ * Detects the currently exposed high-level WebExtension APIs.
+ */
+export function getBrowserApiCapabilities(): BrowserApiCapabilities {
+  const runtimeBrowser = (globalThis as any).browser
+  return {
+    hasWindows: typeof runtimeBrowser?.windows?.create === "function",
+    hasTabs: typeof runtimeBrowser?.tabs?.query === "function",
+    hasBackgroundMessaging:
+      typeof runtimeBrowser?.runtime?.sendMessage === "function",
+  }
+}
+
+export interface BrowserManagementSelfInfo {
+  installType?: string
+}
+
+/**
+ * Reads extension installation metadata when the management API is available.
+ */
+export async function getManagementSelf(): Promise<BrowserManagementSelfInfo | null> {
+  const getSelf = (globalThis as any).browser?.management?.getSelf as
+    | (() => Promise<BrowserManagementSelfInfo>)
+    | undefined
+
+  if (typeof getSelf !== "function") {
+    return null
+  }
+
+  return await getSelf()
+}
+
+/**
  * 监听 runtime 消息
  * 返回清理函数
  *
@@ -458,6 +575,46 @@ export function onRuntimeMessage(
   return () => {
     browser.runtime.onMessage.removeListener(callback)
   }
+}
+
+/**
+ * Subscribes to local/browser storage changes when the API is available.
+ */
+export function onStorageChanged(
+  callback: (
+    changes: Record<string, browser.storage.StorageChange>,
+    areaName: string,
+  ) => void,
+): () => void {
+  const onChanged = (globalThis as any).browser?.storage?.onChanged as
+    | {
+        addListener?: (listener: typeof callback) => void
+        removeListener?: (listener: typeof callback) => void
+      }
+    | undefined
+
+  if (
+    typeof onChanged?.addListener !== "function" ||
+    typeof onChanged?.removeListener !== "function"
+  ) {
+    return () => {}
+  }
+
+  onChanged.addListener(callback)
+  return () => {
+    onChanged.removeListener?.(callback)
+  }
+}
+
+/**
+ * Returns whether storage change subscriptions are available.
+ */
+export function hasStorageChangedListener(): boolean {
+  const onChanged = (globalThis as any).browser?.storage?.onChanged
+  return (
+    typeof onChanged?.addListener === "function" &&
+    typeof onChanged?.removeListener === "function"
+  )
 }
 
 /**
@@ -730,6 +887,29 @@ export const openSidePanel = async (targetTab?: browser.tabs.Tab | null) => {
 }
 
 /**
+ * Keeps Chromium toolbar action clicks on the extension-managed listener path
+ * so fallback behavior can run when side panel opening is unavailable.
+ */
+export async function disableNativeSidePanelActionClick(): Promise<void> {
+  const setPanelBehavior = (globalThis as any).chrome?.sidePanel
+    ?.setPanelBehavior
+
+  if (typeof setPanelBehavior !== "function") {
+    return
+  }
+
+  try {
+    await setPanelBehavior({
+      openPanelOnActionClick: false,
+    })
+  } catch (error) {
+    logger.warn(
+      `sidePanel.setPanelBehavior not available:\n${getErrorMessage(error)}`,
+    )
+  }
+}
+
+/**
  * 检查是否支持 alarms API
  */
 export function hasAlarmsAPI(): boolean {
@@ -819,6 +999,122 @@ export function onAlarm(
  */
 export function hasNotificationsAPI(): boolean {
   return !!browser.notifications
+}
+
+/**
+ * Checks whether the context menus API is available.
+ */
+export function hasContextMenusAPI(): boolean {
+  const contextMenus = (globalThis as any).browser?.contextMenus
+  return (
+    typeof contextMenus?.create === "function" &&
+    typeof contextMenus?.remove === "function" &&
+    typeof contextMenus?.onClicked?.addListener === "function" &&
+    typeof contextMenus?.onClicked?.removeListener === "function"
+  )
+}
+
+/**
+ * Subscribes to context menu click events when supported.
+ */
+export function onContextMenuClicked(
+  callback: (
+    info: browser.contextMenus.OnClickData,
+    tab?: browser.tabs.Tab,
+  ) => void | Promise<void>,
+): () => void {
+  const onClicked = (globalThis as any).browser?.contextMenus?.onClicked as
+    | {
+        addListener?: (listener: typeof callback) => void
+        removeListener?: (listener: typeof callback) => void
+      }
+    | undefined
+
+  if (
+    typeof onClicked?.addListener !== "function" ||
+    typeof onClicked?.removeListener !== "function"
+  ) {
+    return () => {}
+  }
+
+  onClicked.addListener(callback)
+  return () => {
+    onClicked.removeListener?.(callback)
+  }
+}
+
+/**
+ * Creates a context menu item.
+ */
+export function createContextMenu(
+  createProperties: browser.contextMenus._CreateCreateProperties,
+): number | string | undefined {
+  const create = (globalThis as any).browser?.contextMenus?.create as
+    | ((
+        properties: browser.contextMenus._CreateCreateProperties,
+      ) => number | string | undefined)
+    | undefined
+
+  if (typeof create !== "function") {
+    return undefined
+  }
+
+  return create(createProperties)
+}
+
+/**
+ * Removes a context menu item.
+ */
+export async function removeContextMenu(
+  menuItemId: number | string,
+): Promise<void> {
+  const remove = (globalThis as any).browser?.contextMenus?.remove as
+    | ((id: number | string) => Promise<void> | void)
+    | undefined
+
+  if (typeof remove !== "function") {
+    return
+  }
+
+  await remove(menuItemId)
+}
+
+/**
+ * Reads a localized browser message from the extension manifest locale bundle.
+ */
+export function getBrowserI18nMessage(
+  messageName: string,
+  substitutions?: string | Array<string | number>,
+): string {
+  const getMessage = (globalThis as any).browser?.i18n?.getMessage
+  if (typeof getMessage !== "function") {
+    return ""
+  }
+
+  return getMessage(messageName, substitutions)
+}
+
+/**
+ * Checks whether browser cookie-store enumeration is available.
+ */
+export function hasCookieStoresAPI(): boolean {
+  return (
+    typeof (globalThis as any).browser?.cookies?.getAllCookieStores ===
+    "function"
+  )
+}
+
+/**
+ * Lists browser cookie stores when supported.
+ */
+export async function getAllCookieStores(): Promise<
+  browser.cookies.CookieStore[]
+> {
+  if (!hasCookieStoresAPI()) {
+    return []
+  }
+
+  return await browser.cookies.getAllCookieStores()
 }
 
 /**
@@ -915,6 +1211,17 @@ export function getManifestVersion(): number {
 }
 
 /**
+ * Reloads the extension runtime when the current browser exposes the API.
+ */
+export function reloadRuntime(): void {
+  try {
+    browser.runtime.reload?.()
+  } catch (error) {
+    logger.warn("Failed to reload extension runtime", error)
+  }
+}
+
+/**
  * Returns whether the extension is allowed to run in incognito/private windows.
  *
  * Chrome/Edge require the user to explicitly allow an extension to run in
@@ -940,6 +1247,11 @@ type ActionClickListener = (tab: browser.tabs.Tab, info?: any) => void
 
 type ActionAPI = {
   setPopup: (details: { popup?: string }) => Promise<void> | void
+  setBadgeText?: (details: { text: string }) => Promise<void> | void
+  setBadgeBackgroundColor?: (details: {
+    color: string | [number, number, number, number]
+  }) => Promise<void> | void
+  setTitle?: (details: { title: string }) => Promise<void> | void
   onClicked: {
     addListener: (listener: ActionClickListener) => void
     removeListener: (listener: ActionClickListener) => void
@@ -1035,6 +1347,18 @@ export async function containsPermissions(
   }
 }
 
+export const PERMISSION_OPERATION_FAILURE_REASONS = {
+  ApiException: "api_exception",
+} as const
+
+export type PermissionOperationFailureReason =
+  (typeof PERMISSION_OPERATION_FAILURE_REASONS)[keyof typeof PERMISSION_OPERATION_FAILURE_REASONS]
+
+export interface PermissionOperationResult {
+  success: boolean
+  failureReason?: PermissionOperationFailureReason
+}
+
 /**
  * Request additional permissions from the user, logging failures for debugging.
  * @param permissions Permission descriptor to be requested from the browser.
@@ -1043,11 +1367,23 @@ export async function containsPermissions(
 export async function requestPermissions(
   permissions: browser.permissions.Permissions,
 ): Promise<boolean> {
+  return (await requestPermissionsDetailed(permissions)).success
+}
+
+/**
+ * Request additional permissions and preserve whether failure came from the API itself.
+ */
+export async function requestPermissionsDetailed(
+  permissions: browser.permissions.Permissions,
+): Promise<PermissionOperationResult> {
   try {
-    return await browser.permissions.request(permissions)
+    return { success: await browser.permissions.request(permissions) }
   } catch (error) {
     logger.error("permissions.request failed", { permissions, error })
-    return false
+    return {
+      success: false,
+      failureReason: PERMISSION_OPERATION_FAILURE_REASONS.ApiException,
+    }
   }
 }
 
@@ -1059,11 +1395,23 @@ export async function requestPermissions(
 export async function removePermissions(
   permissions: browser.permissions.Permissions,
 ): Promise<boolean> {
+  return (await removePermissionsDetailed(permissions)).success
+}
+
+/**
+ * Remove previously granted permissions and preserve whether failure came from the API itself.
+ */
+export async function removePermissionsDetailed(
+  permissions: browser.permissions.Permissions,
+): Promise<PermissionOperationResult> {
   try {
-    return await browser.permissions.remove(permissions)
+    return { success: await browser.permissions.remove(permissions) }
   } catch (error) {
     logger.error("permissions.remove failed", { permissions, error })
-    return false
+    return {
+      success: false,
+      failureReason: PERMISSION_OPERATION_FAILURE_REASONS.ApiException,
+    }
   }
 }
 
@@ -1074,8 +1422,15 @@ export async function removePermissions(
 export function onPermissionsAdded(
   callback: (permissions: browser.permissions.Permissions) => void,
 ): () => void {
-  browser.permissions.onAdded.addListener(callback)
-  return () => browser.permissions.onAdded.removeListener(callback)
+  try {
+    browser.permissions.onAdded.addListener(callback)
+    return () => browser.permissions.onAdded.removeListener(callback)
+  } catch (error) {
+    logger.warn("permissions.onAdded listener unavailable", {
+      error: getErrorMessage(error),
+    })
+    return () => {}
+  }
 }
 
 /**
@@ -1085,6 +1440,13 @@ export function onPermissionsAdded(
 export function onPermissionsRemoved(
   callback: (permissions: browser.permissions.Permissions) => void,
 ): () => void {
-  browser.permissions.onRemoved.addListener(callback)
-  return () => browser.permissions.onRemoved.removeListener(callback)
+  try {
+    browser.permissions.onRemoved.addListener(callback)
+    return () => browser.permissions.onRemoved.removeListener(callback)
+  } catch (error) {
+    logger.warn("permissions.onRemoved listener unavailable", {
+      error: getErrorMessage(error),
+    })
+    return () => {}
+  }
 }

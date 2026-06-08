@@ -24,6 +24,28 @@ import {
   MODEL_PRICING_CACHE_TTL_MS,
   modelPricingCache,
 } from "~/services/models/modelPricingCache"
+import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  trackProductAnalyticsActionCompleted,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FAILURE_REASONS,
+  PRODUCT_ANALYTICS_FAILURE_STAGES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsApiType,
+  type ProductAnalyticsErrorCategory,
+  type ProductAnalyticsFailureReason,
+  type ProductAnalyticsFailureStage,
+  type ProductAnalyticsResult,
+  type ProductAnalyticsSourceKind,
+} from "~/services/productAnalytics/events"
+import { buildModelListDiagnostics } from "~/services/productAnalytics/modelListDiagnostics"
 import { toSanitizedErrorSummary } from "~/services/verification/aiApiVerification/utils"
 import type { ApiToken, DisplaySiteData } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
@@ -87,6 +109,177 @@ function createInvalidFormatError() {
   ;(error as { code?: string }).code =
     MODEL_LIST_DATA_ERROR_CODES.INVALID_FORMAT
   return error
+}
+
+/** Counts only valid model rows so analytics never includes raw model ids. */
+function getPricingModelCount(pricing: PricingResponse | null | undefined) {
+  return Array.isArray(pricing?.data) ? pricing.data.length : 0
+}
+
+/**
+ * Maps known loader failures into coarse analytics buckets for telemetry.
+ * Unknown is intentionally the fallback to avoid guessing from raw messages.
+ */
+function getModelDataErrorCategory(
+  error: unknown,
+): ProductAnalyticsErrorCategory {
+  const code =
+    error && typeof error === "object"
+      ? (error as { code?: unknown }).code
+      : undefined
+
+  if (code === MODEL_LIST_DATA_ERROR_CODES.INVALID_FORMAT) {
+    return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+  }
+
+  return resolveProductAnalyticsErrorCategoryFromError(error)
+}
+
+/** Classify whether model catalog loading failed during parsing or execution. */
+function getModelDataFailureStage(
+  error: unknown,
+): ProductAnalyticsFailureStage {
+  const code =
+    error && typeof error === "object"
+      ? (error as { code?: unknown }).code
+      : undefined
+
+  return code === MODEL_LIST_DATA_ERROR_CODES.INVALID_FORMAT
+    ? PRODUCT_ANALYTICS_FAILURE_STAGES.Parse
+    : PRODUCT_ANALYTICS_FAILURE_STAGES.Execute
+}
+
+/** Derive coupled analytics diagnostics from a single model-data failure. */
+function getModelDataFailureDiagnostics(error: unknown): {
+  errorCategory: ProductAnalyticsErrorCategory
+  failureStage: ProductAnalyticsFailureStage
+  failureReason?: ProductAnalyticsFailureReason
+} {
+  const code =
+    error && typeof error === "object"
+      ? (error as { code?: unknown }).code
+      : undefined
+
+  return {
+    errorCategory: getModelDataErrorCategory(error),
+    failureStage: getModelDataFailureStage(error),
+    ...(code === MODEL_LIST_DATA_ERROR_CODES.INVALID_FORMAT
+      ? {
+          failureReason: PRODUCT_ANALYTICS_FAILURE_REASONS.InvalidResponseShape,
+        }
+      : {}),
+  }
+}
+
+/** Derive aggregate model catalog diagnostics from the failed account queries. */
+function getAggregateModelDataFailureDiagnostics(errors: unknown[]): {
+  errorCategory: ProductAnalyticsErrorCategory
+  failureStage: ProductAnalyticsFailureStage
+  failureReason?: ProductAnalyticsFailureReason
+  error?: unknown
+} {
+  const diagnostics = errors.map((error) => ({
+    ...getModelDataFailureDiagnostics(error),
+    error,
+  }))
+  const representativeDiagnostic =
+    diagnostics.find(
+      (diagnostic) =>
+        diagnostic.failureStage === PRODUCT_ANALYTICS_FAILURE_STAGES.Parse,
+    ) ??
+    diagnostics.find(
+      (diagnostic) =>
+        diagnostic.errorCategory !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+    )
+
+  return (
+    representativeDiagnostic ?? {
+      errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+      failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+    }
+  )
+}
+
+const MODEL_DATA_ANALYTICS_CONTEXT = {
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+  actionId: PRODUCT_ANALYTICS_ACTION_IDS.RefreshModelPricingData,
+  surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListPage,
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+} as const
+
+/**
+ * Tracks a coarse, sanitized model-data load completion outcome.
+ * @param params Completion metadata to bucket and forward to analytics.
+ * @param params.result Coarse load outcome.
+ * @param params.sourceKind Selected model source kind.
+ * @param params.errorCategory Optional sanitized failure category.
+ * @param params.failureStage Optional sanitized failure stage.
+ * @param params.failureReason Optional sanitized failure reason.
+ * @param params.error Optional structured error object.
+ * @param params.siteType Optional sanitized site type.
+ * @param params.requestedAuthMode Optional sanitized auth mode.
+ * @param params.apiType Optional sanitized API type.
+ * @param params.cacheHit Whether the pricing cache was hit.
+ * @param params.fallbackAvailable Whether fallback data was available.
+ * @param params.fallbackUsed Whether fallback data was used.
+ * @param params.modelCount Number of models loaded, when available.
+ * @param params.successCount Number of successful account loads, when available.
+ * @param params.failureCount Number of failed account loads, when available.
+ */
+function trackModelDataLoadCompletion(params: {
+  result: ProductAnalyticsResult
+  sourceKind: ProductAnalyticsSourceKind
+  errorCategory?: ProductAnalyticsErrorCategory
+  failureStage?: ProductAnalyticsFailureStage
+  failureReason?: ProductAnalyticsFailureReason
+  error?: unknown
+  siteType?: DisplaySiteData["siteType"]
+  requestedAuthMode?: DisplaySiteData["authType"]
+  apiType?: ProductAnalyticsApiType
+  cacheHit?: boolean
+  fallbackAvailable?: boolean
+  fallbackUsed?: boolean
+  modelCount?: number
+  successCount?: number
+  failureCount?: number
+}) {
+  const diagnostics = buildModelListDiagnostics({
+    sourceKind: params.sourceKind,
+    ...(params.siteType ? { siteType: params.siteType } : {}),
+    ...(params.requestedAuthMode
+      ? { requestedAuthMode: params.requestedAuthMode }
+      : {}),
+    ...(params.apiType ? { apiType: params.apiType } : {}),
+    ...(typeof params.cacheHit === "boolean"
+      ? { cacheHit: params.cacheHit }
+      : {}),
+    ...(typeof params.fallbackAvailable === "boolean"
+      ? { fallbackAvailable: params.fallbackAvailable }
+      : {}),
+    ...(typeof params.fallbackUsed === "boolean"
+      ? { fallbackUsed: params.fallbackUsed }
+      : {}),
+    ...(typeof params.modelCount === "number"
+      ? { modelCount: params.modelCount }
+      : {}),
+    ...(typeof params.successCount === "number"
+      ? { successCount: params.successCount }
+      : {}),
+    ...(typeof params.failureCount === "number"
+      ? { failureCount: params.failureCount }
+      : {}),
+    ...(params.error ? { error: params.error } : {}),
+    ...(params.errorCategory ? { errorCategory: params.errorCategory } : {}),
+    ...(params.failureStage ? { stage: params.failureStage } : {}),
+    ...(params.failureReason ? { reason: params.failureReason } : {}),
+  })
+
+  void trackProductAnalyticsActionCompleted({
+    ...MODEL_DATA_ANALYTICS_CONTEXT,
+    result: params.result,
+    ...(params.errorCategory ? { errorCategory: params.errorCategory } : {}),
+    diagnostics,
+  })
 }
 
 /** Builds the pricing query key from non-secret account identity fields. */
@@ -302,6 +495,8 @@ function useSingleAccountModelData(params: {
     () => createModelPricingQueryKey(currentAccount),
     [currentAccount],
   )
+  const trackedDirectLoadKeyRef = useRef<string | null>(null)
+  const directLoadCacheHitRef = useRef(false)
 
   const query = useQuery<PricingResponse, Error>({
     queryKey,
@@ -318,8 +513,10 @@ function useSingleAccountModelData(params: {
 
       const cached = await modelPricingCache.get(cacheKey)
       if (cached && Array.isArray(cached.data)) {
+        directLoadCacheHitRef.current = true
         return cached
       }
+      directLoadCacheHitRef.current = false
 
       const data = await getApiService(
         currentAccount.siteType,
@@ -450,6 +647,13 @@ function useSingleAccountModelData(params: {
       setLoadErrorMessage(null)
       setDataFormatError(false)
       toast.success(t("status.dataLoaded"))
+      trackModelDataLoadCompletion({
+        result: PRODUCT_ANALYTICS_RESULTS.Success,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelFallbackCatalog,
+        fallbackAvailable: true,
+        fallbackUsed: true,
+        modelCount: getPricingModelCount(pricing),
+      })
     } catch (error) {
       if (!isActiveFallbackCatalogRequest(requestScopeKey, requestId)) {
         return
@@ -464,6 +668,15 @@ function useSingleAccountModelData(params: {
       setFallbackStateScopeKey(requestScopeKey)
       setFallbackCatalogLoadErrorMessage(sanitizedMessage)
       toast.error(sanitizedMessage)
+      trackModelDataLoadCompletion({
+        result: PRODUCT_ANALYTICS_RESULTS.Failure,
+        sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelFallbackCatalog,
+        errorCategory: getModelDataErrorCategory(error),
+        failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+        error,
+        fallbackAvailable: true,
+        fallbackUsed: true,
+      })
     } finally {
       if (isActiveFallbackCatalogRequest(requestScopeKey, requestId)) {
         setIsLoadingFallbackCatalog(false)
@@ -529,6 +742,18 @@ function useSingleAccountModelData(params: {
       setLoadErrorMessage(null)
       resetFallbackState()
       toast.success(t("status.dataLoaded"))
+      const trackingKey = `${currentAccountScopeKey}:success:${query.dataUpdatedAt}`
+      if (trackedDirectLoadKeyRef.current !== trackingKey) {
+        trackedDirectLoadKeyRef.current = trackingKey
+        trackModelDataLoadCompletion({
+          result: PRODUCT_ANALYTICS_RESULTS.Success,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelAccount,
+          siteType: currentAccount.siteType,
+          requestedAuthMode: currentAccount.authType,
+          cacheHit: directLoadCacheHitRef.current,
+          modelCount: getPricingModelCount(query.data),
+        })
+      }
       return
     }
 
@@ -541,6 +766,19 @@ function useSingleAccountModelData(params: {
         setDataFormatError(true)
         setLoadErrorMessage(null)
         toast.error(t("status.formatNotStandard"))
+        const trackingKey = `${currentAccountScopeKey}:invalid-format:${query.errorUpdatedAt}`
+        if (trackedDirectLoadKeyRef.current !== trackingKey) {
+          trackedDirectLoadKeyRef.current = trackingKey
+          trackModelDataLoadCompletion({
+            result: PRODUCT_ANALYTICS_RESULTS.Failure,
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelAccount,
+            errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation,
+            failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Parse,
+            error: query.error,
+            siteType: currentAccount.siteType,
+            requestedAuthMode: currentAccount.authType,
+          })
+        }
         return
       }
 
@@ -548,6 +786,19 @@ function useSingleAccountModelData(params: {
       const message = t("status.loadFailed")
       setLoadErrorMessage(message)
       toast.error(message)
+      const trackingKey = `${currentAccountScopeKey}:failure:${query.errorUpdatedAt}`
+      if (trackedDirectLoadKeyRef.current !== trackingKey) {
+        trackedDirectLoadKeyRef.current = trackingKey
+        trackModelDataLoadCompletion({
+          result: PRODUCT_ANALYTICS_RESULTS.Failure,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelAccount,
+          errorCategory: getModelDataErrorCategory(query.error),
+          failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+          error: query.error,
+          siteType: currentAccount.siteType,
+          requestedAuthMode: currentAccount.authType,
+        })
+      }
     }
   }, [
     query.data,
@@ -555,7 +806,10 @@ function useSingleAccountModelData(params: {
     query.isFetching,
     query.isSuccess,
     query.error,
+    query.dataUpdatedAt,
+    query.errorUpdatedAt,
     currentAccount,
+    currentAccountScopeKey,
     selectedSource?.kind,
     t,
     resetFallbackState,
@@ -686,6 +940,81 @@ function useAllAccountsModelData(
       },
     })),
   })
+  const trackedAggregateLoadKeyRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!enabled) return
+
+    if (safeDisplayData.length === 0) {
+      const trackingKey = `${MODEL_LIST_QUERY_SCOPE_VALUES.NONE}:skipped`
+      if (trackedAggregateLoadKeyRef.current !== trackingKey) {
+        trackedAggregateLoadKeyRef.current = trackingKey
+        trackModelDataLoadCompletion({
+          result: PRODUCT_ANALYTICS_RESULTS.Skipped,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelAllAccounts,
+          modelCount: 0,
+          successCount: 0,
+          failureCount: 0,
+        })
+      }
+      return
+    }
+
+    if (queries.length !== safeDisplayData.length) return
+    if (queries.some((query) => query.isPending || query.isFetching)) return
+    if (!queries.every((query) => query.isSuccess || query.isError)) return
+
+    const successCount = queries.filter((query) => query.isSuccess).length
+    const failedQueries = queries.filter((query) => query.isError)
+    const failureCount = failedQueries.length
+    const modelCount = queries.reduce(
+      (count, query) => count + getPricingModelCount(query.data),
+      0,
+    )
+    const trackingKey = queries
+      .map((query, index) =>
+        [
+          safeDisplayData[index]?.id,
+          query.isSuccess ? "success" : "failure",
+          query.dataUpdatedAt,
+          query.errorUpdatedAt,
+        ].join(":"),
+      )
+      .join("|")
+
+    if (trackedAggregateLoadKeyRef.current === trackingKey) return
+    trackedAggregateLoadKeyRef.current = trackingKey
+
+    const failureDiagnostics =
+      failureCount > 0
+        ? getAggregateModelDataFailureDiagnostics(
+            failedQueries.map((query) => query.error),
+          )
+        : null
+
+    // Conservative aggregate semantics: any account failure makes the overall
+    // load a failure, because the rendered catalog is incomplete.
+    trackModelDataLoadCompletion({
+      result:
+        failureCount > 0
+          ? PRODUCT_ANALYTICS_RESULTS.Failure
+          : PRODUCT_ANALYTICS_RESULTS.Success,
+      sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelAllAccounts,
+      ...(failureDiagnostics
+        ? { errorCategory: failureDiagnostics.errorCategory }
+        : {}),
+      ...(failureDiagnostics
+        ? { failureStage: failureDiagnostics.failureStage }
+        : {}),
+      ...(failureDiagnostics?.failureReason
+        ? { failureReason: failureDiagnostics.failureReason }
+        : {}),
+      ...(failureDiagnostics?.error ? { error: failureDiagnostics.error } : {}),
+      modelCount,
+      successCount,
+      failureCount,
+    })
+  }, [enabled, queries, safeDisplayData])
 
   const pricingContexts: AccountPricingContext[] = useMemo(() => {
     return safeDisplayData
@@ -796,6 +1125,7 @@ function useProfileModelData(
       return buildApiCredentialProfilePricingResponse(modelIds)
     },
   })
+  const trackedProfileLoadKeyRef = useRef<string | null>(null)
 
   const loadErrorMessage = useMemo(() => {
     if (!currentProfile || !query.isError) {
@@ -822,6 +1152,16 @@ function useProfileModelData(
 
     if (query.isSuccess) {
       toast.success(t("status.dataLoaded"))
+      const trackingKey = `${currentProfile.id}:success:${query.dataUpdatedAt}`
+      if (trackedProfileLoadKeyRef.current !== trackingKey) {
+        trackedProfileLoadKeyRef.current = trackingKey
+        trackModelDataLoadCompletion({
+          result: PRODUCT_ANALYTICS_RESULTS.Success,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelProfile,
+          apiType: currentProfile.apiType,
+          modelCount: getPricingModelCount(query.data),
+        })
+      }
       return
     }
 
@@ -831,8 +1171,30 @@ function useProfileModelData(
           errorMessage: loadErrorMessage,
         }),
       )
+      const trackingKey = `${currentProfile.id}:failure:${query.errorUpdatedAt}`
+      if (trackedProfileLoadKeyRef.current !== trackingKey) {
+        trackedProfileLoadKeyRef.current = trackingKey
+        trackModelDataLoadCompletion({
+          result: PRODUCT_ANALYTICS_RESULTS.Failure,
+          sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.ModelProfile,
+          errorCategory: getModelDataErrorCategory(query.error),
+          failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+          error: query.error,
+          apiType: currentProfile.apiType,
+        })
+      }
     }
-  }, [currentProfile, loadErrorMessage, query.isFetching, query.isSuccess, t])
+  }, [
+    currentProfile,
+    loadErrorMessage,
+    query.data,
+    query.dataUpdatedAt,
+    query.error,
+    query.errorUpdatedAt,
+    query.isFetching,
+    query.isSuccess,
+    t,
+  ])
 
   const loadPricingData = useCallback(async () => {
     if (!currentProfile) return

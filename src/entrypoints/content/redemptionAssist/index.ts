@@ -1,16 +1,33 @@
 import { RuntimeActionIds } from "~/constants/runtimeActions"
+import {
+  getClipboardEventText,
+  getSelectedText,
+  registerSelectionEndTextDetection,
+} from "~/entrypoints/content/shared/contentTextDetection"
 import { isEventFromAllApiHubContentUi } from "~/entrypoints/content/shared/contentUi"
 import { isLikelyCopyActionTarget } from "~/entrypoints/content/shared/copyActionTarget"
-import type {
-  RedemptionAssistShouldPromptRequest,
-  RedemptionAssistShouldPromptResponse,
-} from "~/services/redemption/redemptionAssist"
+import { trackProductAnalyticsActionCompleted } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+  type ProductAnalyticsErrorCategory,
+} from "~/services/productAnalytics/events"
+import type { RedemptionAssistShouldPromptResponse } from "~/services/redemption/redemptionAssist"
+import {
+  RedemptionAssistMessageTypes,
+  sendRedemptionAssistMessage,
+} from "~/services/redemption/redemptionAssistMessaging"
 import { extractRedemptionCodesFromText } from "~/services/redemption/utils/redemptionCode"
 import {
   checkPermissionViaMessage,
-  sendRuntimeMessage,
+  onRuntimeMessage,
 } from "~/utils/browser/browserApi"
 import { createLogger } from "~/utils/core/logger"
+import { isHttpUrl } from "~/utils/core/urlParsing"
 import { t } from "~/utils/i18n/core"
 
 import {
@@ -71,8 +88,7 @@ function setupRedemptionAssistDetection() {
       lastClickScan = now
 
       // Try to get selected text first
-      const selection = window.getSelection()
-      let text = selection?.toString().trim() || ""
+      let text = getSelectedText()
 
       // Fallback: try to read clipboard content if the click target looks like a copy action
       if (
@@ -116,20 +132,18 @@ function setupRedemptionAssistDetection() {
     if (isEventFromAllApiHubContentUi(event.target)) {
       return
     }
-    const selection = window.getSelection()
-    let text = selection?.toString().trim() || ""
-
-    if (!text && event.clipboardData) {
-      const clipText = event.clipboardData.getData("text")
-      if (clipText) {
-        text = clipText
-      }
-    }
+    const text = getClipboardEventText(event)
 
     if (text) {
       void scheduleRedemptionScan(text)
     }
   }
+
+  const cleanupSelectionEndDetection = registerSelectionEndTextDetection(
+    (sourceText) => {
+      void scheduleRedemptionScan(sourceText)
+    },
+  )
 
   document.addEventListener("click", handleClick, true)
   document.addEventListener("copy", handleClipboardEvent, true)
@@ -139,6 +153,7 @@ function setupRedemptionAssistDetection() {
     document.removeEventListener("click", handleClick, true)
     document.removeEventListener("copy", handleClipboardEvent, true)
     document.removeEventListener("cut", handleClipboardEvent, true)
+    cleanupSelectionEndDetection()
   }
 }
 
@@ -163,14 +178,7 @@ function registerContextMenuTriggerListener() {
     void handleContextMenuRedemption(selectionText, pageUrl)
   }
 
-  browser.runtime.onMessage.addListener(listener)
-  return () => {
-    try {
-      browser.runtime.onMessage.removeListener(listener)
-    } catch (error) {
-      logger.debug("Failed to remove redemption context menu listener", error)
-    }
-  }
+  return onRuntimeMessage(listener)
 }
 
 /**
@@ -190,6 +198,7 @@ async function handleContextMenuRedemption(
       relaxedCharset: true,
     })
     const codes = extracted.length > 0 ? extracted : [trimmedSelection]
+    let confirmedPrompt = false
 
     const selectedCodes =
       codes.length > 1
@@ -205,6 +214,7 @@ async function handleContextMenuRedemption(
               codes.map((code) => ({ code, preview: maskCode(code) })),
             )
             if (prompt.action !== "auto") return []
+            confirmedPrompt = true
             return prompt.selectedCodes
           })()
         : codes
@@ -229,13 +239,19 @@ async function handleContextMenuRedemption(
         codes: selectedCodes,
         dismissOuterLoading: dismissLoadingToast,
       })
+      if (confirmedPrompt) {
+        trackConfirmRedemptionPromptCompleted(results, selectedCodes.length)
+      }
 
       if (results.length === 1 && results[0]?.success) {
         await showRedeemResultToast(true, results[0].message)
         return
       }
 
-      await showRedeemBatchResultToast(results, retry)
+      await showRedeemBatchResultToast(
+        results.map(toRedeemBatchDisplayItem),
+        createRedeemBatchDisplayRetry(retry),
+      )
     } finally {
       dismissLoadingToast()
     }
@@ -273,11 +289,13 @@ async function scheduleRedemptionScan(sourceText: string) {
 async function requestPromptableCodes(url: string, codes: string[]) {
   if (codes.length === 0) return []
 
-  const response = (await sendRuntimeMessage({
-    action: RuntimeActionIds.RedemptionAssistShouldPrompt,
-    url,
-    codes,
-  } as RedemptionAssistShouldPromptRequest)) as RedemptionAssistShouldPromptResponse
+  const response = (await sendRedemptionAssistMessage(
+    RedemptionAssistMessageTypes.ShouldPrompt,
+    {
+      url,
+      codes,
+    },
+  )) as RedemptionAssistShouldPromptResponse
 
   if (!response?.success) {
     return []
@@ -304,7 +322,7 @@ async function scanForRedemptionCodes(sourceText?: string) {
 
     // Skip non-http(s) pages to avoid unnecessary background traffic.
     // (e.g. chrome://, about:, file://, extension pages)
-    if (!/^https?:/i.test(url)) {
+    if (!isHttpUrl(url)) {
       return
     }
 
@@ -354,13 +372,17 @@ async function scanForRedemptionCodes(sourceText?: string) {
         codes: selectedCodes,
         dismissOuterLoading: dismissLoadingToast,
       })
+      trackConfirmRedemptionPromptCompleted(results, selectedCodes.length)
 
       if (results.length === 1 && results[0]?.success) {
         await showRedeemResultToast(true, results[0].message)
         return
       }
 
-      await showRedeemBatchResultToast(results, retry)
+      await showRedeemBatchResultToast(
+        results.map(toRedeemBatchDisplayItem),
+        createRedeemBatchDisplayRetry(retry),
+      )
     } finally {
       dismissLoadingToast()
     }
@@ -387,11 +409,13 @@ function maskCode(code: string): string {
  * @returns Redeem result payload from background.
  */
 async function redeemForAccount(accountId: string, code: string) {
-  const manualResp: any = await sendRuntimeMessage({
-    action: RuntimeActionIds.RedemptionAssistAutoRedeem,
-    accountId,
-    code,
-  })
+  const manualResp: any = await sendRedemptionAssistMessage(
+    RedemptionAssistMessageTypes.AutoRedeem,
+    {
+      accountId,
+      code,
+    },
+  )
   return manualResp?.data
 }
 
@@ -400,6 +424,98 @@ type RedeemBatchItem = {
   preview: string
   success: boolean
   message: string
+  analyticsErrorCategory?: ProductAnalyticsErrorCategory
+}
+
+type RedeemBatchDisplayItem = Omit<RedeemBatchItem, "analyticsErrorCategory">
+
+const REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES = {
+  InvalidUrl: "INVALID_URL",
+  MultipleAccounts: "MULTIPLE_ACCOUNTS",
+  NoAccounts: "NO_ACCOUNTS",
+  AccountSelectionCancelled: "ACCOUNT_SELECTION_CANCELLED",
+} as const
+
+type RedemptionPromptAnalyticsResultCode =
+  (typeof REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES)[keyof typeof REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES]
+
+/** Maps fixed redemption result codes into the coarse analytics taxonomy. */
+function getRedemptionPromptAnalyticsErrorCategory(
+  code?: RedemptionPromptAnalyticsResultCode,
+): ProductAnalyticsErrorCategory {
+  switch (code) {
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.InvalidUrl:
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.MultipleAccounts:
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.NoAccounts:
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.AccountSelectionCancelled:
+      return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Validation
+    default:
+      return PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown
+  }
+}
+
+/** Removes analytics-only fields before handing redemption results to UI. */
+function toRedeemBatchDisplayItem(
+  item: RedeemBatchItem,
+): RedeemBatchDisplayItem {
+  return {
+    code: item.code,
+    preview: item.preview,
+    success: item.success,
+    message: item.message,
+  }
+}
+
+/** Wraps retry callbacks with a stable per-code result signature. */
+function createRedeemBatchDisplayRetry(
+  retry: (code: string) => Promise<RedeemBatchItem>,
+) {
+  return async (code: string): Promise<RedeemBatchItem> => retry(code)
+}
+
+/**
+ * Completes the prompt-confirm action using only aggregate success/failure state.
+ */
+function trackConfirmRedemptionPromptCompleted(
+  results: RedeemBatchItem[],
+  selectedCount?: number,
+) {
+  const successCount = results.filter((item) => item.success).length
+  const failureCount = results.length - successCount
+  const failureCategory = results
+    .filter((item) => !item.success)
+    .map((item) => item.analyticsErrorCategory)
+    .find(
+      (category): category is ProductAnalyticsErrorCategory =>
+        Boolean(category) &&
+        category !== PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+    )
+  const result =
+    results.length === 0
+      ? PRODUCT_ANALYTICS_RESULTS.Skipped
+      : failureCount === 0
+        ? PRODUCT_ANALYTICS_RESULTS.Success
+        : PRODUCT_ANALYTICS_RESULTS.Failure
+
+  void trackProductAnalyticsActionCompleted({
+    featureId: PRODUCT_ANALYTICS_FEATURE_IDS.RedemptionAssist,
+    actionId: PRODUCT_ANALYTICS_ACTION_IDS.ConfirmRedemptionPrompt,
+    surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.ContentRedemptionPromptToast,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Content,
+    result,
+    ...(result === PRODUCT_ANALYTICS_RESULTS.Failure
+      ? {
+          errorCategory:
+            failureCategory ?? PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        }
+      : {}),
+    insights: {
+      itemCount: results.length,
+      ...(typeof selectedCount === "number" ? { selectedCount } : {}),
+      successCount,
+      failureCount,
+    },
+  })
 }
 
 /**
@@ -423,19 +539,29 @@ async function redeemCodesSequential(params: {
       const manual = await redeemForAccount(forcedAccountId, code)
       const message =
         manual?.message || t("redemptionAssist:messages.redeemFailed")
+      const success = !!manual?.success
       return {
         code,
         preview: maskCode(code),
-        success: !!manual?.success,
+        success,
         message,
+        ...(!success
+          ? {
+              analyticsErrorCategory: getRedemptionPromptAnalyticsErrorCategory(
+                getFixedRedemptionPromptResultCode(manual?.code),
+              ),
+            }
+          : {}),
       }
     }
 
-    const redeemResp: any = await sendRuntimeMessage({
-      action: RuntimeActionIds.RedemptionAssistAutoRedeemByUrl,
-      url: params.url,
-      code,
-    })
+    const redeemResp: any = await sendRedemptionAssistMessage(
+      RedemptionAssistMessageTypes.AutoRedeemByUrl,
+      {
+        url: params.url,
+        code,
+      },
+    )
 
     const result = redeemResp?.data
 
@@ -460,6 +586,9 @@ async function redeemCodesSequential(params: {
           preview: maskCode(code),
           success: false,
           message: t("redemptionAssist:messages.cancelled"),
+          analyticsErrorCategory: getRedemptionPromptAnalyticsErrorCategory(
+            REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.AccountSelectionCancelled,
+          ),
         }
       }
 
@@ -479,6 +608,9 @@ async function redeemCodesSequential(params: {
           preview: maskCode(code),
           success: false,
           message: t("redemptionAssist:messages.cancelled"),
+          analyticsErrorCategory: getRedemptionPromptAnalyticsErrorCategory(
+            REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.AccountSelectionCancelled,
+          ),
         }
       }
 
@@ -493,6 +625,9 @@ async function redeemCodesSequential(params: {
       preview: maskCode(code),
       success: false,
       message: msg,
+      analyticsErrorCategory: getRedemptionPromptAnalyticsErrorCategory(
+        getFixedRedemptionPromptResultCode(result?.code),
+      ),
     }
   }
 
@@ -504,5 +639,19 @@ async function redeemCodesSequential(params: {
   return {
     results,
     retry: redeemOne,
+  }
+}
+
+/** Narrows background result codes to the fixed set allowed for analytics. */
+function getFixedRedemptionPromptResultCode(
+  code: unknown,
+): RedemptionPromptAnalyticsResultCode | undefined {
+  switch (code) {
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.InvalidUrl:
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.MultipleAccounts:
+    case REDEMPTION_PROMPT_ANALYTICS_RESULT_CODES.NoAccounts:
+      return code
+    default:
+      return undefined
   }
 }

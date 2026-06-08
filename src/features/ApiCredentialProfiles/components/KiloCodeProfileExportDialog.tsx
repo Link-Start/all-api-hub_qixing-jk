@@ -10,11 +10,21 @@ import {
   Modal,
   SearchableSelect,
 } from "~/components/ui"
-import { fetchOpenAICompatibleModelIds } from "~/services/apiService/openaiCompatible"
+import { ProductAnalyticsScope } from "~/contexts/ProductAnalyticsScopeContext"
+import { fetchOpenAICompatibleModelIds } from "~/services/aiApi/openaiCompatible"
 import {
   buildKiloCodeApiConfigs,
   buildKiloCodeSettingsFile,
 } from "~/services/integrations/kiloCodeExport"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { ApiCredentialProfile } from "~/types/apiCredentialProfiles"
 import { createLogger } from "~/utils/core/logger"
 import { stripTrailingOpenAIV1 } from "~/utils/core/url"
@@ -23,6 +33,13 @@ import { stripTrailingOpenAIV1 } from "~/utils/core/url"
  * Unified logger scoped to the Kilo Code export dialog for API credential profiles.
  */
 const logger = createLogger("KiloCodeProfileExportDialog")
+const exportDialogSurface =
+  PRODUCT_ANALYTICS_SURFACE_IDS.OptionsApiCredentialProfilesExportDialog
+const exportDialogAnalyticsContext = {
+  entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ApiCredentialProfiles,
+  surfaceId: exportDialogSurface,
+}
 
 interface KiloCodeProfileExportDialogProps {
   isOpen: boolean
@@ -112,6 +129,11 @@ export function KiloCodeProfileExportDialog({
   }, [modelId, profile.apiKey, profile.baseUrl, profile.id, profile.name, t])
 
   const canExport = Boolean(currentApiConfigName && modelId.trim())
+  const exportInsights = {
+    itemCount: Object.keys(apiConfigs).length,
+    modelCount: modelId.trim() ? 1 : 0,
+    selectedCount: 1,
+  }
 
   const handleCopyApiConfigs = async () => {
     if (!canExport) {
@@ -120,11 +142,23 @@ export function KiloCodeProfileExportDialog({
     }
     if (typeof navigator === "undefined") return
 
+    const tracker = startProductAnalyticsAction({
+      ...exportDialogAnalyticsContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.CopyApiCredentialExportConfig,
+    })
+
     try {
       await navigator.clipboard.writeText(JSON.stringify(apiConfigs, null, 2))
       toast.success(t("ui:dialog.kiloCode.messages.copiedApiConfigs"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+        insights: exportInsights,
+      })
     } catch {
       toast.error(t("ui:dialog.kiloCode.messages.copyFailed"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: exportInsights,
+      })
     }
   }
 
@@ -133,6 +167,11 @@ export function KiloCodeProfileExportDialog({
       toast.error(t("ui:dialog.kiloCode.messages.modelIdRequiredTitle"))
       return
     }
+
+    const tracker = startProductAnalyticsAction({
+      ...exportDialogAnalyticsContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExportApiCredentialSettingsFile,
+    })
 
     let url: string | null = null
     let link: HTMLAnchorElement | null = null
@@ -154,9 +193,16 @@ export function KiloCodeProfileExportDialog({
       link.click()
 
       toast.success(t("ui:dialog.kiloCode.messages.downloadedSettings"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+        insights: exportInsights,
+      })
     } catch (error) {
       logger.error("Failed to download Kilo Code settings file", error)
       toast.error(t("ui:dialog.kiloCode.messages.downloadFailed"))
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: exportInsights,
+      })
     } finally {
       if (link && document.body.contains(link)) {
         document.body.removeChild(link)
@@ -188,26 +234,32 @@ export function KiloCodeProfileExportDialog({
         </div>
       }
       footer={
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" type="button" onClick={onClose}>
-            {t("common:actions.cancel")}
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={handleCopyApiConfigs}
-            disabled={!canExport}
-          >
-            {t("ui:dialog.kiloCode.actions.copyApiConfigs")}
-          </Button>
-          <Button
-            type="button"
-            onClick={handleDownloadSettings}
-            disabled={!canExport}
-          >
-            {t("ui:dialog.kiloCode.actions.downloadSettings")}
-          </Button>
-        </div>
+        <ProductAnalyticsScope
+          entrypoint={exportDialogAnalyticsContext.entrypoint}
+          featureId={exportDialogAnalyticsContext.featureId}
+          surfaceId={exportDialogSurface}
+        >
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" type="button" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleCopyApiConfigs}
+              disabled={!canExport}
+            >
+              {t("ui:dialog.kiloCode.actions.copyApiConfigs")}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleDownloadSettings}
+              disabled={!canExport}
+            >
+              {t("ui:dialog.kiloCode.actions.downloadSettings")}
+            </Button>
+          </div>
+        </ProductAnalyticsScope>
       }
     >
       <div className="space-y-4">

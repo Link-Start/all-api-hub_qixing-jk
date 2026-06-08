@@ -17,9 +17,9 @@
     "importToClaudeCodeRouter": "Claude Code Router にインポート",
     "importToCliProxy": "CLIProxyAPI にインポート",
     "importToManagedSite": "{{site}} にインポート",
-    "openApiProfiles": "API プロファイルを開く",
+    "openApiProfiles": "API 認証情報庫を開く",
     "retryFailed": "失敗を再試行",
-    "saveToApiProfiles": "API プロファイルに保存",
+    "saveToApiProfiles": "API 認証情報庫に保存",
     "showKey": "キーを表示",
     "useInCherry": "Cherry Studio で使う"
   },
@@ -165,10 +165,14 @@
       "verifyNow": "今すぐ検証"
     },
     "badges": {
-      "added": "管理対象サイト: 追加済み",
-      "checking": "管理対象サイト: 確認中",
-      "notAdded": "管理対象サイト: 未追加",
-      "unknown": "管理対象サイト: 不明"
+      "added": "追加済み",
+      "checkFailed": "確認失敗",
+      "checking": "確認中",
+      "configMissing": "未設定",
+      "notAdded": "未追加",
+      "requiresConfirmation": "確認が必要",
+      "unknown": "不明",
+      "verificationUnavailable": "完全確認不可"
     },
     "descriptions": {
       "backendSearchFailed": "管理対象サイトの確認を完了できませんでした。",
@@ -223,8 +227,8 @@
     "keyCopied": "キー {{name}} をクリップボードにコピーしました",
     "loadFailed": "キー一覧の読み込みに失敗しました",
     "revealFailed": "キーの表示に失敗しました",
-    "savedToApiProfiles": "{{name}} を API プロファイルに保存しました",
-    "saveToApiProfilesFailed": "API プロファイルへの保存に失敗しました"
+    "savedToApiProfiles": "{{name}} を API 認証情報庫に保存しました",
+    "saveToApiProfilesFailed": "API 認証情報庫への保存に失敗しました"
   },
   "noKeys": "まだキーデータがありません",
   "noMatchingKeys": "一致するキーが見つかりません",

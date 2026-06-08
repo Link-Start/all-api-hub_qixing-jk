@@ -1,5 +1,5 @@
 {
-  "description": "在每天的指定时间窗口内，自动为符合条件的账号执行签到。",
+  "description": "在每天的指定时间窗口内，自动为符合条件的账号执行签到；下方结果列表显示已执行的签到记录，不是待签到队列。",
   "execution": {
     "actions": {
       "devModeHint": "开发模式：为便于测试，操作按钮将始终显示。",
@@ -19,10 +19,16 @@
       "uiOpenPretriggerDiagnosticsTitle": "打开界面时提前触发今日签到"
     },
     "empty": {
+      "addAccount": "添加账号",
+      "noAccounts": "先添加账号后才能自动签到",
+      "noAccountsDesc": "自动签到需要至少一个已启用账号，添加账号后才能执行。",
+      "noDetectionAccounts": "为账号启用签到检测",
+      "noDetectionAccountsDesc": "现有账号还没有启用签到检测。打开账号管理，为需要参与自动签到的账号启用签到检测。",
       "noHistory": "暂无执行历史",
-      "noHistoryDesc": "点击\"立即执行\"对所有符合条件的账号进行自动签到",
+      "noHistoryDesc": "当前还没有签到执行记录。点击“立即执行”后，符合条件的账号会开始签到，完成后才会出现在结果列表中。",
       "noResults": "没有匹配的结果",
-      "noResultsDesc": "尝试修改筛选条件或搜索关键字"
+      "noResultsDesc": "尝试修改筛选条件或搜索关键字",
+      "openAccounts": "打开账号管理"
     },
     "filters": {
       "all": "全部",
@@ -33,6 +39,7 @@
     },
     "hints": {
       "invalidAccessToken": "解决方案：Access Token 可能已失效。请重新登录该站点，然后在「账号管理 → 编辑账号」中重新自动识别/刷新 Access Token；如自动识别后仍出现此问题，请手动获取并修改 Access Token。",
+      "manualVerificationRequired": "建议先点击“打开网站”，在站点页面完成登录、Turnstile/PoW 等基础验证，让浏览器建立有效会话后再重试自动签到。如果完成验证后仍多次失败，可能是当前自动签到流程尚未适配该站点，请暂时改用手动签到。",
       "noTabWithId": "提示：请不要关闭扩展自动创建的标签页/窗口，扩展会在一段时间后自动关闭。如需手动关闭，请至少等待 1 分钟后再关闭。",
       "openFailedManualNewWindow": "提示：按住 Shift 点击“打开失败账号的手动签到页”，可在新窗口中打开。",
       "siteTypeCheckinUnsupported": "解决方案：先在「账号管理 → 编辑账号」中检查“站点类型”是否与实际站点一致；如果此前是自动识别得到的结果，可在目标站点重新登录后重新识别一次。若确认站点类型无误但仍提示不支持，说明该站点当前可能未适配自动签到，请改用“打开网站”或“手动签到”处理。"
@@ -137,7 +144,7 @@
     "title": "自动签到",
     "viewExecution": "查看签到历史",
     "viewExecutionButton": "打开记录",
-    "viewExecutionDesc": "查看每次自动签到的详细结果与日志。",
+    "viewExecutionDesc": "查看已执行的自动签到结果、跳过原因和账号准备状态；这里不是待签到账号列表。",
     "windowEnd": "时间窗口结束",
     "windowEndDesc": "允许每日自动签到开始的最晚本地时间。",
     "windowStart": "时间窗口开始",
@@ -159,7 +166,7 @@
       "providerAvailable": "可用",
       "providerUnavailable": "不可用"
     },
-    "description": "列出所有已启用检测的账号，帮助快速定位为什么某些账号会被跳过。",
+    "description": "列出所有已启用检测的账号及其准备状态。处于待执行状态的账号会在点击“立即执行”或到达计划时间后参与签到。",
     "table": {
       "autoCheckin": "自动签到",
       "detection": "检测",

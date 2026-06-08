@@ -5,6 +5,7 @@ import {
   AXON_HUB_CHANNEL_STATUS,
   AXON_HUB_CHANNEL_TYPE,
 } from "~/constants/axonHub"
+import { SITE_TYPES } from "~/constants/siteType"
 import { CHANNEL_STATUS } from "~/types/managedSite"
 import {
   buildApiToken,
@@ -108,6 +109,12 @@ const axonHubConfig = {
   password: "admin-password",
 }
 
+const passedAxonHubConfig = {
+  baseUrl: "https://passed-axonhub.example",
+  email: "passed-admin@example.com",
+  password: "passed-admin-password",
+}
+
 describe("AxonHub managed-site provider", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -143,23 +150,22 @@ describe("AxonHub managed-site provider", () => {
     })
   })
 
-  it("validates config, reads config, and searches through saved credentials", async () => {
+  it("validates saved config, reads config, and searches through passed config", async () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
 
     await expect(provider.checkValidAxonHubConfig()).resolves.toBe(true)
-    await expect(provider.getAxonHubConfig()).resolves.toEqual({
-      baseUrl: axonHubConfig.baseUrl,
-      token: axonHubConfig.password,
-      userId: axonHubConfig.email,
-    })
+    await expect(provider.getAxonHubConfig()).resolves.toEqual(axonHubConfig)
 
-    await provider.searchChannel("", "", "", "alpha")
+    await provider.searchChannel(passedAxonHubConfig, "alpha")
 
     expect(mockSignIn).toHaveBeenCalledWith(axonHubConfig)
-    expect(mockSearchChannels).toHaveBeenCalledWith(axonHubConfig, "alpha")
+    expect(mockSearchChannels).toHaveBeenCalledWith(
+      passedAxonHubConfig,
+      "alpha",
+    )
   })
 
-  it("returns missing-config fallbacks when saved AxonHub credentials are incomplete", async () => {
+  it("returns missing-config fallbacks for saved AxonHub config helpers", async () => {
     mockGetPreferences.mockResolvedValue(
       buildUserPreferences({
         axonHub: {
@@ -174,26 +180,6 @@ describe("AxonHub managed-site provider", () => {
 
     await expect(provider.checkValidAxonHubConfig()).resolves.toBe(false)
     await expect(provider.getAxonHubConfig()).resolves.toBeNull()
-    await expect(
-      provider.createChannel("", "", "", {
-        mode: "single",
-        channel: {
-          name: "Missing Config",
-          type: AXON_HUB_CHANNEL_TYPE.OPENAI,
-          key: "sk-test",
-          base_url: "https://source.example/v1",
-          models: "gpt-4o",
-          groups: [],
-          priority: 0,
-          weight: 0,
-          status: CHANNEL_STATUS.Enable,
-        },
-      }),
-    ).resolves.toEqual({
-      success: false,
-      data: null,
-      message: "messages:axonhub.configMissing",
-    })
 
     expect(mockSignIn).not.toHaveBeenCalled()
     expect(mockCreateAxonHubChannel).not.toHaveBeenCalled()
@@ -202,7 +188,7 @@ describe("AxonHub managed-site provider", () => {
   it("creates an OpenAI-compatible channel and applies the requested enabled status", async () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
 
-    const result = await provider.createChannel("", "", "", {
+    const result = await provider.createChannel(passedAxonHubConfig, {
       mode: "single",
       channel: {
         name: "  Imported Account  ",
@@ -218,7 +204,7 @@ describe("AxonHub managed-site provider", () => {
     })
 
     expect(result.success).toBe(true)
-    expect(mockCreateAxonHubChannel).toHaveBeenCalledWith(axonHubConfig, {
+    expect(mockCreateAxonHubChannel).toHaveBeenCalledWith(passedAxonHubConfig, {
       type: AXON_HUB_CHANNEL_TYPE.OPENAI,
       name: "Imported Account",
       baseURL: "https://source.example/v1",
@@ -232,7 +218,7 @@ describe("AxonHub managed-site provider", () => {
       orderingWeight: 7,
     })
     expect(mockUpdateAxonHubChannelStatus).toHaveBeenCalledWith(
-      axonHubConfig,
+      passedAxonHubConfig,
       "created-channel-id",
       AXON_HUB_CHANNEL_STATUS.ENABLED,
     )
@@ -268,7 +254,9 @@ describe("AxonHub managed-site provider", () => {
       },
     })
 
-    await expect(provider.createChannel("", "", "", payload)).resolves.toEqual({
+    await expect(
+      provider.createChannel(passedAxonHubConfig, payload),
+    ).resolves.toEqual({
       success: true,
       data: {
         id: "created-channel-id",
@@ -277,7 +265,7 @@ describe("AxonHub managed-site provider", () => {
       message: "success",
     })
 
-    expect(mockCreateAxonHubChannel).toHaveBeenCalledWith(axonHubConfig, {
+    expect(mockCreateAxonHubChannel).toHaveBeenCalledWith(passedAxonHubConfig, {
       type: AXON_HUB_CHANNEL_TYPE.ANTHROPIC,
       name: "Migrated Anthropic",
       baseURL: "https://anthropic.example/v1",
@@ -297,7 +285,7 @@ describe("AxonHub managed-site provider", () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
 
     await expect(
-      provider.updateChannel("", "", "", {
+      provider.updateChannel(passedAxonHubConfig, {
         id: 42,
         name: "  Renamed  ",
         type: AXON_HUB_CHANNEL_TYPE.ANTHROPIC,
@@ -315,7 +303,7 @@ describe("AxonHub managed-site provider", () => {
 
     expect(mockResolveAxonHubGraphqlId).toHaveBeenCalledWith(42)
     expect(mockUpdateAxonHubChannel).toHaveBeenCalledWith(
-      axonHubConfig,
+      passedAxonHubConfig,
       "gid-42",
       {
         type: AXON_HUB_CHANNEL_TYPE.ANTHROPIC,
@@ -331,18 +319,20 @@ describe("AxonHub managed-site provider", () => {
       },
     )
     expect(mockUpdateAxonHubChannelStatus).toHaveBeenCalledWith(
-      axonHubConfig,
+      passedAxonHubConfig,
       "gid-42",
       AXON_HUB_CHANNEL_STATUS.DISABLED,
     )
 
-    await expect(provider.deleteChannel("", "", "", 42)).resolves.toEqual({
+    await expect(
+      provider.deleteChannel(passedAxonHubConfig, 42),
+    ).resolves.toEqual({
       success: true,
       data: true,
       message: "success",
     })
     expect(mockDeleteAxonHubChannel).toHaveBeenCalledWith(
-      axonHubConfig,
+      passedAxonHubConfig,
       "gid-42",
     )
   })
@@ -353,7 +343,7 @@ describe("AxonHub managed-site provider", () => {
     mockDeleteAxonHubChannel.mockResolvedValueOnce(false)
 
     await expect(
-      provider.updateChannel("", "", "", {
+      provider.updateChannel(passedAxonHubConfig, {
         id: 7,
         status: CHANNEL_STATUS.Unknown,
       }),
@@ -364,38 +354,27 @@ describe("AxonHub managed-site provider", () => {
     })
 
     expect(mockUpdateAxonHubChannelStatus).toHaveBeenCalledWith(
-      axonHubConfig,
+      passedAxonHubConfig,
       "gid-7",
       AXON_HUB_CHANNEL_STATUS.DISABLED,
     )
 
-    await expect(provider.deleteChannel("", "", "", 7)).resolves.toEqual({
+    await expect(
+      provider.deleteChannel(passedAxonHubConfig, 7),
+    ).resolves.toEqual({
       success: false,
       data: false,
       message: "messages:axonhub.deleteFailed",
     })
   })
 
-  it("returns delete fallbacks when config is missing or deletion throws", async () => {
+  it("returns delete fallbacks when deletion throws", async () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
 
-    mockGetPreferences.mockResolvedValueOnce(
-      buildUserPreferences({
-        axonHub: {
-          baseUrl: "",
-          email: "",
-          password: "",
-        },
-      }),
-    )
-    await expect(provider.deleteChannel("", "", "", 7)).resolves.toEqual({
-      success: false,
-      data: null,
-      message: "messages:axonhub.configMissing",
-    })
-
     mockDeleteAxonHubChannel.mockRejectedValueOnce(new Error("delete exploded"))
-    await expect(provider.deleteChannel("", "", "", 8)).resolves.toEqual({
+    await expect(
+      provider.deleteChannel(passedAxonHubConfig, 8),
+    ).resolves.toEqual({
       success: false,
       data: null,
       message: "delete exploded",
@@ -472,6 +451,34 @@ describe("AxonHub managed-site provider", () => {
     ).toThrow("messages:axonhub.modelsMissing")
   })
 
+  it("uses the AIHubMix API origin for managed-site channel imports", async () => {
+    const provider = await import("~/services/managedSites/providers/axonHub")
+    const account = buildDisplaySiteData({
+      siteType: SITE_TYPES.AIHUBMIX,
+      baseUrl: "https://console.aihubmix.com",
+    })
+    const token = buildApiToken({
+      name: "AIHubMix Token",
+      key: "test-aihubmix-token-key",
+    })
+
+    await expect(
+      provider.prepareChannelFormData(account, token),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        key: "test-aihubmix-token-key",
+        base_url: "https://aihubmix.com",
+      }),
+    )
+
+    expect(mockFetchTokenScopedModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: "https://aihubmix.com",
+      }),
+      token,
+    )
+  })
+
   it("marks model prefill failures for manual review and still accepts manual fallback models", async () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
     const account = buildDisplaySiteData({
@@ -512,7 +519,7 @@ describe("AxonHub managed-site provider", () => {
     ).not.toThrow()
   })
 
-  it("finds existing matching channels and imports only when no duplicate exists", async () => {
+  it("imports only when no duplicate exists", async () => {
     const provider = await import("~/services/managedSites/providers/axonHub")
     const account = buildDisplaySiteData({
       name: "Source Site",
@@ -530,25 +537,7 @@ describe("AxonHub managed-site provider", () => {
       models: "gpt-4o,gpt-4.1",
     })
 
-    mockListChannels.mockResolvedValueOnce({
-      items: [matchingChannel],
-      total: 1,
-      page: 1,
-      pageSize: 100,
-    })
-
-    await expect(
-      provider.findMatchingChannel(
-        "",
-        "",
-        "",
-        "https://source.example/v1",
-        ["gpt-4o", "gpt-4.1"],
-        "test-source-key",
-      ),
-    ).resolves.toEqual(matchingChannel)
-
-    mockListChannels.mockResolvedValueOnce({
+    mockSearchChannels.mockResolvedValueOnce({
       items: [matchingChannel],
       total: 1,
       page: 1,
@@ -556,11 +545,12 @@ describe("AxonHub managed-site provider", () => {
     })
     await expect(provider.importToAxonHub(account, token)).resolves.toEqual({
       success: false,
-      message: 'messages:axonhub.channelExists:{"channelName":"Existing"}',
+      message: expect.stringContaining("channelExists"),
     })
+    expect(mockSearchChannels).toHaveBeenCalledTimes(1)
     expect(mockCreateAxonHubChannel).not.toHaveBeenCalled()
 
-    mockListChannels.mockResolvedValueOnce({
+    mockSearchChannels.mockResolvedValueOnce({
       items: [],
       total: 0,
       page: 1,
@@ -580,23 +570,6 @@ describe("AxonHub managed-site provider", () => {
         supportedModels: ["gpt-4o", "gpt-4.1"],
       }),
     )
-  })
-
-  it("returns null when matching-channel lookup cannot list AxonHub channels", async () => {
-    const provider = await import("~/services/managedSites/providers/axonHub")
-
-    mockListChannels.mockRejectedValueOnce(new Error("list exploded"))
-
-    await expect(
-      provider.findMatchingChannel(
-        "",
-        "",
-        "",
-        "https://source.example/v1",
-        ["gpt-4o"],
-        "test-source-key",
-      ),
-    ).resolves.toBeNull()
   })
 
   it("returns config-missing and import-failed messages for AxonHub import fallbacks", async () => {
@@ -656,7 +629,7 @@ describe("AxonHub managed-site provider", () => {
 
     mockConvertToDisplayData.mockReturnValue(account)
     mockEnsureAccountApiToken.mockResolvedValue(token)
-    mockListChannels.mockResolvedValueOnce({
+    mockSearchChannels.mockResolvedValueOnce({
       items: [],
       total: 0,
       page: 1,
@@ -670,6 +643,11 @@ describe("AxonHub managed-site provider", () => {
       message:
         'messages:axonhub.importSuccess:{"channelName":"Converted | Auto (auto)"}',
     })
+    expect(mockSearchChannels).toHaveBeenCalledWith(
+      axonHubConfig,
+      "https://converted.example",
+    )
+    expect(mockCreateAxonHubChannel).toHaveBeenCalled()
     expect(mockEnsureAccountApiToken).toHaveBeenCalledWith(
       storedAccount,
       account,
@@ -698,7 +676,7 @@ describe("AxonHub managed-site provider", () => {
 
     mockConvertToDisplayData.mockReturnValue(account)
     mockEnsureAccountApiToken.mockResolvedValue(token)
-    mockListChannels.mockResolvedValueOnce({
+    mockSearchChannels.mockResolvedValueOnce({
       items: [existingChannel],
       total: 1,
       page: 1,
@@ -709,16 +687,16 @@ describe("AxonHub managed-site provider", () => {
       provider.autoConfigToAxonHub(storedAccount, "toast-duplicate"),
     ).resolves.toEqual({
       success: false,
-      message:
-        'messages:axonhub.channelExists:{"channelName":"Existing Duplicate"}',
+      message: expect.stringContaining("channelExists"),
     })
+    expect(mockSearchChannels).toHaveBeenCalledTimes(1)
 
     expect(toast.loading).toHaveBeenCalledWith(
       "messages:accountOperations.importingToAxonHub",
       { id: "toast-duplicate" },
     )
     expect(toast.error).toHaveBeenCalledWith(
-      'messages:axonhub.channelExists:{"channelName":"Existing Duplicate"}',
+      expect.stringContaining("channelExists"),
       { id: "toast-duplicate" },
     )
   })

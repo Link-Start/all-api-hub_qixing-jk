@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next"
 
 import { Card, CardContent, Checkbox } from "~/components/ui"
+import { getKeyManagementTokenRowTestId } from "~/features/KeyManagement/testIds"
 import type { ManagedSiteTokenChannelStatus } from "~/services/managedSites/tokenChannelStatus"
 import type { AccountToken, DisplaySiteData } from "~/types"
 
@@ -109,7 +110,10 @@ export function TokenListItem(props: TokenListItemProps) {
   const tokenIdentityKey = buildTokenIdentityKey(token.accountId, token.id)
 
   return (
-    <Card variant="interactive">
+    <Card
+      variant="interactive"
+      data-testid={getKeyManagementTokenRowTestId(token.id)}
+    >
       <CardContent padding="default">
         <div className="flex gap-3">
           {onSelectionChange ? (
@@ -151,11 +155,11 @@ export function TokenListItem(props: TokenListItemProps) {
                   />
                   <TokenDetails token={token} />
                   {token.group && (
-                    <div>
-                      <span className="dark:text-dark-text-tertiary text-gray-500">
+                    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 break-words">
+                      <span className="dark:text-dark-text-tertiary shrink-0 text-gray-500">
                         {t("keyDetails.group")}
                       </span>
-                      <span className="dark:text-dark-text-primary ml-2 font-medium text-gray-900">
+                      <span className="dark:text-dark-text-primary min-w-0 font-medium break-words text-gray-900">
                         {token.group}
                       </span>
                     </div>

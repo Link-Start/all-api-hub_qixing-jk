@@ -98,7 +98,8 @@
   },
   "filteredTotals": {
     "balance": "余额",
-    "consumption": "今日消耗"
+    "consumption": "今日消耗",
+    "income": "今日收入"
   },
   "healthStatus": {
     "apiError": "API错误",
@@ -169,12 +170,30 @@
     "noResults": "没有找到匹配的账号",
     "placeholder": "输入站点信息或账号信息进行搜索"
   },
+  "sponsor": {
+    "actions": {
+      "continueAddAccount": "继续添加此账号",
+      "openApiCredentialProfilesFallback": "可将其 API 密钥添加为 API 凭证",
+      "openBookmarkManagerFallback": "暂不添加账号，先收藏服务商",
+      "visitProvider": "访问服务商"
+    },
+    "recommendedProviders": "推荐服务商",
+    "supportStatus": {
+      "fallbackApiCredentialProfiles": "可加为凭证",
+      "fallbackBookmark": "可先收藏",
+      "fallbackBookmarkAndApi": "可先收藏 / 可加为凭证",
+      "supported": "可直接添加",
+      "unsupported": "可能需要手动设置"
+    }
+  },
   "stats": {
     "completion": "补全",
+    "estimatedTodayIncome": "估算收入",
     "prompt": "提示",
     "todayConsumption": "今日消耗",
     "todayIncome": "今日收入",
-    "totalBalance": "总余额"
+    "totalBalance": "总余额",
+    "trustedTodayIncome": "可信收入"
   },
   "title": "账户管理"
 }

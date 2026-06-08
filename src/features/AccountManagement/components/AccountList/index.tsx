@@ -39,10 +39,24 @@ import { useAddAccountHandler } from "~/hooks/useAddAccountHandler"
 import { useIsDesktop, useIsSmallScreen } from "~/hooks/useMediaQuery"
 import { cn } from "~/lib/utils"
 import { getDayKeyFromUnixSeconds } from "~/services/history/usageHistory/core"
+import {
+  startProductAnalyticsAction,
+  trackProductAnalyticsActionStarted,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SOURCE_KINDS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { DisplaySiteData, SortField } from "~/types"
 import {
   calculateTotalBalanceForSites,
   calculateTotalConsumptionForSites,
+  calculateTotalIncomeForSites,
 } from "~/utils/core/formatters"
 import { formatMoneyFixed } from "~/utils/core/money"
 
@@ -614,6 +628,13 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
         : { USD: 0, CNY: 0 },
     [filteredSites, showTodayCashflow],
   )
+  const filteredIncome = useMemo(
+    () =>
+      showTodayCashflow
+        ? calculateTotalIncomeForSites(filteredSites)
+        : { USD: 0, CNY: 0 },
+    [filteredSites, showTodayCashflow],
+  )
 
   const hasAccounts = displayData.length > 0
   const showFilteredSummary =
@@ -637,15 +658,41 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
     [displayedResults],
   )
 
+  const accountListAnalyticsBaseContext = {
+    featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+    surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  }
+
   const updateSelectedAccountIds = (
     updater: (previous: string[]) => string[],
   ) => {
     setSelectedAccountIds((previous) => Array.from(new Set(updater(previous))))
   }
 
+  const handleEmptyStateAddAccountClick = () => {
+    void trackProductAnalyticsActionStarted({
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.OpenCreateAccountDialog,
+    })
+    handleAddAccountClick()
+  }
+
+  const handleBulkModeEnter = () => {
+    void trackProductAnalyticsActionStarted({
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.EnterAccountBulkMode,
+    })
+    setIsBulkMode(true)
+  }
+
   const handleBulkModeExit = () => {
     if (isBulkBusy) return
 
+    void trackProductAnalyticsActionStarted({
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ExitAccountBulkMode,
+    })
     setIsBulkMode(false)
     setSelectedAccountIds([])
     setIsBulkDeleteConfirmOpen(false)
@@ -685,11 +732,38 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
       return
     }
 
+    const itemCount = selectedEnabledAccounts.length
+    const selectedCount = selectedAccountIds.length
+    const analyticsContext = {
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DisableSelectedAccounts,
+    }
+    const tracker = startProductAnalyticsAction(analyticsContext)
+
     setIsBulkDisabling(true)
     try {
-      const { updatedIds } = await handleSetAccountsDisabled(
+      const { updatedCount, updatedIds } = await handleSetAccountsDisabled(
         selectedEnabledAccounts,
         true,
+      )
+      const failureCount = Math.max(0, itemCount - updatedCount)
+      tracker.complete(
+        failureCount > 0
+          ? PRODUCT_ANALYTICS_RESULTS.Failure
+          : PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          ...(failureCount > 0
+            ? {
+                errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+              }
+            : {}),
+          insights: {
+            itemCount,
+            selectedCount,
+            successCount: updatedCount,
+            failureCount,
+          },
+        },
       )
       if (updatedIds.length > 0) {
         const updatedIdSet = new Set(updatedIds)
@@ -697,6 +771,17 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
           previous.filter((accountId) => !updatedIdSet.has(accountId)),
         )
       }
+    } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          itemCount,
+          selectedCount,
+          successCount: 0,
+          failureCount: itemCount,
+        },
+      })
+      throw error
     } finally {
       setIsBulkDisabling(false)
     }
@@ -707,10 +792,37 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
       return
     }
 
+    const itemCount = selectedAccounts.length
+    const selectedCount = selectedAccountIds.length
+    const analyticsContext = {
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+    }
+    const tracker = startProductAnalyticsAction(analyticsContext)
+
     setIsBulkDeleting(true)
     try {
       const { deletedCount, deletedIds } =
         await handleDeleteAccounts(selectedAccounts)
+      const failureCount = Math.max(0, itemCount - deletedCount)
+      tracker.complete(
+        failureCount > 0
+          ? PRODUCT_ANALYTICS_RESULTS.Failure
+          : PRODUCT_ANALYTICS_RESULTS.Success,
+        {
+          ...(failureCount > 0
+            ? {
+                errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+              }
+            : {}),
+          insights: {
+            itemCount,
+            selectedCount,
+            successCount: deletedCount,
+            failureCount,
+          },
+        },
+      )
       if (deletedIds.length > 0) {
         const deletedIdSet = new Set(deletedIds)
         setSelectedAccountIds((previous) =>
@@ -722,6 +834,17 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
       if (deletedCount > 0 && displayData.length - deletedCount <= 0) {
         setIsBulkMode(false)
       }
+    } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: {
+          itemCount,
+          selectedCount,
+          successCount: 0,
+          failureCount: itemCount,
+        },
+      })
+      throw error
     } finally {
       setIsBulkDeleting(false)
     }
@@ -736,8 +859,31 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
     const newIndex = sortedIds.indexOf(over.id as string)
     if (oldIndex === -1 || newIndex === -1) return
 
+    const itemCount = sortedIds.length
+    const analyticsContext = {
+      ...accountListAnalyticsBaseContext,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.ReorderAccounts,
+    }
+    const tracker = startProductAnalyticsAction(analyticsContext)
     const newOrder = moveAccountId(sortedIds, oldIndex, newIndex)
-    void handleReorder(newOrder)
+    void Promise.resolve(handleReorder(newOrder))
+      .then(() => {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+          insights: {
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+            itemCount,
+          },
+        })
+      })
+      .catch(() => {
+        tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+          errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+          insights: {
+            sourceKind: PRODUCT_ANALYTICS_SOURCE_KINDS.Manual,
+            itemCount,
+          },
+        })
+      })
   }
 
   const ensureDndReady = useCallback(() => {
@@ -854,7 +1000,7 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
           title={t("account:emptyState")}
           action={{
             label: t("account:addFirstAccount"),
-            onClick: handleAddAccountClick,
+            onClick: handleEmptyStateAddAccountClick,
             variant: "default",
             icon: <PlusIcon className="h-4 w-4" />,
           }}
@@ -1103,11 +1249,18 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
                     {formatMoneyFixed(filteredBalance.CNY)}
                   </span>
                   {showTodayCashflow && (
-                    <span>
-                      {t("account:filteredTotals.consumption")}: USD{" "}
-                      {formatMoneyFixed(filteredConsumption.USD)} / CNY{" "}
-                      {formatMoneyFixed(filteredConsumption.CNY)}
-                    </span>
+                    <>
+                      <span>
+                        {t("account:filteredTotals.consumption")}: USD{" "}
+                        {formatMoneyFixed(filteredConsumption.USD)} / CNY{" "}
+                        {formatMoneyFixed(filteredConsumption.CNY)}
+                      </span>
+                      <span>
+                        {t("account:filteredTotals.income")}: USD{" "}
+                        {formatMoneyFixed(filteredIncome.USD)} / CNY{" "}
+                        {formatMoneyFixed(filteredIncome.CNY)}
+                      </span>
+                    </>
                   )}
                 </div>
               </div>
@@ -1140,9 +1293,7 @@ export default function AccountList({ initialSearchQuery }: AccountListProps) {
                 variant={isBulkMode ? "secondary" : "outline"}
                 size="sm"
                 className="h-7 shrink-0 px-2 text-xs"
-                onClick={
-                  isBulkMode ? handleBulkModeExit : () => setIsBulkMode(true)
-                }
+                onClick={isBulkMode ? handleBulkModeExit : handleBulkModeEnter}
                 disabled={isBulkBusy}
               >
                 {isBulkMode ? t("account:bulk.exit") : t("account:bulk.manage")}

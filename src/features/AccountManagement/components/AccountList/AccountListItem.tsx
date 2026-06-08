@@ -35,6 +35,8 @@ const AccountListItem: React.FC<AccountListItemProps> = React.memo(
           "opacity-60": site.disabled,
         })}
         data-testid={getAccountManagementListItemTestId(site.id)}
+        data-site-url={site.baseUrl}
+        data-site-type={site.siteType}
         data-disabled={site.disabled ? "true" : undefined}
       >
         <div className="flex w-full min-w-0 items-center gap-1 sm:gap-2">

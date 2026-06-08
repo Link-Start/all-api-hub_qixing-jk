@@ -5,11 +5,21 @@ import toast from "react-hot-toast"
 import { useTranslation } from "react-i18next"
 
 import { Button, DestructiveConfirmDialog, Modal } from "~/components/ui"
+import { ACCOUNT_MANAGEMENT_TEST_IDS } from "~/features/AccountManagement/testIds"
 import {
   scanDuplicateAccounts,
   type AccountDedupeKeepStrategy,
 } from "~/services/accounts/accountDedupe"
 import { accountStorage } from "~/services/accounts/accountStorage"
+import { startProductAnalyticsAction } from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_ERROR_CATEGORIES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
 import type { SiteAccount } from "~/types"
 import { getErrorMessage } from "~/utils/core/error"
 import { createLogger } from "~/utils/core/logger"
@@ -166,6 +176,17 @@ export default function DedupeAccountsDialog({
   const handleConfirmDelete = async () => {
     if (idsToDelete.length === 0) return
 
+    const cleanupInsights = {
+      itemCount: idsToDelete.length,
+      selectedCount: idsToDelete.length,
+    }
+    const tracker = startProductAnalyticsAction({
+      featureId: PRODUCT_ANALYTICS_FEATURE_IDS.AccountManagement,
+      actionId: PRODUCT_ANALYTICS_ACTION_IDS.DeleteAccount,
+      surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsAccountManagementPage,
+      entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+    })
+
     setIsWorking(true)
     try {
       const { deletedCount } = await toast.promise(
@@ -186,11 +207,21 @@ export default function DedupeAccountsDialog({
 
       await loadAccountData()
 
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Success, {
+        insights: {
+          ...cleanupInsights,
+          successCount: deletedCount,
+        },
+      })
       setIsConfirmOpen(false)
       if (deletedCount > 0) {
         onClose()
       }
     } catch (error) {
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: PRODUCT_ANALYTICS_ERROR_CATEGORIES.Unknown,
+        insights: cleanupInsights,
+      })
       logger.error("handleConfirmDelete failed", {
         error,
         idsToDelete,
@@ -239,6 +270,9 @@ export default function DedupeAccountsDialog({
               variant="destructive"
               onClick={() => setIsConfirmOpen(true)}
               disabled={isWorking || idsToDelete.length === 0}
+              data-testid={
+                ACCOUNT_MANAGEMENT_TEST_IDS.dedupePreviewDeleteButton
+              }
             >
               {t("ui:dialog.dedupeAccounts.previewDelete")}
             </Button>
@@ -277,6 +311,9 @@ export default function DedupeAccountsDialog({
         onConfirm={() => void handleConfirmDelete()}
         isWorking={isWorking}
         size="lg"
+        confirmButtonTestId={
+          ACCOUNT_MANAGEMENT_TEST_IDS.dedupeConfirmDeleteButton
+        }
         details={
           <DedupeAccountsConfirmDetails
             groups={groups}

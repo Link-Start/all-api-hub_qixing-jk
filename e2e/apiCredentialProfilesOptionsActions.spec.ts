@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test"
 
 import { OPTIONS_PAGE_PATH } from "~/constants/extensionPages"
 import { MENU_ITEM_IDS } from "~/constants/optionsMenuIds"
+import { API_CREDENTIAL_PROFILES_TEST_IDS } from "~/features/ApiCredentialProfiles/testIds"
 import { STORAGE_KEYS } from "~/services/core/storageKeys"
 import { expect, test } from "~~/e2e/fixtures/extensionTest"
 import {
@@ -83,8 +84,14 @@ test("creates an API credential profile from the options page and persists it", 
 
   await openProfilesPage(page, extensionId)
 
-  await page.getByRole("button", { name: "Add profile" }).first().click()
-  await expect(page.getByText("Add API credential profile")).toBeVisible()
+  await page.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.addButton).click()
+  const profileDialog = page.getByTestId(
+    API_CREDENTIAL_PROFILES_TEST_IDS.dialog,
+  )
+  await expect(profileDialog).toBeVisible()
+  await expect(
+    profileDialog.getByRole("heading", { name: "Save API key" }),
+  ).toBeVisible()
 
   await page.locator("#api-credential-profile-name").fill("Options Profile")
   await page
@@ -94,7 +101,9 @@ test("creates an API credential profile from the options page and persists it", 
   await page
     .locator("#api-credential-profile-notes")
     .fill("Created from options E2E")
-  await page.getByRole("button", { name: "Save" }).click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.dialogSaveButton)
+    .click()
 
   await expect(
     page.getByRole("heading", { name: "Options Profile" }),
@@ -172,12 +181,18 @@ test("filters options-page profiles and copies reusable credentials", async ({
     page.getByRole("heading", { name: "Archive Profile" }),
   ).toHaveCount(0)
 
-  await page.getByRole("button", { name: "Show Key" }).click()
+  await page.getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.showKeyButton).click()
   await expect(page.getByText("sk-reusable-profile")).toBeVisible()
 
-  await page.getByRole("button", { name: "Copy base URL", exact: true }).click()
-  await page.getByRole("button", { name: "Copy API key" }).click()
-  await page.getByRole("button", { name: "Copy base URL + API key" }).click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.copyBaseUrlButton)
+    .click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.copyApiKeyButton)
+    .click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.copyBundleButton)
+    .click()
 
   await expect
     .poll(() => readClipboardWrites(page))
@@ -226,7 +241,9 @@ test("opens model management for an options-page API credential profile", async 
     },
   })
 
-  await page.getByRole("button", { name: "Open in Model Management" }).click()
+  await page
+    .getByTestId(API_CREDENTIAL_PROFILES_TEST_IDS.openModelManagementButton)
+    .click()
 
   const targetPage = await targetPagePromise
   installExtensionPageGuards(targetPage)

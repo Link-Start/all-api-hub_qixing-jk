@@ -7,7 +7,7 @@
 - You have created many tokens across multiple relay stations and want to search or batch export them in one place without logging into each backend.
 - Some sites only show the token once upon creation and hide it thereafter; the extension can help you record and "repair" these invisible keys.
 - You need to verify if a specific token under an account is still valid or compatible with CLI tools.
-- You want to quickly save tokens from an account to [API Credentials](./api-credential-profiles.md) for more granular tagging and management.
+- You want to quickly save tokens from an account to the [API Credential Library](./api-credential-profiles.md) for more granular tagging and management.
 
 ## Features at a Glance
 
@@ -50,7 +50,7 @@ Click the **`Export`** button next to a token to sync it to:
 
 ## Integration with Credentials
 
-If you find a token particularly useful or want to add detailed notes and tags, click **`Save to API Credentials`**. This copies the `URL + Key` pair to the [API Credentials](./api-credential-profiles.md) module.
+If you find a token particularly useful or want to add detailed notes and tags, click **`Save to API Credential Library`**. This copies the `URL + Key` pair to the [API Credential Library](./api-credential-profiles.md).
 
 ## FAQ
 
@@ -63,6 +63,6 @@ If you find a token particularly useful or want to add detailed notes and tags, 
 
 ## Related Documentation
 
-- [API Credentials](./api-credential-profiles.md)
+- [API Credential Library](./api-credential-profiles.md)
 - [Supported Sites](./supported-sites.md)
 - [Data Management](./data-management.md)

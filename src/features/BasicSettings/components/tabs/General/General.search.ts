@@ -12,6 +12,12 @@ const SITE_ANNOUNCEMENT_BREADCRUMBS = [
   "settings:siteAnnouncementNotifications.title",
 ]
 
+const PRODUCT_ANALYTICS_BREADCRUMBS = [
+  ...DEFAULT_BREADCRUMBS,
+  "settings:tabs.general",
+  "settings:productAnalytics.title",
+]
+
 export const generalSearchSections: OptionsSearchItemDefinition[] = [
   buildSectionDefinition(
     "section:display",
@@ -60,11 +66,22 @@ export const generalSearchSections: OptionsSearchItemDefinition[] = [
     205,
   ),
   buildSectionDefinition(
+    "section:product-analytics",
+    "general",
+    "product-analytics",
+    "settings:productAnalytics.title",
+    206,
+    {
+      descriptionKey: "settings:productAnalytics.description",
+      keywords: ["analytics", "posthog", "privacy", "anonymous", "opt out"],
+    },
+  ),
+  buildSectionDefinition(
     "section:danger",
     "general",
     "dangerous-zone",
     "settings:danger.title",
-    206,
+    207,
   ),
 ]
 
@@ -167,33 +184,35 @@ export const generalSearchControls: OptionsSearchItemDefinition[] = [
     },
   ),
   buildControlDefinition(
-    "control:action-click-sidepanel",
-    "general",
-    "action-click-behavior",
-    "settings:actionClick.sidepanelTitle",
-    506,
-    {
-      descriptionKey: "settings:actionClick.sidepanelUnsupportedHelper",
-      breadcrumbsKeys: [
-        ...DEFAULT_BREADCRUMBS,
-        "settings:tabs.general",
-        "settings:actionClick.title",
-      ],
-      keywords: ["sidepanel", "sidebar", "toolbar"],
-      isVisible: (context) => context.sidePanelSupported,
-    },
-  ),
-  buildControlDefinition(
     "control:site-announcements-polling",
     "general",
     SETTINGS_ANCHORS.SITE_ANNOUNCEMENT_NOTIFICATIONS_ENABLED,
     "settings:siteAnnouncementNotifications.polling.enable",
-    507,
+    506,
     {
       descriptionKey:
         "settings:siteAnnouncementNotifications.polling.enableDesc",
       breadcrumbsKeys: SITE_ANNOUNCEMENT_BREADCRUMBS,
       keywords: ["announcement", "notice", "polling", "background check"],
+    },
+  ),
+  buildControlDefinition(
+    "control:site-announcements-interval",
+    "general",
+    SETTINGS_ANCHORS.SITE_ANNOUNCEMENT_NOTIFICATIONS_INTERVAL,
+    "settings:siteAnnouncementNotifications.polling.interval",
+    507,
+    {
+      descriptionKey:
+        "settings:siteAnnouncementNotifications.polling.intervalDesc",
+      breadcrumbsKeys: SITE_ANNOUNCEMENT_BREADCRUMBS,
+      keywords: [
+        "announcement",
+        "notice",
+        "polling interval",
+        "background check interval",
+        "minutes",
+      ],
     },
   ),
   buildControlDefinition(
@@ -257,11 +276,23 @@ export const generalSearchControls: OptionsSearchItemDefinition[] = [
     },
   ),
   buildControlDefinition(
+    "control:product-analytics-enabled",
+    "general",
+    "product-analytics-enabled",
+    "settings:productAnalytics.enableLabel",
+    512,
+    {
+      descriptionKey: "settings:productAnalytics.enableDescription",
+      breadcrumbsKeys: PRODUCT_ANALYTICS_BREADCRUMBS,
+      keywords: ["analytics", "posthog", "privacy", "anonymous", "disable"],
+    },
+  ),
+  buildControlDefinition(
     "control:danger-reset-settings",
     "general",
     "danger-reset-settings",
     "settings:danger.resetSettings",
-    512,
+    513,
     {
       descriptionKey: "settings:danger.resetDesc",
       breadcrumbsKeys: [

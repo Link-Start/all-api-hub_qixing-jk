@@ -31,9 +31,11 @@ export interface HealthStatus {
  */
 export type HealthStatusCode = TempWindowHealthStatusCode
 
+export type AccountIdentity = string
+
 // 账号基础信息
 export interface AccountInfo {
-  id: number // 账号 ID（整数）
+  id: AccountIdentity // 账号身份标识（站点内稳定字符串）
   access_token: string
   username: string
   quota: number // 总余额点数
@@ -83,6 +85,7 @@ export interface SiteAccount {
   account_info: AccountInfo // 账号信息
   last_sync_time: number // 最后同步时间 (timestamp)
   updated_at: number // 更改时间 (timestamp)
+  user_updated_at: number // 用户意图更改时间 (timestamp)
   created_at: number // 创建时间 (timestamp)
   /**
    * Free-form notes for this account.
@@ -127,6 +130,16 @@ export interface SiteAccount {
    */
   excludeFromTotalBalance: boolean
   /**
+   * Whether this stored account is excluded from the "Today Income" aggregate.
+   *
+   * Unlike {@link SiteAccount.disabled}, excluded accounts remain enabled for refresh,
+   * check-in, and other background behaviors; they are only skipped when computing
+   * aggregate Today Income display values.
+   *
+   * Canonical persisted shape: always present as a boolean; default: false.
+   */
+  excludeFromTodayIncome: boolean
+  /**
    * Legacy flag indicating whether the account can be checked in today.
    * @deprecated Use `checkIn.siteStatus.isCheckedInToday` instead.
    */
@@ -167,6 +180,7 @@ export interface SiteAccount {
    * 1.2.0: Persist/normalize `disabled` flag (configVersion = 3)
    * 1.2.1: Persist/normalize `excludeFromTotalBalance` flag (configVersion = 4)
    * 1.2.2: Persist/normalize Sub2API refresh-token auth (configVersion = 5)
+   * 1.2.3: Persist/normalize `excludeFromTodayIncome` flag (configVersion = 6)
    * @since 1.0.0
    */
   configVersion?: number
@@ -294,6 +308,24 @@ export interface SiteBookmark {
   updated_at: number
 }
 
+export const DELETED_ENTRY_KIND = {
+  ACCOUNT: "account",
+  BOOKMARK: "bookmark",
+} as const
+
+export const DELETED_ENTRY_KINDS = [
+  DELETED_ENTRY_KIND.ACCOUNT,
+  DELETED_ENTRY_KIND.BOOKMARK,
+] as const
+
+export type DeletedEntryKind = (typeof DELETED_ENTRY_KINDS)[number]
+
+export interface DeletedEntryRecord {
+  kind: DeletedEntryKind
+  deletedAt: number
+  entryUpdatedAt: number
+}
+
 /**
  * Account and bookmark storage schema persisted in the extension's storage.
  */
@@ -313,6 +345,11 @@ export interface AccountStorageConfig {
    * Manual ordering of entries (full list of ids), newest change first.
    */
   orderedAccountIds: string[]
+  /**
+   * Best-effort deletion markers used by WebDAV merge sync to avoid restoring
+   * stale remote entries that were intentionally deleted on this device.
+   */
+  deletedEntryRecords?: Record<string, DeletedEntryRecord>
   last_updated: number
 }
 
@@ -355,16 +392,21 @@ export interface ApiResponse<T = any> {
 }
 
 // 用于排序的字段类型
-export type SortField =
-  | "name"
-  | typeof DATA_TYPE_CONSUMPTION
-  | typeof DATA_TYPE_INCOME
-  | typeof DATA_TYPE_BALANCE
-  | typeof DATA_TYPE_CREATED_AT
-export type SortOrder = "asc" | "desc"
+export const SORT_FIELDS = [
+  "name",
+  DATA_TYPE_CONSUMPTION,
+  DATA_TYPE_INCOME,
+  DATA_TYPE_BALANCE,
+  DATA_TYPE_CREATED_AT,
+] as const
+export type SortField = (typeof SORT_FIELDS)[number]
+
+export const SORT_ORDERS = ["asc", "desc"] as const
+export type SortOrder = (typeof SORT_ORDERS)[number]
 
 // 货币类型
-export type CurrencyType = "USD" | "CNY"
+export const CURRENCY_TYPES = ["USD", "CNY"] as const
+export type CurrencyType = (typeof CURRENCY_TYPES)[number]
 
 export type CurrencyAmount = { USD: number; CNY: number }
 
@@ -386,6 +428,7 @@ export interface DisplaySiteData {
   balance: CurrencyAmount
   todayConsumption: CurrencyAmount
   todayIncome: CurrencyAmount
+  estimatedTodayIncome?: CurrencyAmount | null
   todayTokens: TokenUsage
   health: HealthStatus
   last_sync_time?: number
@@ -393,7 +436,7 @@ export interface DisplaySiteData {
   siteType: AccountSiteType // 账号站点类型
   baseUrl: string // 站点 URL，用于复制功能
   token: string // 访问令牌，用于复制功能
-  userId: number // 真实的用户 ID，用于 API 调用
+  userId: AccountIdentity // 站点内稳定账号身份标识
   notes?: string
   /**
    * Tag ids associated with this account (stable identifiers).
@@ -421,6 +464,13 @@ export interface DisplaySiteData {
    * a disabled state for actions like refresh or check-in.
    */
   excludeFromTotalBalance?: boolean
+  /**
+   * "Exclude from Today Income" state projected from {@link SiteAccount.excludeFromTodayIncome}.
+   *
+   * This affects only aggregate Today Income values; per-account row income display
+   * and account behaviors like refresh/check-in remain unchanged.
+   */
+  excludeFromTodayIncome?: boolean
   /**
    * Legacy flag indicating whether the account can be checked in today.
    * @deprecated Use `checkIn.siteStatus.isCheckedInToday` instead.
@@ -476,9 +526,11 @@ export interface ApiToken {
   models?: string
 }
 
-export type DashboardTabType =
-  | typeof DATA_TYPE_CASHFLOW
-  | typeof DATA_TYPE_BALANCE
+export const DASHBOARD_TAB_TYPES = [
+  DATA_TYPE_CASHFLOW,
+  DATA_TYPE_BALANCE,
+] as const
+export type DashboardTabType = (typeof DASHBOARD_TAB_TYPES)[number]
 
 export enum AuthTypeEnum {
   AccessToken = "access_token",

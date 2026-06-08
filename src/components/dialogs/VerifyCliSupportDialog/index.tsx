@@ -17,9 +17,23 @@ import {
   normalizeApiCredentialModelIds,
 } from "~/services/apiCredentialProfiles/modelCatalog"
 import { getApiService } from "~/services/apiService"
+import {
+  resolveProductAnalyticsErrorCategoryFromError,
+  startProductAnalyticsAction,
+} from "~/services/productAnalytics/actions"
+import {
+  PRODUCT_ANALYTICS_ACTION_IDS,
+  PRODUCT_ANALYTICS_ENTRYPOINTS,
+  PRODUCT_ANALYTICS_FAILURE_STAGES,
+  PRODUCT_ANALYTICS_FEATURE_IDS,
+  PRODUCT_ANALYTICS_RESULTS,
+  PRODUCT_ANALYTICS_SURFACE_IDS,
+} from "~/services/productAnalytics/events"
+import { resolveProductAnalyticsErrorCategoryFromProbeResult } from "~/services/productAnalytics/verification"
 import { guessModelIdFromToken } from "~/services/verification/aiApiVerification"
 import {
   inferHttpStatus,
+  inferStructuredHttpStatus,
   summaryKeyFromHttpStatus,
   toSanitizedErrorSummary,
 } from "~/services/verification/aiApiVerification/utils"
@@ -127,6 +141,12 @@ export function VerifyCliSupportDialog(props: VerifyCliSupportDialogProps) {
   const canClose = !isRunning && !isAnyToolRunning
 
   const hasAnyResult = tools.some((t) => t.result !== null)
+  const analyticsContext = {
+    featureId: PRODUCT_ANALYTICS_FEATURE_IDS.ModelList,
+    actionId: PRODUCT_ANALYTICS_ACTION_IDS.VerifyModelCliSupport,
+    surfaceId: PRODUCT_ANALYTICS_SURFACE_IDS.OptionsModelListRowActions,
+    entrypoint: PRODUCT_ANALYTICS_ENTRYPOINTS.Options,
+  } as const
 
   const header = useMemo(() => {
     return (
@@ -289,6 +309,7 @@ export function VerifyCliSupportDialog(props: VerifyCliSupportDialogProps) {
         Array.from(secretsToRedact),
       )
       const inferredStatus = inferHttpStatus(error, sanitizedMessage)
+      const analyticsStatus = inferStructuredHttpStatus(error)
       const summaryKey =
         summaryKeyFromHttpStatus(inferredStatus) ??
         (typeof inferredStatus === "number"
@@ -306,53 +327,115 @@ export function VerifyCliSupportDialog(props: VerifyCliSupportDialogProps) {
         inferredStatus,
         message: sanitizedMessage,
       })
+      const failureResult: CliSupportResult = {
+        id: toolId,
+        probeId: "tool-calling",
+        status: "fail",
+        latencyMs: Math.max(0, finishedAt - startedAt),
+        summary: sanitizedMessage || "Unknown error",
+        summaryKey,
+        summaryParams,
+        input: {
+          toolId,
+          baseUrl: sourceBaseUrl,
+          modelId: resolvedModelId,
+          ...(selectedTokenId ? { tokenId: selectedTokenId } : {}),
+        },
+        output: {
+          error: sanitizedMessage,
+          ...(typeof analyticsStatus === "number"
+            ? { inferredHttpStatus: analyticsStatus }
+            : {}),
+        },
+        details: {
+          occurredAt: new Date(finishedAt).toISOString(),
+        },
+      }
+
       setTools((prev) =>
         prev.map((t) => {
           if (t.toolId !== toolId) return t
 
           // Ensure failures are rendered distinctly from "Not run yet" (result=null).
-          const failureResult: CliSupportResult = {
-            id: toolId,
-            probeId: "tool-calling",
-            status: "fail",
-            latencyMs: Math.max(0, finishedAt - startedAt),
-            summary: sanitizedMessage || "Unknown error",
-            summaryKey,
-            summaryParams,
-            input: {
-              toolId,
-              baseUrl: sourceBaseUrl,
-              modelId: resolvedModelId,
-              ...(selectedTokenId ? { tokenId: selectedTokenId } : {}),
-            },
-            output: {
-              error: sanitizedMessage,
-              inferredHttpStatus: inferredStatus,
-            },
-            details: {
-              occurredAt: new Date(finishedAt).toISOString(),
-              attempts: t.attempts,
+          return {
+            ...t,
+            isRunning: false,
+            result: {
+              ...failureResult,
+              details: {
+                ...failureResult.details,
+                attempts: t.attempts,
+              },
             },
           }
-
-          return { ...t, isRunning: false, result: failureResult }
         }),
       )
-      return null
+      return failureResult
     }
   }
 
   const runAll = async () => {
     if (!hasRunnableSource) return
+    const tracker = startProductAnalyticsAction(analyticsContext)
+    let successCount = 0
+    let failureCount = 0
+    let hasExecutedTool = false
+    let failedToolResult: CliSupportResult | undefined
     setIsRunning(true)
     setTools(buildInitialToolState())
 
-    // Run sequentially so each tool updates independently (and can be retried individually).
-    for (const toolId of CLI_TOOL_IDS) {
-      await runTool(toolId)
+    try {
+      // Run sequentially so each tool updates independently (and can be retried individually).
+      for (const toolId of CLI_TOOL_IDS) {
+        const result = await runTool(toolId)
+        if (!result) continue
+        if (result.status === "pass") {
+          hasExecutedTool = true
+          successCount += 1
+        } else if (result.status === "fail") {
+          hasExecutedTool = true
+          failureCount += 1
+          failedToolResult ??= result
+        }
+      }
+      const completionResult =
+        failureCount > 0
+          ? PRODUCT_ANALYTICS_RESULTS.Failure
+          : hasExecutedTool
+            ? PRODUCT_ANALYTICS_RESULTS.Success
+            : PRODUCT_ANALYTICS_RESULTS.Skipped
+      tracker.complete(completionResult, {
+        ...(completionResult === PRODUCT_ANALYTICS_RESULTS.Failure
+          ? {
+              errorCategory:
+                resolveProductAnalyticsErrorCategoryFromProbeResult(
+                  failedToolResult,
+                ),
+            }
+          : {}),
+        insights: {
+          ...(completionResult === PRODUCT_ANALYTICS_RESULTS.Failure
+            ? { failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute }
+            : {}),
+          successCount,
+          failureCount,
+        },
+      })
+    } catch (error) {
+      logger.error("CLI support verification run failed", {
+        message: toSanitizedErrorSummary(error, []),
+      })
+      tracker.complete(PRODUCT_ANALYTICS_RESULTS.Failure, {
+        errorCategory: resolveProductAnalyticsErrorCategoryFromError(error),
+        insights: {
+          failureStage: PRODUCT_ANALYTICS_FAILURE_STAGES.Execute,
+          successCount,
+          failureCount,
+        },
+      })
+    } finally {
+      setIsRunning(false)
     }
-
-    setIsRunning(false)
   }
 
   useEffect(() => {

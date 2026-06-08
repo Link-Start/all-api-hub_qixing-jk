@@ -105,7 +105,12 @@ function createManagedSiteChannel(
   }
 }
 
-async function seedManagedSitePreferences(context: BrowserContext) {
+async function seedManagedSitePreferences(
+  context: BrowserContext,
+  overrides: {
+    modelRedirect?: Record<string, unknown>
+  } = {},
+) {
   const serviceWorker = await getServiceWorker(context)
 
   await seedUserPreferences(serviceWorker, {
@@ -133,8 +138,8 @@ async function seedManagedSitePreferences(context: BrowserContext) {
     modelRedirect: {
       enabled: false,
       standardModels: [],
-      channelMappings: {},
       pruneMissingTargetsOnModelSync: false,
+      ...overrides.modelRedirect,
     },
   })
 }
@@ -217,8 +222,14 @@ async function readStoredModelSyncExecution(context: BrowserContext): Promise<{
   }
 }
 
-async function stubManagedSiteAdminRoutes(context: BrowserContext) {
-  const channels = [
+async function stubManagedSiteAdminRoutes(
+  context: BrowserContext,
+  options: {
+    channels?: ManagedSiteChannel[]
+    fetchedModelsByChannelId?: Record<number, string[]>
+  } = {},
+) {
+  const channels = options.channels ?? [
     createManagedSiteChannel({
       id: 101,
       name: "Production OpenAI",
@@ -297,27 +308,38 @@ async function stubManagedSiteAdminRoutes(context: BrowserContext) {
       return
     }
 
-    if (method === "GET" && url.pathname === "/api/channel/fetch_models/101") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          success: true,
-          message: "ok",
-          data: ["gpt-4o-mini", "gpt-4.1-mini"],
-        }),
-      })
-      return
-    }
+    if (
+      method === "GET" &&
+      url.pathname.startsWith("/api/channel/fetch_models/")
+    ) {
+      const channelId = Number(url.pathname.split("/").filter(Boolean).pop())
+      const fetchedModels =
+        options.fetchedModelsByChannelId?.[channelId] ??
+        (channelId === 101
+          ? ["gpt-4o-mini", "gpt-4.1-mini"]
+          : channelId === 202
+            ? ["claude-3-5-sonnet"]
+            : null)
 
-    if (method === "GET" && url.pathname === "/api/channel/fetch_models/202") {
+      if (!fetchedModels) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({
+            success: false,
+            message: `No fetched models configured for channel ${channelId}`,
+          }),
+        })
+        return
+      }
+
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           success: true,
           message: "ok",
-          data: ["claude-3-5-sonnet"],
+          data: fetchedModels,
         }),
       })
       return
@@ -382,6 +404,9 @@ async function stubManagedSiteAdminRoutes(context: BrowserContext) {
           channel.base_url = updates.base_url
         }
         if (typeof updates.models === "string") channel.models = updates.models
+        if (typeof updates.model_mapping === "string") {
+          channel.model_mapping = updates.model_mapping
+        }
         if (typeof updates.group === "string") channel.group = updates.group
         if (typeof updates.priority === "number") {
           channel.priority = updates.priority
@@ -867,6 +892,83 @@ test("loads managed-site channels, deep-links into manual model sync, and runs a
       channelId: 101,
       ok: true,
       newModels: ["gpt-4o-mini", "gpt-4.1-mini"],
+    }),
+  ])
+})
+
+test("applies model redirect mapping during selected managed-site model sync through the background route", async ({
+  context,
+  extensionId,
+  page,
+}) => {
+  await seedManagedSitePreferences(context, {
+    modelRedirect: {
+      enabled: true,
+      standardModels: ["gpt-4o-mini"],
+      pruneMissingTargetsOnModelSync: true,
+    },
+  })
+  const { updatePayloads } = await stubManagedSiteAdminRoutes(context, {
+    channels: [
+      createManagedSiteChannel({
+        id: 101,
+        name: "Redirect OpenAI",
+        base_url: "https://upstream-a.example.com/v1",
+        models: "legacy-model",
+        model_mapping: JSON.stringify({
+          stale: "retired-model",
+        }),
+      }),
+    ],
+    fetchedModelsByChannelId: {
+      101: ["openai/gpt-4o-mini:free", "gpt-4.1-mini"],
+    },
+  })
+
+  await page.goto(
+    modelSyncUrl(extensionId, { channelId: "101", tab: "manual" }),
+  )
+  await waitForExtensionRoot(page)
+  await expectPermissionOnboardingHidden(page)
+
+  await expect(
+    page.getByRole("heading", { name: "Model List Synchronization" }),
+  ).toBeVisible()
+  await expect(page.getByRole("cell", { name: "101" })).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "Run Selected (1)" }),
+  ).toBeEnabled()
+
+  await page.getByRole("button", { name: "Run Selected (1)" }).click()
+
+  await expect(page.getByText("Sync completed: 1/1 succeeded")).toBeVisible()
+  await expect(
+    page.getByRole("tab", { name: "Execution History" }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole("cell", { name: "Redirect OpenAI" }),
+  ).toBeVisible()
+  await expect(page.getByText("Successful")).toBeVisible()
+
+  expect(updatePayloads).toContainEqual({
+    id: 101,
+    models: "openai/gpt-4o-mini:free,gpt-4.1-mini",
+  })
+  expect(updatePayloads).toContainEqual({
+    id: 101,
+    models: "openai/gpt-4o-mini:free,gpt-4.1-mini,gpt-4o-mini",
+    model_mapping: JSON.stringify({
+      "gpt-4o-mini": "openai/gpt-4o-mini:free",
+    }),
+  })
+
+  const storedExecution = await readStoredModelSyncExecution(context)
+
+  expect(storedExecution.items).toEqual([
+    expect.objectContaining({
+      channelId: 101,
+      ok: true,
+      newModels: ["openai/gpt-4o-mini:free", "gpt-4.1-mini"],
     }),
   ])
 })

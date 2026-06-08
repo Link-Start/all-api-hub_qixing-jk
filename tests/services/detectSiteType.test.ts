@@ -434,6 +434,29 @@ describe("detectSiteType", () => {
         expect(siteType).toBe(SITE_TYPES.NEW_API)
       })
 
+      it("should detect SITE_TYPES.V_API from the X-Api-User header error", async () => {
+        const mockHTML = "<html><title>No Match</title></html>"
+        const mockApiResponse = {
+          success: false,
+          message: "Unauthorized, X-Api-User header not provided",
+        }
+
+        server.use(
+          http.get("https://example.com", () => {
+            return new HttpResponse(mockHTML, {
+              headers: { "Content-Type": "text/html" },
+            })
+          }),
+          http.get("https://example.com/api/user/self", () => {
+            return HttpResponse.json(mockApiResponse, { status: 401 })
+          }),
+        )
+
+        const siteType = await getAccountSiteType("https://example.com")
+
+        expect(siteType).toBe(SITE_TYPES.V_API)
+      })
+
       it("should not infer a site type from the generic User-id header error alone", async () => {
         const mockHTML = "<html><title>No Match</title></html>"
         const mockApiResponse = {

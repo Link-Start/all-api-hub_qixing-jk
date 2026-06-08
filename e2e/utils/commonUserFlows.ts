@@ -52,6 +52,7 @@ type WaitForExtensionPageParams = {
   hash?: string
   searchParams?: Record<string, string>
   timeoutMs?: number
+  reuseExistingPage?: boolean
 }
 
 type StubNewApiSiteRoutesOptions = {
@@ -61,7 +62,12 @@ type StubNewApiSiteRoutesOptions = {
   exchangeRate?: number
   /** Quota total returned by the lightweight today-usage stat endpoint. */
   todayQuotaConsumption?: number
-  userId?: number
+  /** Initial quota returned by the mocked account self endpoint. */
+  initialQuota?: number
+  /** Quota credited by the mocked redemption-code top-up endpoint. */
+  redemptionCreditQuota?: number
+  onRedeemCode?: (code: string) => void | Promise<void>
+  userId?: string | number
   username?: string
   accessToken?: string
   models?: string[]
@@ -73,6 +79,13 @@ type StubNewApiSiteRoutesOptions = {
 /** Scenario-specific console-error patterns that should not fail the test. */
 type ExtensionPageGuardOptions = {
   ignoreConsoleErrorPatterns?: RegExp[]
+}
+
+const E2E_SPONSOR_REMOTE_CATALOG_URL =
+  "https://raw.githubusercontent.com/qixing-jk/all-api-hub/main/public/sponsor-catalog.json"
+const E2E_SPONSOR_CATALOG_PAYLOAD = {
+  schemaVersion: 3,
+  items: [],
 }
 
 /**
@@ -128,8 +141,8 @@ export async function forceExtensionLanguage(page: Page, language = "en") {
 }
 
 /**
- * Reuse a deterministic metadata payload so unrelated model-catalog fetches do
- * not reach the network during these user-flow specs.
+ * Reuse deterministic external catalog payloads so unrelated background
+ * refreshes do not reach the network during these user-flow specs.
  */
 export async function stubLlmMetadataIndex(context: BrowserContext) {
   await context.route(
@@ -140,6 +153,21 @@ export async function stubLlmMetadataIndex(context: BrowserContext) {
         contentType: "application/json",
         body: JSON.stringify({ models: [] }),
       }),
+  )
+  await stubSponsorRemoteCatalog(context)
+}
+
+/**
+ * Reuse a deterministic sponsor catalog payload so background recommendation
+ * refreshes do not depend on a PR branch asset already existing on main.
+ */
+export async function stubSponsorRemoteCatalog(context: BrowserContext) {
+  await context.route(E2E_SPONSOR_REMOTE_CATALOG_URL, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(E2E_SPONSOR_CATALOG_PAYLOAD),
+    }),
   )
 }
 
@@ -158,7 +186,7 @@ export function createStoredAccount(
     site_type: SITE_TYPES.NEW_API,
     exchange_rate: 7,
     account_info: {
-      id: 1,
+      id: "1",
       access_token: "e2e-token",
       username: "e2e-user",
       quota: 1000,
@@ -170,11 +198,13 @@ export function createStoredAccount(
     },
     last_sync_time: now,
     updated_at: now,
+    user_updated_at: now,
     created_at: now,
     notes: "",
     tagIds: [],
     disabled: false,
     excludeFromTotalBalance: false,
+    excludeFromTodayIncome: false,
     authType: AuthTypeEnum.AccessToken,
     checkIn: {
       enableDetection: false,
@@ -469,13 +499,15 @@ export async function waitForExtensionPage(
   context: BrowserContext,
   params: WaitForExtensionPageParams,
 ) {
-  const existingPage = context
-    .pages()
-    .find((page) => isMatchingExtensionPage(page, params))
+  if (params.reuseExistingPage !== false) {
+    const existingPage = context
+      .pages()
+      .find((page) => isMatchingExtensionPage(page, params))
 
-  if (existingPage) {
-    await existingPage.waitForLoadState("domcontentloaded")
-    return existingPage
+    if (existingPage) {
+      await existingPage.waitForLoadState("domcontentloaded")
+      return existingPage
+    }
   }
 
   const page = await context.waitForEvent("page", {
@@ -558,7 +590,8 @@ export async function stubNewApiSiteRoutes(
   const accessToken = options.accessToken ?? "e2e-token"
   const exchangeRate = options.exchangeRate ?? 7
   const todayQuotaConsumption = options.todayQuotaConsumption ?? 0
-  const title = options.title ?? "new-api"
+  const redemptionCreditQuota = options.redemptionCreditQuota ?? 100_000
+  const title = options.title ?? SITE_TYPES.NEW_API
   const systemName = options.systemName ?? "E2E New API"
   const models = options.models ?? ["gpt-4o-mini", "gpt-4.1-mini"]
   const pricingModels = options.pricingModels ?? buildStubPricingModels(models)
@@ -570,6 +603,7 @@ export async function stubNewApiSiteRoutes(
   let nextTokenId =
     Math.max(0, ...(options.initialTokens ?? []).map((token) => token.id)) + 1
   const tokens = [...(options.initialTokens ?? [])]
+  let accountQuota = options.initialQuota ?? 1000
 
   await context.route(`${origin}/**`, async (route) => {
     const request = route.request()
@@ -604,7 +638,7 @@ export async function stubNewApiSiteRoutes(
             id: userId,
             username,
             access_token: accessToken,
-            quota: 1000,
+            quota: accountQuota,
           },
         }),
       })
@@ -692,7 +726,7 @@ export async function stubNewApiSiteRoutes(
       tokens.push(
         buildStubToken({
           id: nextTokenId,
-          userId,
+          userId: Number(userId),
           name: payload.name?.trim() || `e2e-token-${nextTokenId}`,
           key: `sk-created-${nextTokenId}`,
           group: payload.group?.trim() || "default",
@@ -712,6 +746,25 @@ export async function stubNewApiSiteRoutes(
         body: JSON.stringify({
           success: true,
           message: "created",
+        }),
+      })
+      return
+    }
+
+    if (method === "POST" && url.pathname === "/api/user/topup") {
+      const payload = request.postDataJSON() as {
+        key?: string
+      }
+      await options.onRedeemCode?.(payload.key ?? "")
+      accountQuota += redemptionCreditQuota
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          message: "redeemed",
+          data: redemptionCreditQuota,
         }),
       })
       return
