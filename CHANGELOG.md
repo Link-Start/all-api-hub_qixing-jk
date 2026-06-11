@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.45.1](https://github.com/qixing-jk/all-api-hub/compare/v3.45.0...v3.45.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **key-management:** clarify Sub2API repair skip reason ([14730e4](https://github.com/qixing-jk/all-api-hub/commit/14730e4fe9f39b34eca2d5474a77dcc25fbaf7e1))
+* **model-list:** restore per-row model actions ([#949](https://github.com/qixing-jk/all-api-hub/issues/949)) ([6a022e0](https://github.com/qixing-jk/all-api-hub/commit/6a022e0c3f1413b05525c02ec63441788932ce30))
+* **settings:** improve setup guidance destinations ([#950](https://github.com/qixing-jk/all-api-hub/issues/950)) ([c81e312](https://github.com/qixing-jk/all-api-hub/commit/c81e312267bb79f57760a2ae4c037a124dd11219))
+* **sub2api:** enforce adapter identity overrides ([#932](https://github.com/qixing-jk/all-api-hub/issues/932)) ([1b22c96](https://github.com/qixing-jk/all-api-hub/commit/1b22c966af3c28853a3d3357666e44482863f9f7))
+* **sub2api:** stabilize key secret and lifecycle flows ([#935](https://github.com/qixing-jk/all-api-hub/issues/935)) ([1e4d90e](https://github.com/qixing-jk/all-api-hub/commit/1e4d90ef8999c04240067327324aa7c5d2908542))
+
 ## [3.45.0](https://github.com/qixing-jk/all-api-hub/compare/v3.44.0...v3.45.0) (2026-06-08)
 
 
