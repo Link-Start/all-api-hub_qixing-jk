@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.46.1](https://github.com/qixing-jk/all-api-hub/compare/v3.46.0...v3.46.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **account:** allow string user ids ([#966](https://github.com/qixing-jk/all-api-hub/issues/966)) ([a1e4064](https://github.com/qixing-jk/all-api-hub/commit/a1e40646e315b2223f8ae239e5e15ac7c05ed46e))
+
 ## [3.46.0](https://github.com/qixing-jk/all-api-hub/compare/v3.45.0...v3.46.0) (2026-06-13)
 
 
