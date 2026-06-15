@@ -1,5 +1,23 @@
 # Changelog
 
+## [3.47.0](https://github.com/qixing-jk/all-api-hub/compare/v3.46.0...v3.47.0) (2026-06-15)
+
+
+### Features
+
+* **model-list:** load Sub2API runtime models with estimated pricing ([#968](https://github.com/qixing-jk/all-api-hub/issues/968)) ([a465862](https://github.com/qixing-jk/all-api-hub/commit/a46586284e7badbf21aebae16178f6cc4fcde710))
+* **model-list:** show group count badges ([#972](https://github.com/qixing-jk/all-api-hub/issues/972)) ([9661c52](https://github.com/qixing-jk/all-api-hub/commit/9661c526ea34c0e5231ea311e12559632f707e09))
+* **navigation:** link account keys and models ([#971](https://github.com/qixing-jk/all-api-hub/issues/971)) ([550e4f7](https://github.com/qixing-jk/all-api-hub/commit/550e4f7bd2b8ea942a354080a565516a491319a6))
+
+
+### Bug Fixes
+
+* **account:** allow string user ids ([#966](https://github.com/qixing-jk/all-api-hub/issues/966)) ([a1e4064](https://github.com/qixing-jk/all-api-hub/commit/a1e40646e315b2223f8ae239e5e15ac7c05ed46e))
+* **model-list:** align navigation labels ([d5a5c06](https://github.com/qixing-jk/all-api-hub/commit/d5a5c06c447062f565e50459e4b7cad66f0500aa))
+* **model-list:** improve model verification key guidance ([#970](https://github.com/qixing-jk/all-api-hub/issues/970)) ([8db484a](https://github.com/qixing-jk/all-api-hub/commit/8db484a526e4a30f91b89a71e9d3853a69573dec))
+* **model-list:** show groups for compatible model keys ([da33de6](https://github.com/qixing-jk/all-api-hub/commit/da33de62974055a13d4d3e97171e61dbe1f922e0))
+* **ui:** split root crash recovery guidance ([#969](https://github.com/qixing-jk/all-api-hub/issues/969)) ([04298e1](https://github.com/qixing-jk/all-api-hub/commit/04298e18f05fc373390590f09b07bd7be8ba8e8f))
+
 ## [3.46.0](https://github.com/qixing-jk/all-api-hub/compare/v3.45.0...v3.46.0) (2026-06-13)
 
 
