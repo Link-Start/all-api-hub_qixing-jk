@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.48.0](https://github.com/qixing-jk/all-api-hub/compare/v3.47.0...v3.48.0) (2026-06-21)
+
+
+### Features
+
+* **key-management:** batch save keys to api credentials ([#989](https://github.com/qixing-jk/all-api-hub/issues/989)) ([520249d](https://github.com/qixing-jk/all-api-hub/commit/520249df9ac50f4aff0fa0218de97c36d6027318))
+* **updates:** support browser store update checks ([#1010](https://github.com/qixing-jk/all-api-hub/issues/1010)) ([f63db80](https://github.com/qixing-jk/all-api-hub/commit/f63db809f9c5dc09d7893034dd26eb32b09a5634))
+
+
+### Bug Fixes
+
+* **api-profiles:** clarify credential library guidance ([#986](https://github.com/qixing-jk/all-api-hub/issues/986)) ([2f122a1](https://github.com/qixing-jk/all-api-hub/commit/2f122a1ed172a056e4dfc6d8eae715bafacf9560))
+* **webdav:** probe collection connections with propfind ([#982](https://github.com/qixing-jk/all-api-hub/issues/982)) ([b3bb4cd](https://github.com/qixing-jk/all-api-hub/commit/b3bb4cd34c85fee34ff7e2edc6d306502008afd4))
+
 ## [3.47.0](https://github.com/qixing-jk/all-api-hub/compare/v3.46.0...v3.47.0) (2026-06-16)
 
 
