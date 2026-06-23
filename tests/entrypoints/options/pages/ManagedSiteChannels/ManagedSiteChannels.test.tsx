@@ -29,11 +29,7 @@ import {
   PRODUCT_ANALYTICS_RESULTS,
   PRODUCT_ANALYTICS_SURFACE_IDS,
 } from "~/services/productAnalytics/events"
-import {
-  navigateWithinOptionsPage,
-  openManagedSiteModelSyncForChannel,
-  openSettingsTab,
-} from "~/utils/navigation"
+import { navigateWithinOptionsPage, openSettingsTab } from "~/utils/navigation"
 import {
   fireEvent,
   render,
@@ -78,7 +74,6 @@ vi.mock("~/utils/navigation", async (importActual) => {
   return {
     ...actual,
     navigateWithinOptionsPage: vi.fn(),
-    openManagedSiteModelSyncForChannel: vi.fn(),
     openSettingsTab: vi.fn(),
   }
 })
@@ -1399,30 +1394,6 @@ describe("ManagedSiteChannels", () => {
         },
       },
     )
-  })
-
-  it("opens the per-channel model sync view from row actions", async () => {
-    const user = userEvent.setup()
-
-    mockChannels([
-      { id: 1, name: "Alpha", base_url: "https://alpha.example", key: "a" },
-    ])
-
-    render(<ManagedSiteChannels />)
-
-    await waitForRowText("Alpha")
-
-    const row = screen.getByText("Alpha").closest("tr")
-    expect(row).toBeTruthy()
-    await openRowActionsMenu(row!, user)
-
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.openSync",
-      }),
-    )
-
-    expect(openManagedSiteModelSyncForChannel).toHaveBeenCalledWith(1)
   })
 
   it("opens the filter dialog from row actions and loads channel-specific filters", async () => {
