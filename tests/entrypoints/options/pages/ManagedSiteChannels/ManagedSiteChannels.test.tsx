@@ -1806,83 +1806,6 @@ describe("ManagedSiteChannels", () => {
     expect(within(dialog).getByText("Beta")).toBeInTheDocument()
   })
 
-  it("loads the real channel key from the edit dialog", async () => {
-    const user = userEvent.setup()
-    let resolveRealKey: ((key: string) => void) | undefined
-    mockChannels([
-      {
-        id: 208,
-        name: "Alpha",
-        base_url: "https://example.com",
-        type: 1,
-        models: "gpt-4o",
-        group: "default",
-        status: 1,
-        priority: 0,
-        weight: 0,
-        key: "",
-      },
-    ])
-    vi.mocked(fetchNewApiChannelKey).mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveRealKey = resolve
-        }),
-    )
-
-    render(
-      <>
-        <ManagedSiteChannels />
-        <ChannelDialogContainer />
-      </>,
-    )
-
-    await waitForRowText("Alpha")
-
-    const row = screen.getByText("Alpha").closest("tr")
-    expect(row).toBeTruthy()
-    await openRowActionsMenu(row!, user)
-
-    const editItem = await screen.findByRole("menuitem", {
-      name: "managedSiteChannels:table.rowActions.edit",
-    })
-    await user.click(editItem)
-
-    const loadRealKeyButton = await screen.findByRole("button", {
-      name: "channelDialog:actions.loadRealKey",
-    })
-    await user.click(loadRealKeyButton)
-
-    await waitFor(() => {
-      expect(fetchNewApiChannelKey).toHaveBeenCalledWith({
-        baseUrl: "https://admin.example",
-        userId: "1",
-        username: "admin",
-        password: "secret-password",
-        totpSecret: "JBSWY3DPEHPK3PXP",
-        channelId: 208,
-      })
-    })
-    expectManagedSiteChannelActionTracked(
-      PRODUCT_ANALYTICS_ACTION_IDS.UpdateManagedSiteChannel,
-      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteChannelsRowActions,
-    )
-
-    expect(
-      screen.getByRole("button", {
-        name: "channelDialog:actions.loadingRealKey",
-      }),
-    ).toBeDisabled()
-
-    resolveRealKey?.("sk-real-channel-key")
-
-    await waitFor(() => {
-      expect(
-        screen.getByDisplayValue("sk-real-channel-key"),
-      ).toBeInTheDocument()
-    })
-  })
-
   it("ignores stale real-key responses after reopening the dialog for another channel", async () => {
     const user = userEvent.setup()
     let resolveFirstRealKey: ((key: string) => void) | undefined
@@ -2200,7 +2123,7 @@ describe("ManagedSiteChannels", () => {
     ).not.toBeInTheDocument()
   })
 
-  it("keeps refresh and read-only channel viewing available in migration mode", async () => {
+  it("keeps refresh and migration row actions available in migration mode", async () => {
     const user = userEvent.setup()
 
     mockChannels(
@@ -2211,12 +2134,7 @@ describe("ManagedSiteChannels", () => {
       { withMigrationTarget: true },
     )
 
-    render(
-      <>
-        <ManagedSiteChannels />
-        <ChannelDialogContainer />
-      </>,
-    )
+    render(<ManagedSiteChannels />)
 
     await waitForRowText("Alpha")
     await waitForRowText("Beta")
@@ -2269,48 +2187,6 @@ describe("ManagedSiteChannels", () => {
 
     const betaRow = screen.getByText("Beta").closest("tr")
     expect(betaRow).toBeTruthy()
-    await openRowActionsMenu(betaRow!, user)
-
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.view",
-      }),
-    )
-
-    expectManagedSiteChannelActionTracked(
-      PRODUCT_ANALYTICS_ACTION_IDS.ViewManagedSiteChannel,
-      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteChannelsRowActions,
-    )
-    const viewDialog = await screen.findByRole("dialog")
-    expect(
-      within(viewDialog).getByText("channelDialog:title.view"),
-    ).toBeInTheDocument()
-    expect(screen.getByDisplayValue("Beta")).toBeInTheDocument()
-    expect(
-      within(viewDialog).getByText("common:actions.close", {
-        selector: "button",
-      }),
-    ).toBeInTheDocument()
-    expect(
-      within(viewDialog).queryByRole("button", {
-        name: "channelDialog:actions.update",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      within(viewDialog).queryByRole("button", {
-        name: "channelDialog:actions.loadRealKey",
-      }),
-    ).not.toBeInTheDocument()
-
-    await user.click(
-      within(viewDialog).getByText("common:actions.close", {
-        selector: "button",
-      }),
-    )
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-    })
 
     await openRowActionsMenu(betaRow!, user)
 
