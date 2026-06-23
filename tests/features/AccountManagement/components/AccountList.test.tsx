@@ -1058,76 +1058,40 @@ describe("AccountList", () => {
     expect(screen.getByText("common:total: 1")).toBeInTheDocument()
   })
 
-  it("filters accounts by check-in status", async () => {
+  it("filters accounts by each check-in status", async () => {
     const user = userEvent.setup()
 
     render(<AccountList />)
 
-    await user.click(
-      screen.getByRole("button", {
-        name: "account:filter.checkIn.checked-in",
-      }),
-    )
+    for (const { filterLabel, accountName } of [
+      {
+        filterLabel: "account:filter.checkIn.checked-in",
+        accountName: "Enabled Alpha",
+      },
+      {
+        filterLabel: "account:filter.checkIn.outdated",
+        accountName: "Disabled Beta",
+      },
+      {
+        filterLabel: "account:filter.checkIn.not-checked-in",
+        accountName: "Enabled Gamma",
+      },
+      {
+        filterLabel: "account:filter.checkIn.unsupported",
+        accountName: "Unsynced Delta",
+      },
+    ]) {
+      await user.click(screen.getByRole("button", { name: filterLabel }))
 
-    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
-    expect(screen.getByText("Enabled Alpha")).toBeInTheDocument()
-    expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
-    expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
-    expect(screen.queryByText("Unsynced Delta")).not.toBeInTheDocument()
-  })
+      expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
+      expect(screen.getByText(accountName)).toBeInTheDocument()
 
-  it("filters accounts by outdated check-in status", async () => {
-    const user = userEvent.setup()
-
-    render(<AccountList />)
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "account:filter.checkIn.outdated",
-      }),
-    )
-
-    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
-    expect(screen.getByText("Disabled Beta")).toBeInTheDocument()
-    expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
-    expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
-    expect(screen.queryByText("Unsynced Delta")).not.toBeInTheDocument()
-  })
-
-  it("filters accounts by not-checked-in status", async () => {
-    const user = userEvent.setup()
-
-    render(<AccountList />)
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "account:filter.checkIn.not-checked-in",
-      }),
-    )
-
-    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
-    expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
-    expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
-    expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
-    expect(screen.queryByText("Unsynced Delta")).not.toBeInTheDocument()
-  })
-
-  it("filters accounts by unsupported check-in status", async () => {
-    const user = userEvent.setup()
-
-    render(<AccountList />)
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "account:filter.checkIn.unsupported",
-      }),
-    )
-
-    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
-    expect(screen.getByText("Unsynced Delta")).toBeInTheDocument()
-    expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
-    expect(screen.queryByText("Disabled Beta")).not.toBeInTheDocument()
-    expect(screen.queryByText("Enabled Gamma")).not.toBeInTheDocument()
+      await user.click(
+        screen.getByRole("button", {
+          name: "account:filter.checkIn.all",
+        }),
+      )
+    }
   })
 
   it("updates faceted select counts based on other active filters", async () => {
