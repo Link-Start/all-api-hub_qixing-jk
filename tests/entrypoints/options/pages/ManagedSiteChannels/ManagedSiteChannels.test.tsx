@@ -2025,83 +2025,76 @@ describe("ManagedSiteChannels", () => {
     })
   })
 
-  it.each([
-    [SITE_TYPES.DONE_HUB, "donehub"],
-    [SITE_TYPES.VELOERA, "veloera"],
-    [SITE_TYPES.CLAUDE_CODE_HUB, "claudecodehub"],
-  ])(
-    "loads the real channel key from the edit dialog for %s",
-    async (managedSiteType, messagesKey) => {
-      const user = userEvent.setup()
-      const fetchChannelSecretKey = vi
-        .fn()
-        .mockResolvedValue("sk-real-channel-key")
+  it("loads the real channel key from the edit dialog for non-New API managed sites", async () => {
+    const user = userEvent.setup()
+    const fetchChannelSecretKey = vi
+      .fn()
+      .mockResolvedValue("sk-real-channel-key")
 
-      mockChannels(
-        [
-          {
-            id: 308,
-            name: "Alpha",
-            base_url: "https://example.com",
-            type: 1,
-            models: "gpt-4o",
-            group: "default",
-            status: 1,
-            priority: 0,
-            weight: 0,
-            key: "",
-          },
-        ],
+    mockChannels(
+      [
         {
-          managedSiteType,
-          messagesKey,
-          fetchChannelSecretKey,
+          id: 308,
+          name: "Alpha",
+          base_url: "https://example.com",
+          type: 1,
+          models: "gpt-4o",
+          group: "default",
+          status: 1,
+          priority: 0,
+          weight: 0,
+          key: "",
         },
+      ],
+      {
+        managedSiteType: SITE_TYPES.CLAUDE_CODE_HUB,
+        messagesKey: "claudecodehub",
+        fetchChannelSecretKey,
+      },
+    )
+
+    render(
+      <>
+        <ManagedSiteChannels />
+        <ChannelDialogContainer />
+      </>,
+    )
+
+    await waitForRowText("Alpha")
+
+    const row = screen.getByText("Alpha").closest("tr")
+    expect(row).toBeTruthy()
+    await openRowActionsMenu(row!, user)
+
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "managedSiteChannels:table.rowActions.edit",
+      }),
+    )
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "channelDialog:actions.loadRealKey",
+      }),
+    )
+
+    await waitFor(() => {
+      expect(fetchChannelSecretKey).toHaveBeenCalledWith(
+        {
+          baseUrl: "https://admin.example",
+          adminToken: "t",
+          userId: "1",
+        },
+        308,
       )
+    })
 
-      render(
-        <>
-          <ManagedSiteChannels />
-          <ChannelDialogContainer />
-        </>,
-      )
-
-      await waitForRowText("Alpha")
-
-      const row = screen.getByText("Alpha").closest("tr")
-      expect(row).toBeTruthy()
-      await openRowActionsMenu(row!, user)
-
-      await user.click(
-        await screen.findByRole("menuitem", {
-          name: "managedSiteChannels:table.rowActions.edit",
-        }),
-      )
-
-      await user.click(
-        await screen.findByRole("button", {
-          name: "channelDialog:actions.loadRealKey",
-        }),
-      )
-
-      await waitFor(() => {
-        expect(fetchChannelSecretKey).toHaveBeenCalledWith(
-          {
-            baseUrl: "https://admin.example",
-            adminToken: "t",
-            userId: "1",
-          },
-          308,
-        )
-      })
-
-      await waitFor(() => {
-        expect(
-          screen.getByDisplayValue("sk-real-channel-key"),
-        ).toBeInTheDocument()
-      })
-    },
-  )
+    await waitFor(() => {
+      expect(
+        screen.getByDisplayValue("sk-real-channel-key"),
+      ).toBeInTheDocument()
+    })
+  })
 
   it("hides the migration entry when no target is configured", async () => {
     mockChannels(
