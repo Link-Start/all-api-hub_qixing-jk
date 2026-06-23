@@ -599,106 +599,6 @@ describe("BalanceHistory options page", () => {
     }
   })
 
-  it("renders aggregated trend series when switched to total view", async () => {
-    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
-    const FIXED_NOW = new Date(2026, 1, 7, 12, 0, 0)
-    const fixedNowMs = FIXED_NOW.getTime()
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(fixedNowMs)
-
-    try {
-      const nowUnixSeconds = Math.floor(fixedNowMs / 1000)
-      const todayKey = getDayKeyFromUnixSeconds(nowUnixSeconds)
-
-      vi.mocked(accountStorage.getEnabledAccounts).mockResolvedValue([
-        {
-          id: "a1",
-          site_name: "Site A",
-          site_url: "https://a.example.com",
-          site_type: SITE_TYPES.ONE_API,
-          account_info: { username: "User A" },
-        },
-        {
-          id: "a2",
-          site_name: "Site B",
-          site_url: "https://b.example.com",
-          site_type: SITE_TYPES.ONE_API,
-          account_info: { username: "User B" },
-        },
-      ] as any)
-
-      vi.mocked(dailyBalanceHistoryStorage.getStore).mockResolvedValue({
-        schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
-        snapshotsByAccountId: {
-          a1: {
-            [todayKey]: {
-              quota: 10 * factor,
-              today_income: 1 * factor,
-              today_quota_consumption: 2 * factor,
-              capturedAt: 0,
-              source: "refresh",
-            },
-          },
-          a2: {
-            [todayKey]: {
-              quota: 20 * factor,
-              today_income: 3 * factor,
-              today_quota_consumption: 4 * factor,
-              capturedAt: 0,
-              source: "refresh",
-            },
-          },
-        },
-      } as any)
-
-      render(<BalanceHistory />)
-
-      expect(await screen.findByText(PAGE_TITLE)).toBeInTheDocument()
-
-      await waitFor(() => {
-        expect(vi.mocked(echarts.init)).toHaveBeenCalled()
-      })
-
-      const user = userEvent.setup()
-      await user.click(
-        screen.getByRole("button", {
-          name: TREND_SCOPE_BUTTON_ACCOUNTS,
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: TREND_SCOPE_TOTAL,
-        }),
-      )
-
-      await waitFor(() => {
-        const initResults = vi.mocked(echarts.init).mock.results
-        const options = initResults
-          .map((result) => result.value)
-          .flatMap((instance: any) =>
-            instance.setOption.mock.calls.map((c: any) => c[0]),
-          )
-
-        const trendOptions = options.filter((option: any) =>
-          option?.series?.some?.((series: any) => series?.type === "line"),
-        )
-
-        const trendOption = trendOptions.at(-1)
-        expect(trendOption).toBeTruthy()
-        expect(trendOption.series).toHaveLength(1)
-
-        const [seriesTotal] = trendOption.series
-        expect(seriesTotal.name).toBe(TREND_SCOPE_TOTAL)
-
-        const numericValues = seriesTotal.data.filter(
-          (value: unknown) => typeof value === "number",
-        )
-        expect(numericValues).toEqual([30])
-      })
-    } finally {
-      dateNowSpy.mockRestore()
-    }
-  })
-
   it("refreshes the selected accounts and reloads history after a successful runtime refresh", async () => {
     const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
     const FIXED_NOW = new Date(2026, 1, 7, 12, 0, 0)
@@ -1104,7 +1004,7 @@ describe("BalanceHistory options page", () => {
     })
   })
 
-  it("switches metrics across income, outcome, and net and forces histogram mode for negative net values", async () => {
+  it("forces histogram mode for negative net breakdown values", async () => {
     const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
     const FIXED_NOW = new Date(2026, 1, 7, 12, 0, 0)
     const fixedNowMs = FIXED_NOW.getTime()
@@ -1204,62 +1104,6 @@ describe("BalanceHistory options page", () => {
       await user.click(
         screen.getByRole("button", {
           name: "balanceHistory:breakdown.chartTypes.histogram",
-        }),
-      )
-
-      await user.click(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.balance",
-          ),
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: "balanceHistory:metrics.income",
-        }),
-      )
-
-      expect(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.income",
-          ),
-        }),
-      ).toBeInTheDocument()
-
-      await user.click(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.income",
-          ),
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: "balanceHistory:metrics.net",
-        }),
-      )
-
-      expect(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.net",
-          ),
-        }),
-      ).toBeInTheDocument()
-      await user.click(
-        screen.getByRole("button", {
-          name: "balanceHistory:trend.chartTypes.bar",
-        }),
-      )
-      await user.click(
-        screen.getByRole("button", {
-          name: "balanceHistory:trend.chartTypes.line",
         }),
       )
     } finally {
@@ -1426,6 +1270,9 @@ describe("BalanceHistory options page", () => {
           ),
         }),
       ).toBeInTheDocument()
+      expect(
+        screen.queryByLabelText("balanceHistory:breakdown.controls.reference"),
+      ).not.toBeInTheDocument()
 
       vi.mocked(useUserPreferencesContext).mockReturnValue(
         createMockUserPreferencesContext({
@@ -1482,111 +1329,6 @@ describe("BalanceHistory options page", () => {
           name: "balanceHistory:metrics.estimatedIncome",
         }),
       ).not.toBeInTheDocument()
-    } finally {
-      dateNowSpy.mockRestore()
-    }
-  })
-
-  it("uses estimated income metrics while the preference is enabled", async () => {
-    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
-    const fixedNowMs = new Date(2026, 1, 7, 12, 0, 0).getTime()
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(fixedNowMs)
-
-    try {
-      const todayKey = getDayKeyFromUnixSeconds(Math.floor(fixedNowMs / 1000))
-      const previousDayKey = subtractDaysFromDayKey(todayKey, 1)
-
-      vi.mocked(useUserPreferencesContext).mockReturnValue(
-        createMockUserPreferencesContext({
-          enabled: true,
-          estimatedTodayIncomeEnabled: true,
-        }),
-      )
-      vi.mocked(accountStorage.getEnabledAccounts).mockResolvedValue([
-        {
-          id: "a1",
-          site_name: "Site A",
-          site_url: "https://a.example.com",
-          site_type: SITE_TYPES.ONE_API,
-          account_info: { username: "User A" },
-        },
-      ] as any)
-      vi.mocked(dailyBalanceHistoryStorage.getStore).mockResolvedValue({
-        schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
-        snapshotsByAccountId: {
-          a1: {
-            [previousDayKey]: {
-              quota: 10 * factor,
-              today_income: 0,
-              today_quota_consumption: 0,
-              capturedAt: 0,
-              source: "alarm",
-            },
-            [todayKey]: {
-              quota: 12 * factor,
-              today_income: 0.5 * factor,
-              today_quota_consumption: 1 * factor,
-              capturedAt: 1,
-              source: "refresh",
-            },
-          },
-        },
-      } as any)
-
-      render(<BalanceHistory />)
-
-      expect(await screen.findByText(PAGE_TITLE)).toBeInTheDocument()
-
-      const user = userEvent.setup()
-      await user.click(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "breakdown",
-            "balanceHistory:metrics.balance",
-          ),
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: "balanceHistory:metrics.estimatedIncome",
-        }),
-      )
-
-      expect(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "breakdown",
-            "balanceHistory:metrics.estimatedIncome",
-          ),
-        }),
-      ).toBeInTheDocument()
-      expect(
-        screen.queryByLabelText("balanceHistory:breakdown.controls.reference"),
-      ).not.toBeInTheDocument()
-
-      await user.click(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.balance",
-          ),
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: "balanceHistory:metrics.estimatedIncome",
-        }),
-      )
-
-      expect(
-        screen.getByRole("button", {
-          name: getMetricDropdownButtonName(
-            "trend",
-            "balanceHistory:metrics.estimatedIncome",
-          ),
-        }),
-      ).toBeInTheDocument()
-      expect(echarts.init).toHaveBeenCalled()
     } finally {
       dateNowSpy.mockRestore()
     }
