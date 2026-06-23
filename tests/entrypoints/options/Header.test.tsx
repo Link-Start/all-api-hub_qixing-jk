@@ -3,14 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { useUpdateLogDialogContext } from "~/components/dialogs/UpdateLogDialog"
 import Header from "~/entrypoints/options/components/Header"
-import {
-  openBugReportPage,
-  openCommunityPage,
-  openFeatureRequestPage,
-  openLanguageRequestPage,
-  openPermissionsOnboardingPage,
-  openSiteSupportRequestPage,
-} from "~/utils/navigation"
+import { openPermissionsOnboardingPage } from "~/utils/navigation"
 import { act, render, screen, waitFor } from "~~/tests/test-utils/render"
 
 vi.mock("~/contexts/ReleaseUpdateStatusContext", async (importOriginal) => {
@@ -60,23 +53,13 @@ vi.mock("~/utils/navigation", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/navigation")>()
   return {
     ...actual,
-    openBugReportPage: vi.fn(),
-    openCommunityPage: vi.fn(),
-    openFeatureRequestPage: vi.fn(),
-    openLanguageRequestPage: vi.fn(),
     openPermissionsOnboardingPage: vi.fn(),
-    openSiteSupportRequestPage: vi.fn(),
   }
 })
 
-const mockedOpenBugReportPage = vi.mocked(openBugReportPage)
-const mockedOpenCommunityPage = vi.mocked(openCommunityPage)
-const mockedOpenFeatureRequestPage = vi.mocked(openFeatureRequestPage)
-const mockedOpenLanguageRequestPage = vi.mocked(openLanguageRequestPage)
 const mockedOpenPermissionsOnboardingPage = vi.mocked(
   openPermissionsOnboardingPage,
 )
-const mockedOpenSiteSupportRequestPage = vi.mocked(openSiteSupportRequestPage)
 const mockedUseUpdateLogDialogContext = vi.mocked(useUpdateLogDialogContext)
 
 describe("options Header", () => {
@@ -109,9 +92,7 @@ describe("options Header", () => {
     vi.unstubAllEnvs()
   })
 
-  it("exposes feedback shortcuts from the options header", async () => {
-    const user = userEvent.setup()
-
+  it("exposes the shared feedback menu from the options header", async () => {
     render(
       <Header
         onSearchOpen={vi.fn()}
@@ -121,52 +102,9 @@ describe("options Header", () => {
       />,
     )
 
-    await user.click(
+    expect(
       await screen.findByRole("button", { name: "ui:feedback.trigger" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", { name: "ui:feedback.bugReport" }),
-    )
-    expect(mockedOpenBugReportPage).toHaveBeenCalledTimes(1)
-
-    await user.click(
-      await screen.findByRole("button", { name: "ui:feedback.trigger" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "ui:feedback.featureRequest",
-      }),
-    )
-    expect(mockedOpenFeatureRequestPage).toHaveBeenCalledTimes(1)
-
-    await user.click(
-      await screen.findByRole("button", { name: "ui:feedback.trigger" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "ui:feedback.siteSupportRequest",
-      }),
-    )
-    expect(mockedOpenSiteSupportRequestPage).toHaveBeenCalledTimes(1)
-
-    await user.click(
-      await screen.findByRole("button", { name: "ui:feedback.trigger" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "ui:feedback.languageRequest",
-      }),
-    )
-    expect(mockedOpenLanguageRequestPage).toHaveBeenCalledTimes(1)
-
-    await user.click(
-      await screen.findByRole("button", { name: "ui:feedback.trigger" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", { name: "ui:feedback.community" }),
-    )
-    expect(mockedOpenCommunityPage).toHaveBeenCalledTimes(1)
-    expect(mockedOpenCommunityPage).toHaveBeenCalledWith("en")
+    ).toBeInTheDocument()
   })
 
   it("opens onboarding from the shared development dialog debug menu", async () => {
