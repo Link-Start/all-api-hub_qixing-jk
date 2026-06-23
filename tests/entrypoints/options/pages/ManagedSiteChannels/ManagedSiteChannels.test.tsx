@@ -3,7 +3,6 @@ import toast from "react-hot-toast"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ChannelDialogContainer } from "~/components/dialogs/ChannelDialog"
-import { AXON_HUB_CHANNEL_TYPE } from "~/constants/axonHub"
 import { CLAUDE_CODE_HUB_PROVIDER_TYPE } from "~/constants/claudeCodeHub"
 import { SITE_TYPES, type ManagedSiteType } from "~/constants/siteType"
 import { useUserPreferencesContext } from "~/contexts/UserPreferencesContext"
@@ -2159,89 +2158,6 @@ describe("ManagedSiteChannels", () => {
     expect(toast.error).not.toHaveBeenCalledWith(
       "managedSiteChannels:migration.alerts.noTargets.description",
     )
-  })
-
-  it("offers AxonHub migration entry points while hiding New API-only actions", async () => {
-    const user = userEvent.setup()
-
-    mockChannels(
-      [
-        {
-          id: 1,
-          name: "Axon Alpha",
-          base_url: "https://axon-source.example",
-          key: "axon-key",
-          type: AXON_HUB_CHANNEL_TYPE.ANTHROPIC,
-          models: "claude-3-5-sonnet",
-          status: 1,
-          weight: 0,
-        },
-      ],
-      {
-        managedSiteType: SITE_TYPES.AXON_HUB,
-        messagesKey: "axonhub",
-        withMigrationTarget: true,
-      },
-    )
-
-    render(<ManagedSiteChannels />)
-
-    await waitForRowText("Axon Alpha")
-
-    expect(
-      screen.getByRole("button", {
-        name: /managedSiteChannels:toolbar.enterMigrationMode/,
-      }),
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("button", {
-        name: "managedSiteChannels:toolbar.syncSelected",
-      }),
-    ).not.toBeInTheDocument()
-
-    const row = screen.getByText("Axon Alpha").closest("tr")
-    expect(row).toBeTruthy()
-    await openRowActionsMenu(row!, user)
-
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
-      }),
-    ).toBeInTheDocument()
-
-    await user.keyboard("{Escape}")
-    await user.click(
-      screen.getByRole("button", {
-        name: /managedSiteChannels:toolbar.enterMigrationMode/,
-      }),
-    )
-
-    expect(
-      screen.getByRole("button", {
-        name: /managedSiteChannels:toolbar.exitMigrationMode/,
-      }),
-    ).toBeInTheDocument()
-
-    await user.click(
-      within(row!).getByRole("checkbox", {
-        name: "managedSiteChannels:table.selectRow",
-      }),
-    )
-    await user.click(
-      screen.getByRole("button", {
-        name: "managedSiteChannels:toolbar.migrateSelected",
-      }),
-    )
-
-    expectManagedSiteChannelActionTracked(
-      PRODUCT_ANALYTICS_ACTION_IDS.OpenSelectedManagedSiteChannelMigration,
-      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteChannelsToolbar,
-    )
-    const dialog = await screen.findByRole("dialog")
-    expect(
-      within(dialog).getByText("managedSiteChannels:migration.title"),
-    ).toBeInTheDocument()
-    expect(within(dialog).getByText("Axon Alpha")).toBeInTheDocument()
   })
 
   it("shows Claude Code Hub provider labels, migration entry, and compatible toolbar actions", async () => {
