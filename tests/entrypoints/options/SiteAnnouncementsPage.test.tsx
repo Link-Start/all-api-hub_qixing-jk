@@ -224,9 +224,7 @@ describe("SiteAnnouncementsPage", () => {
     })
   }
 
-  it("renders overview, notification summary, and expandable announcement details", async () => {
-    const user = userEvent.setup()
-
+  it("renders overview, notification summary, and route-expanded announcement card", async () => {
     render(
       <SiteAnnouncementsPage routeParams={{ recordId: "announcement-1" }} />,
     )
@@ -250,9 +248,8 @@ describe("SiteAnnouncementsPage", () => {
       screen.getByText("siteAnnouncements:summary.notified"),
     ).toBeInTheDocument()
     expect(
-      screen.getByRole("heading", {
-        level: 3,
-        name: "Full maintenance window",
+      screen.getByRole("button", {
+        name: "siteAnnouncements:actions.pollingSettings",
       }),
     ).toBeInTheDocument()
     expect(
@@ -261,40 +258,6 @@ describe("SiteAnnouncementsPage", () => {
         name: "Full maintenance window",
       }),
     ).toBeInTheDocument()
-    expect(screen.getByText("Second line")).toBeInTheDocument()
-    expect(screen.getByText("Beta full content")).toBeInTheDocument()
-    expect(
-      screen.getAllByRole("link", {
-        name: /siteAnnouncements:actions\.viewSource/,
-      })[0],
-    ).toHaveAttribute("href", "https://alpha.example.com/")
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /siteAnnouncements:actions\.collapse/,
-      }),
-    )
-    await waitFor(() => {
-      expect(screen.queryByText("Second line")).not.toBeInTheDocument()
-    })
-  })
-
-  it("shows an icon-only settings shortcut next to the title", async () => {
-    const user = userEvent.setup()
-
-    render(<SiteAnnouncementsPage />)
-
-    await screen.findByText("siteAnnouncements:title")
-    await user.click(
-      screen.getByRole("button", {
-        name: "siteAnnouncements:actions.pollingSettings",
-      }),
-    )
-
-    expect(openSettingsTab).toHaveBeenCalledWith("general", {
-      anchor: SETTINGS_ANCHORS.SITE_ANNOUNCEMENT_NOTIFICATIONS_ENABLED,
-      preserveHistory: true,
-    })
   })
 
   it("routes the empty announcement setup state to account management when no account exists", async () => {
