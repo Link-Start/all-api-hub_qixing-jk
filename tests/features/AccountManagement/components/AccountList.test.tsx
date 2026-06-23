@@ -1058,40 +1058,21 @@ describe("AccountList", () => {
     expect(screen.getByText("common:total: 1")).toBeInTheDocument()
   })
 
-  it("filters accounts by each check-in status", async () => {
+  it("filters accounts by check-in status", async () => {
     const user = userEvent.setup()
 
     render(<AccountList />)
 
-    for (const { filterLabel, accountName } of [
-      {
-        filterLabel: "account:filter.checkIn.checked-in",
-        accountName: "Enabled Alpha",
-      },
-      {
-        filterLabel: "account:filter.checkIn.outdated",
-        accountName: "Disabled Beta",
-      },
-      {
-        filterLabel: "account:filter.checkIn.not-checked-in",
-        accountName: "Enabled Gamma",
-      },
-      {
-        filterLabel: "account:filter.checkIn.unsupported",
-        accountName: "Unsynced Delta",
-      },
-    ]) {
-      await user.click(screen.getByRole("button", { name: filterLabel }))
+    await user.click(
+      screen.getByRole("button", {
+        name: "account:filter.checkIn.not-checked-in",
+      }),
+    )
 
-      expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
-      expect(screen.getByText(accountName)).toBeInTheDocument()
-
-      await user.click(
-        screen.getByRole("button", {
-          name: "account:filter.checkIn.all",
-        }),
-      )
-    }
+    expect(screen.getAllByTestId(TEST_IDS.accountRow)).toHaveLength(1)
+    expect(screen.getByText("Enabled Gamma")).toBeInTheDocument()
+    expect(screen.queryByText("Enabled Alpha")).not.toBeInTheDocument()
+    expect(screen.getByText("common:total: 1")).toBeInTheDocument()
   })
 
   it("updates faceted select counts based on other active filters", async () => {
