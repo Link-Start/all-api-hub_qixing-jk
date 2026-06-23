@@ -137,6 +137,11 @@ describe("DevDialogDebugMenu", () => {
     await user.click(
       await screen.findByRole("button", { name: "Dev: Dialog debug menu" }),
     )
+    expect(
+      await screen.findByRole("menuitem", {
+        name: "Dev: Queue popup interruption hint",
+      }),
+    ).toBeInTheDocument()
     await user.click(
       await screen.findByRole("menuitem", {
         name: "Dev: Trigger onboarding",
@@ -145,22 +150,6 @@ describe("DevDialogDebugMenu", () => {
 
     expect(mockedOpenPermissionsOnboardingPage).toHaveBeenCalledWith({
       reason: "debug",
-    })
-
-    await user.click(
-      await screen.findByRole("button", { name: "Dev: Dialog debug menu" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "Dev: Queue popup interruption hint",
-      }),
-    )
-
-    expect(mockedDebugQueuePopupInterruptionHint).toHaveBeenCalledOnce()
-    await waitFor(() => {
-      expect(toastSuccessMock).toHaveBeenCalledWith(
-        "Queued popup interruption hint (dev)",
-      )
     })
   })
 

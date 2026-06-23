@@ -1,9 +1,7 @@
-import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { useUpdateLogDialogContext } from "~/components/dialogs/UpdateLogDialog"
 import Header from "~/entrypoints/options/components/Header"
-import { openPermissionsOnboardingPage } from "~/utils/navigation"
 import { act, render, screen, waitFor } from "~~/tests/test-utils/render"
 
 vi.mock("~/contexts/ReleaseUpdateStatusContext", async (importOriginal) => {
@@ -49,17 +47,6 @@ vi.mock("~/entrypoints/options/components/HeaderThemeSwitcher", () => ({
   default: () => <div data-testid="theme-switcher" />,
 }))
 
-vi.mock("~/utils/navigation", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("~/utils/navigation")>()
-  return {
-    ...actual,
-    openPermissionsOnboardingPage: vi.fn(),
-  }
-})
-
-const mockedOpenPermissionsOnboardingPage = vi.mocked(
-  openPermissionsOnboardingPage,
-)
 const mockedUseUpdateLogDialogContext = vi.mocked(useUpdateLogDialogContext)
 
 describe("options Header", () => {
@@ -92,7 +79,7 @@ describe("options Header", () => {
     vi.unstubAllEnvs()
   })
 
-  it("exposes the shared feedback menu from the options header", async () => {
+  it("exposes shared utility menus from the options header", async () => {
     render(
       <Header
         onSearchOpen={vi.fn()}
@@ -105,32 +92,9 @@ describe("options Header", () => {
     expect(
       await screen.findByRole("button", { name: "ui:feedback.trigger" }),
     ).toBeInTheDocument()
-  })
-
-  it("opens onboarding from the shared development dialog debug menu", async () => {
-    const user = userEvent.setup()
-
-    render(
-      <Header
-        onSearchOpen={vi.fn()}
-        onTitleClick={vi.fn()}
-        onMenuToggle={vi.fn()}
-        isMobileSidebarOpen={false}
-      />,
-    )
-
-    await user.click(
+    expect(
       await screen.findByRole("button", { name: "Dev: Dialog debug menu" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "Dev: Trigger onboarding",
-      }),
-    )
-
-    expect(mockedOpenPermissionsOnboardingPage).toHaveBeenCalledWith({
-      reason: "debug",
-    })
+    ).toBeInTheDocument()
   })
 
   it("keeps the logo title visible before scrolling on mobile", async () => {

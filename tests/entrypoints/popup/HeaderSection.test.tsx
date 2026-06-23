@@ -1,4 +1,3 @@
-import userEvent from "@testing-library/user-event"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -24,7 +23,6 @@ import {
   openApiCredentialProfilesPage,
   openFullAccountManagerPage,
   openFullBookmarkManagerPage,
-  openPermissionsOnboardingPage,
   openSettingsPage,
   openSidePanelPage,
 } from "~/utils/navigation"
@@ -130,9 +128,6 @@ const mockedOpenApiCredentialProfilesPage = vi.mocked(
 )
 const mockedOpenFullAccountManagerPage = vi.mocked(openFullAccountManagerPage)
 const mockedOpenFullBookmarkManagerPage = vi.mocked(openFullBookmarkManagerPage)
-const mockedOpenPermissionsOnboardingPage = vi.mocked(
-  openPermissionsOnboardingPage,
-)
 const mockedOpenSettingsPage = vi.mocked(openSettingsPage)
 const mockedOpenSidePanelPage = vi.mocked(openSidePanelPage)
 const mockedUseUpdateLogDialogContext = vi.mocked(useUpdateLogDialogContext)
@@ -363,30 +358,14 @@ describe("popup HeaderSection", () => {
     })
   })
 
-  it("exposes the shared feedback menu from the header", async () => {
+  it("exposes shared utility menus from the header", async () => {
     render(<HeaderSection />, { withReleaseUpdateStatusProvider: false })
 
     expect(
       await screen.findByRole("button", { name: "ui:feedback.trigger" }),
     ).toBeInTheDocument()
-  })
-
-  it("opens onboarding from the shared development dialog debug menu", async () => {
-    const user = userEvent.setup()
-
-    render(<HeaderSection />, { withReleaseUpdateStatusProvider: false })
-
-    await user.click(
+    expect(
       await screen.findByRole("button", { name: "Dev: Dialog debug menu" }),
-    )
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "Dev: Trigger onboarding",
-      }),
-    )
-
-    expect(mockedOpenPermissionsOnboardingPage).toHaveBeenCalledWith({
-      reason: "debug",
-    })
+    ).toBeInTheDocument()
   })
 })
