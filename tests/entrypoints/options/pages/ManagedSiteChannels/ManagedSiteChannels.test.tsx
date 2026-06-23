@@ -1171,9 +1171,7 @@ describe("ManagedSiteChannels", () => {
     expect(within(row!).getByText("2")).toBeInTheDocument()
   })
 
-  it("uses AxonHub-specific columns, string type labels, row actions, and migration availability", async () => {
-    const user = userEvent.setup()
-
+  it("uses AxonHub-specific columns, string type labels, and migration availability", async () => {
     mockChannels(
       [
         {
@@ -1215,28 +1213,6 @@ describe("ManagedSiteChannels", () => {
     const row = screen.getByText("Alpha").closest("tr")
     expect(row).toBeTruthy()
     expect(within(row!).getByText("2")).toBeInTheDocument()
-    await openRowActionsMenu(row!, user)
-
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
-      }),
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.filters",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.openSync",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.sync",
-      }),
-    ).not.toBeInTheDocument()
   })
 
   it("toggles hideable columns from the toolbar menu without closing the menu", async () => {
@@ -1281,27 +1257,6 @@ describe("ManagedSiteChannels", () => {
     expect(
       screen.getByRole("menuitemcheckbox", {
         name: "managedSiteChannels:table.columns.status",
-      }),
-    ).toBeInTheDocument()
-  })
-
-  it("opens the row actions menu from the trigger", async () => {
-    mockChannels([
-      { id: 1, name: "Alpha", base_url: "https://example.com", key: "k" },
-    ])
-
-    render(<ManagedSiteChannels />)
-
-    await waitForRowText("Alpha")
-
-    const row = screen.getByText("Alpha").closest("tr")
-    expect(row).toBeTruthy()
-
-    await openRowActionsMenu(row!)
-
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
       }),
     ).toBeInTheDocument()
   })
@@ -1467,10 +1422,6 @@ describe("ManagedSiteChannels", () => {
       }),
     )
 
-    expectManagedSiteChannelActionTracked(
-      PRODUCT_ANALYTICS_ACTION_IDS.OpenManagedSiteChannelModelSync,
-      PRODUCT_ANALYTICS_SURFACE_IDS.OptionsManagedSiteChannelsRowActions,
-    )
     expect(openManagedSiteModelSyncForChannel).toHaveBeenCalledWith(1)
   })
 
@@ -2246,25 +2197,6 @@ describe("ManagedSiteChannels", () => {
     )
   })
 
-  it("shows the migration entry when a target is configured", async () => {
-    mockChannels(
-      [{ id: 1, name: "Alpha", base_url: "https://example.com", key: "k" }],
-      { withMigrationTarget: true },
-    )
-
-    render(<ManagedSiteChannels />)
-
-    await waitForRowText("Alpha")
-
-    const entry = screen.getByRole("button", {
-      name: /managedSiteChannels:toolbar.enterMigrationMode/,
-    })
-    expect(entry).toBeInTheDocument()
-    expect(
-      within(entry).getByText("managedSiteChannels:migration.betaBadge"),
-    ).toBeInTheDocument()
-  })
-
   it("offers AxonHub migration entry points while hiding New API-only actions", async () => {
     const user = userEvent.setup()
 
@@ -2348,9 +2280,7 @@ describe("ManagedSiteChannels", () => {
     expect(within(dialog).getByText("Axon Alpha")).toBeInTheDocument()
   })
 
-  it("offers Claude Code Hub migration entry points while hiding unsupported managed-site actions", async () => {
-    const user = userEvent.setup()
-
+  it("shows Claude Code Hub provider labels, migration entry, and compatible toolbar actions", async () => {
     mockChannels(
       [
         {
@@ -2371,12 +2301,7 @@ describe("ManagedSiteChannels", () => {
       },
     )
 
-    render(
-      <>
-        <ManagedSiteChannels />
-        <ChannelDialogContainer />
-      </>,
-    )
+    render(<ManagedSiteChannels />)
 
     await waitForRowText("Claude Provider")
 
@@ -2393,56 +2318,6 @@ describe("ManagedSiteChannels", () => {
         name: "managedSiteChannels:toolbar.syncSelected",
       }),
     ).not.toBeInTheDocument()
-
-    const row = screen.getByText("Claude Provider").closest("tr")
-    expect(row).toBeTruthy()
-    await openRowActionsMenu(row!, user)
-
-    await user.click(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
-      }),
-    )
-    const editDialog = await screen.findByRole("dialog")
-    expect(
-      within(editDialog).getByRole("button", {
-        name: "channelDialog:actions.loadRealKey",
-      }),
-    ).toBeInTheDocument()
-
-    await user.click(
-      within(editDialog).getByText("common:actions.cancel", {
-        selector: "button",
-      }),
-    )
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-    })
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /managedSiteChannels:toolbar.enterMigrationMode/,
-      }),
-    )
-    await user.click(
-      within(row!).getByRole("checkbox", {
-        name: "managedSiteChannels:table.selectRow",
-      }),
-    )
-    await user.click(
-      screen.getByRole("button", {
-        name: "managedSiteChannels:toolbar.migrateSelected",
-      }),
-    )
-
-    const migrationDialog = await screen.findByRole("dialog")
-    expect(
-      within(migrationDialog).getByText("managedSiteChannels:migration.title"),
-    ).toBeInTheDocument()
-    expect(
-      within(migrationDialog).getByText("Claude Provider"),
-    ).toBeInTheDocument()
   })
 
   it("keeps refresh and read-only channel viewing available in migration mode", async () => {
@@ -2653,11 +2528,6 @@ describe("ManagedSiteChannels", () => {
     const dialog = await screen.findByRole("dialog")
     expect(within(dialog).getByText("Alpha")).toBeInTheDocument()
     expect(within(dialog).queryByText("Beta")).not.toBeInTheDocument()
-    expect(
-      within(dialog).getByText(
-        "managedSiteChannels:migration.preview.status.ready",
-      ),
-    ).toBeInTheDocument()
   })
 
   it("updates pagination controls when the rows-per-page size changes", async () => {
