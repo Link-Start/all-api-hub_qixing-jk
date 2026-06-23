@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.49.0](https://github.com/qixing-jk/all-api-hub/compare/v3.48.0...v3.49.0) (2026-06-23)
+
+
+### Features
+
+* **web-ai-api-check:** remember base url history ([#1034](https://github.com/qixing-jk/all-api-hub/issues/1034)) ([916ebe7](https://github.com/qixing-jk/all-api-hub/commit/916ebe718e8cd39b24ec670dd616898c3f87711a))
+
 ## [3.48.0](https://github.com/qixing-jk/all-api-hub/compare/v3.47.0...v3.48.0) (2026-06-23)
 
 
