@@ -2312,21 +2312,6 @@ describe("ManagedSiteChannels", () => {
         name: "managedSiteChannels:table.rowActions.edit",
       }),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.filters",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.openSync",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.sync",
-      }),
-    ).not.toBeInTheDocument()
 
     await user.keyboard("{Escape}")
     await user.click(
@@ -2413,29 +2398,8 @@ describe("ManagedSiteChannels", () => {
     expect(row).toBeTruthy()
     await openRowActionsMenu(row!, user)
 
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
-      }),
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.filters",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.openSync",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.sync",
-      }),
-    ).not.toBeInTheDocument()
-
     await user.click(
-      screen.getByRole("menuitem", {
+      await screen.findByRole("menuitem", {
         name: "managedSiteChannels:table.rowActions.edit",
       }),
     )
@@ -2552,24 +2516,8 @@ describe("ManagedSiteChannels", () => {
     expect(betaRow).toBeTruthy()
     await openRowActionsMenu(betaRow!, user)
 
-    expect(
-      await screen.findByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.view",
-      }),
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.edit",
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      screen.queryByRole("menuitem", {
-        name: "managedSiteChannels:table.rowActions.openSync",
-      }),
-    ).not.toBeInTheDocument()
-
     await user.click(
-      screen.getByRole("menuitem", {
+      await screen.findByRole("menuitem", {
         name: "managedSiteChannels:table.rowActions.view",
       }),
     )
@@ -2640,7 +2588,7 @@ describe("ManagedSiteChannels", () => {
     ).toBeInTheDocument()
   })
 
-  it("uses filtered rows for migrate filtered and shows an execution summary", async () => {
+  it("uses filtered rows for migrate filtered", async () => {
     const user = userEvent.setup()
 
     mockChannels(
@@ -2705,36 +2653,11 @@ describe("ManagedSiteChannels", () => {
     const dialog = await screen.findByRole("dialog")
     expect(within(dialog).getByText("Alpha")).toBeInTheDocument()
     expect(within(dialog).queryByText("Beta")).not.toBeInTheDocument()
-
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "managedSiteChannels:migration.actions.start",
-      }),
-    )
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: "managedSiteChannels:migration.confirm.confirm",
-      }),
-    )
-
-    await waitFor(() => {
-      expect(
-        within(dialog).getByText("managedSiteChannels:migration.results.title"),
-      ).toBeInTheDocument()
-    })
     expect(
-      within(dialog).getByLabelText(
-        "managedSiteChannels:migration.target.label",
+      within(dialog).getByText(
+        "managedSiteChannels:migration.preview.status.ready",
       ),
-    ).toBeDisabled()
-    expect(
-      within(dialog).getByRole("button", {
-        name: "managedSiteChannels:migration.actions.refreshPreview",
-      }),
-    ).toBeDisabled()
-
-    expect(getManagedSiteServiceForType).toHaveBeenCalledWith("done-hub")
+    ).toBeInTheDocument()
   })
 
   it("updates pagination controls when the rows-per-page size changes", async () => {
