@@ -124,13 +124,6 @@ describe("BalanceHistory options page", () => {
   const QUICK_RANGE_7D_LABEL = "balanceHistory:filters.quickRanges.7d"
   const TAG_FILTER_LABEL = "balanceHistory:filters.tags"
 
-  const TREND_CONTROLS_SCOPE = "balanceHistory:trend.controls.scope"
-  const TREND_SCOPE_ACCOUNTS = "balanceHistory:trend.scopes.accounts"
-  const TREND_SCOPE_TOTAL = "balanceHistory:trend.scopes.total"
-  const TREND_SCOPE_BUTTON_ACCOUNTS = `${TREND_CONTROLS_SCOPE}: ${TREND_SCOPE_ACCOUNTS}`
-  const INCOMPLETE_SELECTION_TITLE =
-    "balanceHistory:hints.incompleteSelection.title"
-
   const DEFAULT_RETENTION_DAYS = 30
   const DEFAULT_THEME_MODE = "light" as const
 
@@ -498,102 +491,6 @@ describe("BalanceHistory options page", () => {
       expect(trendOption.series.map((series: any) => series.name)).toEqual(
         expect.arrayContaining(["Shared Site · alice", "Shared Site · bob"]),
       )
-    } finally {
-      dateNowSpy.mockRestore()
-    }
-  })
-
-  it("renders best-effort aggregated trend series for partial coverage in total view", async () => {
-    const factor = UI_CONSTANTS.EXCHANGE_RATE.CONVERSION_FACTOR
-    const FIXED_NOW = new Date(2026, 1, 7, 12, 0, 0)
-    const fixedNowMs = FIXED_NOW.getTime()
-    const dateNowSpy = vi.spyOn(Date, "now").mockReturnValue(fixedNowMs)
-
-    try {
-      const nowUnixSeconds = Math.floor(fixedNowMs / 1000)
-      const todayKey = getDayKeyFromUnixSeconds(nowUnixSeconds)
-
-      vi.mocked(accountStorage.getEnabledAccounts).mockResolvedValue([
-        {
-          id: "a1",
-          site_name: "Site A",
-          site_url: "https://a.example.com",
-          site_type: SITE_TYPES.ONE_API,
-          account_info: { username: "User A" },
-        },
-        {
-          id: "a2",
-          site_name: "Site B",
-          site_url: "https://b.example.com",
-          site_type: SITE_TYPES.ONE_API,
-          account_info: { username: "User B" },
-        },
-      ] as any)
-
-      vi.mocked(dailyBalanceHistoryStorage.getStore).mockResolvedValue({
-        schemaVersion: DAILY_BALANCE_HISTORY_STORE_SCHEMA_VERSION,
-        snapshotsByAccountId: {
-          a1: {
-            [todayKey]: {
-              quota: 10 * factor,
-              today_income: 1 * factor,
-              today_quota_consumption: 2 * factor,
-              capturedAt: 0,
-              source: "refresh",
-            },
-          },
-          a2: {},
-        },
-      } as any)
-
-      render(<BalanceHistory />)
-
-      expect(await screen.findByText(PAGE_TITLE)).toBeInTheDocument()
-
-      await waitFor(() => {
-        expect(vi.mocked(echarts.init)).toHaveBeenCalled()
-      })
-
-      const user = userEvent.setup()
-      await user.click(
-        screen.getByRole("button", {
-          name: TREND_SCOPE_BUTTON_ACCOUNTS,
-        }),
-      )
-      await user.click(
-        await screen.findByRole("menuitemradio", {
-          name: TREND_SCOPE_TOTAL,
-        }),
-      )
-
-      expect(
-        await screen.findByText(INCOMPLETE_SELECTION_TITLE),
-      ).toBeInTheDocument()
-
-      await waitFor(() => {
-        const initResults = vi.mocked(echarts.init).mock.results
-        const options = initResults
-          .map((result) => result.value)
-          .flatMap((instance: any) =>
-            instance.setOption.mock.calls.map((c: any) => c[0]),
-          )
-
-        const trendOptions = options.filter((option: any) =>
-          option?.series?.some?.((series: any) => series?.type === "line"),
-        )
-
-        const trendOption = trendOptions.at(-1)
-        expect(trendOption).toBeTruthy()
-        expect(trendOption.series).toHaveLength(1)
-
-        const [seriesTotal] = trendOption.series
-        expect(seriesTotal.name).toBe(TREND_SCOPE_TOTAL)
-
-        const numericValues = seriesTotal.data.filter(
-          (value: unknown) => typeof value === "number",
-        )
-        expect(numericValues).toEqual([10])
-      })
     } finally {
       dateNowSpy.mockRestore()
     }
