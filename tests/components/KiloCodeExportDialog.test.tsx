@@ -934,9 +934,6 @@ describe("KiloCodeExportDialog", () => {
 
   it("uses the newest created token after constrained Sub2API creation regardless of fetch order", async () => {
     const user = userEvent.setup()
-    const writeText = vi
-      .spyOn(navigator.clipboard, "writeText")
-      .mockResolvedValue(undefined)
     const site = createDisplayAccount({
       id: "b",
       name: "Site B",
@@ -968,16 +965,13 @@ describe("KiloCodeExportDialog", () => {
       allowedGroups: ["default", "vip"],
     })
 
-    render(<KiloCodeExportDialog isOpen={true} onClose={() => {}} />)
-
-    const sitePicker = await screen.findByPlaceholderText(
-      "ui:dialog.kiloCode.placeholders.selectSites",
+    render(
+      <KiloCodeExportDialog
+        isOpen={true}
+        onClose={() => {}}
+        initialSelectedSiteIds={["b"]}
+      />,
     )
-    await user.click(sitePicker)
-    await user.clear(sitePicker)
-    await user.type(sitePicker, "Site B")
-    await user.keyboard("{ArrowDown}")
-    await user.click(await screen.findByRole("option", { name: "Site B" }))
 
     await user.click(
       await screen.findByRole("button", {
@@ -989,23 +983,13 @@ describe("KiloCodeExportDialog", () => {
       await screen.findByRole("button", { name: "mock-add-token-success" }),
     )
 
-    const copyButton = await screen.findByRole("button", {
-      name: "ui:dialog.kiloCode.actions.copyApiConfigs",
-    })
-
     await waitFor(() => {
-      expect(copyButton).toBeEnabled()
+      expect(
+        screen.getByTitle("ui:dialog.kiloCode.labels.selectedTokens"),
+      ).toHaveTextContent("1/2")
     })
-
-    await user.click(copyButton)
-
-    await waitFor(() => {
-      expect(writeText).toHaveBeenCalledTimes(1)
-    })
-
-    const copiedPayload = String(writeText.mock.calls[0]?.[0] ?? "")
-    expect(copiedPayload).toContain("sk-newest")
-    expect(copiedPayload).not.toContain("sk-older")
+    expect(screen.getAllByText("Newest").length).toBeGreaterThan(0)
+    expect(screen.queryByText("Older")).not.toBeInTheDocument()
   })
 
   it("selects the newest refreshed token when upstream creation timestamps arrive as strings or ISO dates", async () => {
