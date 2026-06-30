@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.50.0](https://github.com/qixing-jk/all-api-hub/compare/v3.49.1...v3.50.0) (2026-06-30)
+
+
+### Features
+
+* **account:** show site type in account rows ([#1096](https://github.com/qixing-jk/all-api-hub/issues/1096)) ([2e6142d](https://github.com/qixing-jk/all-api-hub/commit/2e6142dae36c2d0298561834cca692ee2f155d3c))
+
+
+### Bug Fixes
+
+* **settings:** prevent stale preference update failures ([#1090](https://github.com/qixing-jk/all-api-hub/issues/1090)) ([d22e2f3](https://github.com/qixing-jk/all-api-hub/commit/d22e2f3c9820fc53699d9bb563c810fbf48e2e30))
+
 ## [3.49.1](https://github.com/qixing-jk/all-api-hub/compare/v3.49.0...v3.49.1) (2026-06-27)
 
 
