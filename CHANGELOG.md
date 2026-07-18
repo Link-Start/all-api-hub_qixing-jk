@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.53.0](https://github.com/qixing-jk/all-api-hub/compare/v3.52.0...v3.53.0) (2026-07-18)
+
+
+### Features
+
+* **model-list:** classify and display model vendors ([#1184](https://github.com/qixing-jk/all-api-hub/issues/1184)) ([a1ef3e9](https://github.com/qixing-jk/all-api-hub/commit/a1ef3e960880a3cd56caaef147cbb440c8c95260))
+* **options:** preserve key and model selections in history ([#1174](https://github.com/qixing-jk/all-api-hub/issues/1174)) ([6f84e64](https://github.com/qixing-jk/all-api-hub/commit/6f84e640f7b1685535a0b543dc1739ed1ea49fdb))
+
+
+### Bug Fixes
+
+* **content:** prevent temporary title feedback loops ([#1180](https://github.com/qixing-jk/all-api-hub/issues/1180)) ([9093d67](https://github.com/qixing-jk/all-api-hub/commit/9093d6722855f079b1837b1bd7f7ff3358c80e18))
+* **model-list:** correct account-scoped group semantics ([#1188](https://github.com/qixing-jk/all-api-hub/issues/1188)) ([93e335c](https://github.com/qixing-jk/all-api-hub/commit/93e335c4de652886d73f70dadf11a816673abaa4))
+* **temp-window:** preserve source context across background flows ([#1183](https://github.com/qixing-jk/all-api-hub/issues/1183)) ([a522c08](https://github.com/qixing-jk/all-api-hub/commit/a522c082b260068287b452ee3c1660f0a4bf4891))
+
 ## [3.52.0](https://github.com/qixing-jk/all-api-hub/compare/v3.51.0...v3.52.0) (2026-07-13)
 
 
