@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.53.1](https://github.com/qixing-jk/all-api-hub/compare/v3.53.0...v3.53.1) (2026-07-25)
+
+
+### Performance Improvements
+
+* **accounts:** bound bulk invite-link copy latency ([#1210](https://github.com/qixing-jk/all-api-hub/issues/1210)) ([b29b895](https://github.com/qixing-jk/all-api-hub/commit/b29b895f171c27e789847d719a9af6f24cc61a74))
+
 ## [3.53.0](https://github.com/qixing-jk/all-api-hub/compare/v3.52.0...v3.53.0) (2026-07-22)
 
 
