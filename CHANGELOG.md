@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.55.0](https://github.com/qixing-jk/all-api-hub/compare/v3.54.0...v3.55.0) (2026-07-31)
+
+
+### Features
+
+* **guidance:** add unified API onboarding ([#1237](https://github.com/qixing-jk/all-api-hub/issues/1237)) ([8160466](https://github.com/qixing-jk/all-api-hub/commit/8160466f9fd3597693a326831fd905081dab3162))
+* **protection-bypass:** add development trigger and prefer background tabs ([#1239](https://github.com/qixing-jk/all-api-hub/issues/1239)) ([b12c2dd](https://github.com/qixing-jk/all-api-hub/commit/b12c2ddc0fe1ca0446ac42bcc3ae88dc77a8366b))
+
 ## [3.54.0](https://github.com/qixing-jk/all-api-hub/compare/v3.53.0...v3.54.0) (2026-07-31)
 
 
