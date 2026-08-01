@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.55.0](https://github.com/qixing-jk/all-api-hub/compare/v3.54.0...v3.55.0) (2026-08-01)
+
+
+### Features
+
+* **guidance:** add unified API onboarding ([#1237](https://github.com/qixing-jk/all-api-hub/issues/1237)) ([8160466](https://github.com/qixing-jk/all-api-hub/commit/8160466f9fd3597693a326831fd905081dab3162))
+* **i18n:** add Brazilian Portuguese locale ([#1240](https://github.com/qixing-jk/all-api-hub/issues/1240)) ([4fec675](https://github.com/qixing-jk/all-api-hub/commit/4fec675ddec96d0eb28382eade96ee90012b813e))
+* **onboarding:** streamline account setup guidance ([#1242](https://github.com/qixing-jk/all-api-hub/issues/1242)) ([17e587c](https://github.com/qixing-jk/all-api-hub/commit/17e587c65b7e286eafd9857da3bcd716a626183e))
+* **product-announcements:** support extension CTAs ([#1241](https://github.com/qixing-jk/all-api-hub/issues/1241)) ([3518cb6](https://github.com/qixing-jk/all-api-hub/commit/3518cb6a9c87c1a93c79a58f065241b1f75a7f38))
+* **protection-bypass:** add development trigger and prefer background tabs ([#1239](https://github.com/qixing-jk/all-api-hub/issues/1239)) ([b12c2dd](https://github.com/qixing-jk/all-api-hub/commit/b12c2ddc0fe1ca0446ac42bcc3ae88dc77a8366b))
+
 ## [3.54.0](https://github.com/qixing-jk/all-api-hub/compare/v3.53.0...v3.54.0) (2026-07-31)
 
 
