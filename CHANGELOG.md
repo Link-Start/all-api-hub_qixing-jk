@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.55.0](https://github.com/qixing-jk/all-api-hub/compare/v3.54.0...v3.55.0) (2026-08-04)
+
+
+### Features
+
+* **guidance:** add unified API onboarding ([#1237](https://github.com/qixing-jk/all-api-hub/issues/1237)) ([8160466](https://github.com/qixing-jk/all-api-hub/commit/8160466f9fd3597693a326831fd905081dab3162))
+* **i18n:** add Brazilian Portuguese locale ([#1240](https://github.com/qixing-jk/all-api-hub/issues/1240)) ([4fec675](https://github.com/qixing-jk/all-api-hub/commit/4fec675ddec96d0eb28382eade96ee90012b813e))
+* **keys:** unify saved key resource presentation ([#1253](https://github.com/qixing-jk/all-api-hub/issues/1253)) ([a81376d](https://github.com/qixing-jk/all-api-hub/commit/a81376d1331d361912a4f5e52a9e65b0b52e6169))
+* **onboarding:** streamline account setup guidance ([#1242](https://github.com/qixing-jk/all-api-hub/issues/1242)) ([17e587c](https://github.com/qixing-jk/all-api-hub/commit/17e587c65b7e286eafd9857da3bcd716a626183e))
+* **product-announcements:** support extension CTAs ([#1241](https://github.com/qixing-jk/all-api-hub/issues/1241)) ([3518cb6](https://github.com/qixing-jk/all-api-hub/commit/3518cb6a9c87c1a93c79a58f065241b1f75a7f38))
+* **protection-bypass:** add automatic verification opening mode ([#1243](https://github.com/qixing-jk/all-api-hub/issues/1243)) ([ba8333d](https://github.com/qixing-jk/all-api-hub/commit/ba8333d7ba61f85b4ae00652d2b6a4d6d8c2069f))
+* **protection-bypass:** add development trigger and prefer background tabs ([#1239](https://github.com/qixing-jk/all-api-hub/issues/1239)) ([b12c2dd](https://github.com/qixing-jk/all-api-hub/commit/b12c2ddc0fe1ca0446ac42bcc3ae88dc77a8366b))
+* **sub2api:** repair missing group key coverage ([#1248](https://github.com/qixing-jk/all-api-hub/issues/1248)) ([602c674](https://github.com/qixing-jk/all-api-hub/commit/602c674cb63727d21e6e5e18798973fe09320198))
+
+
+### Bug Fixes
+
+* **ai-api:** fall back to unversioned model endpoint ([#1254](https://github.com/qixing-jk/all-api-hub/issues/1254)) ([688ca3e](https://github.com/qixing-jk/all-api-hub/commit/688ca3e95fb0802d50506db26c896ff01fa2cfc1))
+* **api-credentials:** support custom telemetry endpoints ([#1249](https://github.com/qixing-jk/all-api-hub/issues/1249)) ([2511c10](https://github.com/qixing-jk/all-api-hub/commit/2511c10f797e920ddbbc9ddb86c9b4b9063807ee))
+* **background:** make toolbar sidepanel routing cold-start safe ([#1252](https://github.com/qixing-jk/all-api-hub/issues/1252)) ([c24c226](https://github.com/qixing-jk/all-api-hub/commit/c24c226274aff16f4bb40bf0b66723d93d36e686))
+
 ## [3.54.0](https://github.com/qixing-jk/all-api-hub/compare/v3.53.0...v3.54.0) (2026-07-31)
 
 
