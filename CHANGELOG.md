@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.56.0](https://github.com/qixing-jk/all-api-hub/compare/v3.55.0...v3.56.0) (2026-08-08)
+
+
+### Features
+
+* **model-list:** add personalized OpenRouter catalogs ([#1273](https://github.com/qixing-jk/all-api-hub/issues/1273)) ([63ff754](https://github.com/qixing-jk/all-api-hub/commit/63ff75472304f1d91c2e01439ace6c2638fbdbf0))
+
+
+### Bug Fixes
+
+* **e2e:** align OpenCloud real-site target ([3f58001](https://github.com/qixing-jk/all-api-hub/commit/3f5800187b7511083b7c630a06d9543da0dbc84f))
+
 ## [3.55.0](https://github.com/qixing-jk/all-api-hub/compare/v3.54.0...v3.55.0) (2026-08-08)
 
 
