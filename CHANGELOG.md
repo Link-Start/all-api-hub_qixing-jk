@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.56.0](https://github.com/qixing-jk/all-api-hub/compare/v3.55.0...v3.56.0) (2026-08-09)
+
+
+### Features
+
+* **integrations:** support Cursor++ provider export ([#1278](https://github.com/qixing-jk/all-api-hub/issues/1278)) ([9d8a854](https://github.com/qixing-jk/all-api-hub/commit/9d8a854f646f22517b25ce7634bc29245bd20bba))
+* **key-management:** import repaired keys into managed sites ([#1276](https://github.com/qixing-jk/all-api-hub/issues/1276)) ([0d736ea](https://github.com/qixing-jk/all-api-hub/commit/0d736eaf3cb0fda5ddf4a94303d5d61b602b8cd1))
+* **model-list:** add personalized OpenRouter catalogs ([#1273](https://github.com/qixing-jk/all-api-hub/issues/1273)) ([63ff754](https://github.com/qixing-jk/all-api-hub/commit/63ff75472304f1d91c2e01439ace6c2638fbdbf0))
+
+
+### Bug Fixes
+
+* **auto-checkin:** clarify failed check-in page action ([#1275](https://github.com/qixing-jk/all-api-hub/issues/1275)) ([d235941](https://github.com/qixing-jk/all-api-hub/commit/d2359419f908cbce5e9d47b233792036c98131cf))
+* **e2e:** align OpenCloud real-site target ([3f58001](https://github.com/qixing-jk/all-api-hub/commit/3f5800187b7511083b7c630a06d9543da0dbc84f))
+* **managed-sites:** migrate channel configs to scoped storage ([#1277](https://github.com/qixing-jk/all-api-hub/issues/1277)) ([31c652e](https://github.com/qixing-jk/all-api-hub/commit/31c652ec3717961e466ded695c049c426245f45d))
+* **managed-sites:** use native editors for channel imports ([#1279](https://github.com/qixing-jk/all-api-hub/issues/1279)) ([bfc6e44](https://github.com/qixing-jk/all-api-hub/commit/bfc6e446b7beba12e7f56db15cef8360569808c0))
+
 ## [3.55.0](https://github.com/qixing-jk/all-api-hub/compare/v3.54.0...v3.55.0) (2026-08-08)
 
 
