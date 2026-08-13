@@ -22,7 +22,12 @@ if (outputFile) {
   )
   appendFileSync(
     outputFile,
-    `serialized_matrix=${JSON.stringify({ include: partitioned.serialized })}\n`,
+    `new_api_matrix=${JSON.stringify({ include: partitioned.newApi })}\n`,
+    "utf8",
+  )
+  appendFileSync(
+    outputFile,
+    `sub2api_matrix=${JSON.stringify({ include: partitioned.sub2api })}\n`,
     "utf8",
   )
   appendFileSync(
@@ -32,7 +37,12 @@ if (outputFile) {
   )
   appendFileSync(
     outputFile,
-    `has_serialized=${partitioned.serialized.length > 0}\n`,
+    `has_new_api=${partitioned.newApi.length > 0}\n`,
+    "utf8",
+  )
+  appendFileSync(
+    outputFile,
+    `has_sub2api=${partitioned.sub2api.length > 0}\n`,
     "utf8",
   )
 } else {
