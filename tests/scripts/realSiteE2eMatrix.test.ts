@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import { readFileSync, rmSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
@@ -21,6 +22,38 @@ function runMatrix(...args: string[]) {
       stdio: ["ignore", "pipe", "pipe"],
     }),
   ) as { include: Array<Record<string, unknown>> }
+}
+
+function runMatrixWithOutput(...args: string[]) {
+  const scriptPath = path.resolve(
+    process.cwd(),
+    "scripts",
+    "github-real-site-e2e-matrix.mjs",
+  )
+  const outputPath = path.resolve(
+    process.cwd(),
+    ".scratch",
+    `real-site-matrix-${process.pid}-${Date.now()}.txt`,
+  )
+
+  try {
+    execFileSync(process.execPath, [scriptPath, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: outputPath },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    return Object.fromEntries(
+      readFileSync(outputPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separatorIndex = line.indexOf("=")
+          return [line.slice(0, separatorIndex), line.slice(separatorIndex + 1)]
+        }),
+    )
+  } finally {
+    rmSync(outputPath, { force: true })
+  }
 }
 
 function selectedIds(matrix: ReturnType<typeof runMatrix>) {
@@ -76,8 +109,71 @@ describe("GitHub real-site E2E matrix selection", () => {
         category: "managed-site",
         env_prefix: "SUB2API",
         managed_site_target: "sub2api",
+        resource_group: "new-api-source-account",
       }),
     ])
+  })
+
+  it("serializes only targets that share the New API source account", () => {
+    const matrix = runMatrix()
+    const sharedAccountTargetIds = matrix.include
+      .filter((entry) => entry.resource_group === "new-api-source-account")
+      .map((entry) => entry.id)
+
+    expect(sharedAccountTargetIds).toEqual([
+      "new-api-account",
+      "new-api-managed-site",
+      "sub2api-managed-site",
+    ])
+    expect(
+      matrix.include.find((entry) => entry.id === "veloera-managed-site"),
+    ).not.toHaveProperty("resource_group")
+  })
+
+  it("emits disjoint parallel and serialized matrices for GitHub Actions", () => {
+    const output = runMatrixWithOutput()
+    const fullMatrix = JSON.parse(output.matrix) as ReturnType<typeof runMatrix>
+    const parallelMatrix = JSON.parse(output.parallel_matrix) as ReturnType<
+      typeof runMatrix
+    >
+    const serializedMatrix = JSON.parse(output.serialized_matrix) as ReturnType<
+      typeof runMatrix
+    >
+
+    expect(output.has_parallel).toBe("true")
+    expect(output.has_serialized).toBe("true")
+    expect([
+      ...selectedIds(parallelMatrix),
+      ...selectedIds(serializedMatrix),
+    ]).toEqual(expect.arrayContaining(selectedIds(fullMatrix)))
+    expect(
+      new Set([
+        ...selectedIds(parallelMatrix),
+        ...selectedIds(serializedMatrix),
+      ]).size,
+    ).toBe(fullMatrix.include.length)
+  })
+
+  it("keeps a narrow shared-account target in the serialized matrix only", () => {
+    const output = runMatrixWithOutput("all", "new-api-account")
+
+    expect(output.has_parallel).toBe("false")
+    expect(output.has_serialized).toBe("true")
+    expect(JSON.parse(output.parallel_matrix)).toEqual({ include: [] })
+    expect(selectedIds(JSON.parse(output.serialized_matrix))).toEqual([
+      "new-api-account",
+    ])
+  })
+
+  it("keeps a narrow independent target in the parallel matrix only", () => {
+    const output = runMatrixWithOutput("all", "veloera-account")
+
+    expect(output.has_parallel).toBe("true")
+    expect(output.has_serialized).toBe("false")
+    expect(selectedIds(JSON.parse(output.parallel_matrix))).toEqual([
+      "veloera-account",
+    ])
+    expect(JSON.parse(output.serialized_matrix)).toEqual({ include: [] })
   })
 
   it("keeps the default all-category matrix unchanged", () => {

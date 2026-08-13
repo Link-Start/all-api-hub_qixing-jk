@@ -33,7 +33,10 @@ jobs:
     name: Prepare real-site E2E matrix
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      parallel_matrix: ${{ steps.matrix.outputs.parallel_matrix }}
+      serialized_matrix: ${{ steps.matrix.outputs.serialized_matrix }}
+      has_parallel: ${{ steps.matrix.outputs.has_parallel }}
+      has_serialized: ${{ steps.matrix.outputs.has_serialized }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -50,14 +53,15 @@ jobs:
   real-site-e2e:
     name: ${{ matrix.label }}
     needs: real-site-matrix
+    if: needs.real-site-matrix.outputs.has_parallel == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.real-site-matrix.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.real-site-matrix.outputs.parallel_matrix) }}
 
-    steps:
+    steps: &real-site-e2e-steps
       - name: Checkout code
         uses: actions/checkout@v5
         with:
@@ -246,3 +250,17 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  real-site-e2e-serialized:
+    name: ${{ matrix.label }}
+    needs: real-site-matrix
+    if: needs.real-site-matrix.outputs.has_serialized == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.real-site-matrix.outputs.serialized_matrix) }}
+
+    steps: *real-site-e2e-steps

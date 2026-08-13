@@ -4,6 +4,8 @@ const REAL_SITE_E2E_CATEGORIES = {
   webdav: "webdav",
 }
 
+const NEW_API_SOURCE_ACCOUNT_RESOURCE_GROUP = "new-api-source-account"
+
 const REAL_SITE_E2E_MATRIX = [
   {
     id: "new-api-account",
@@ -11,6 +13,7 @@ const REAL_SITE_E2E_MATRIX = [
     label: "Account / New API",
     env_prefix: "NEW_API",
     kind: "account",
+    resource_group: NEW_API_SOURCE_ACCOUNT_RESOURCE_GROUP,
     spec: "e2e/realSite/newApiAccountAdd.spec.ts",
   },
   {
@@ -52,6 +55,7 @@ const REAL_SITE_E2E_MATRIX = [
     env_prefix: "NEW_API",
     kind: "managed-site",
     managed_site_target: "new-api",
+    resource_group: NEW_API_SOURCE_ACCOUNT_RESOURCE_GROUP,
     spec: "e2e/realSite/managedSiteChannels.spec.ts",
   },
   {
@@ -106,6 +110,7 @@ const REAL_SITE_E2E_MATRIX = [
     env_prefix: "SUB2API",
     kind: "managed-site",
     managed_site_target: "sub2api",
+    resource_group: NEW_API_SOURCE_ACCOUNT_RESOURCE_GROUP,
     spec: "e2e/realSite/managedSiteChannels.spec.ts",
   },
   {
@@ -200,6 +205,13 @@ export function filterRealSiteE2eMatrix(category = "all", target = "all") {
   }
 
   return [targetEntry]
+}
+
+export function partitionRealSiteE2eMatrix(entries) {
+  return {
+    parallel: entries.filter((entry) => !entry.resource_group),
+    serialized: entries.filter((entry) => entry.resource_group),
+  }
 }
 
 function throwUnknownTarget(target) {
