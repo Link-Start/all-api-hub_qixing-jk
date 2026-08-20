@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.58.0](https://github.com/qixing-jk/all-api-hub/compare/v3.57.0...v3.58.0) (2026-08-20)
+
+
+### Features
+
+* **managed-sites:** migrate New API channels to native resource management ([#1329](https://github.com/qixing-jk/all-api-hub/issues/1329)) ([93096fc](https://github.com/qixing-jk/all-api-hub/commit/93096fca6fd9ad86ddc0d292d5afdd49d7f7fe44))
+
+
+### Bug Fixes
+
+* **account-management:** keep list controls reachable ([#1332](https://github.com/qixing-jk/all-api-hub/issues/1332)) ([d7cf255](https://github.com/qixing-jk/all-api-hub/commit/d7cf25543bd4ecfdb26029f143f6b13d9ba0653d))
+* **account:** detect modern New API white-label sessions ([#1331](https://github.com/qixing-jk/all-api-hub/issues/1331)) ([d910866](https://github.com/qixing-jk/all-api-hub/commit/d910866898b6c8122ba87187c46aeba5c699153b))
+* **sub2api:** detect deployment site name ([#1334](https://github.com/qixing-jk/all-api-hub/issues/1334)) ([0944080](https://github.com/qixing-jk/all-api-hub/commit/09440809dcbcb29703b9a77f77e0a1a4465d1cbe))
+
 ## [3.57.0](https://github.com/qixing-jk/all-api-hub/compare/v3.56.0...v3.57.0) (2026-08-19)
 
 
