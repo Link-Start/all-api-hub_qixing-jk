@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.59.0](https://github.com/qixing-jk/all-api-hub/compare/v3.58.0...v3.59.0) (2026-08-23)
+
+
+### Features
+
+* **checkin:** support method-aware account configuration ([#1340](https://github.com/qixing-jk/all-api-hub/issues/1340)) ([bcd689f](https://github.com/qixing-jk/all-api-hub/commit/bcd689f9822e21c8df4aafe36caf9680175802ad))
+
+
+### Bug Fixes
+
+* **model-list:** correct ratio and optimal-group indicators ([#1348](https://github.com/qixing-jk/all-api-hub/issues/1348)) ([2d99ec4](https://github.com/qixing-jk/all-api-hub/commit/2d99ec4891d3b95256331517ff5e7fbe59da1208))
+* **popup:** stabilize selects across page zoom ([#1347](https://github.com/qixing-jk/all-api-hub/issues/1347)) ([8621fe5](https://github.com/qixing-jk/all-api-hub/commit/8621fe50d6228ce40e99f5e99f7ec9cec6a5913e))
+* **sub2api:** harden auth credential durability ([#1343](https://github.com/qixing-jk/all-api-hub/issues/1343)) ([634f28b](https://github.com/qixing-jk/all-api-hub/commit/634f28bfeff6d6ba20e61836c1961d7e26499a1a))
+
 ## [3.58.0](https://github.com/qixing-jk/all-api-hub/compare/v3.57.0...v3.58.0) (2026-08-21)
 
 
