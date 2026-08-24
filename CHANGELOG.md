@@ -1,5 +1,27 @@
 # Changelog
 
+## [3.59.0](https://github.com/qixing-jk/all-api-hub/compare/v3.58.0...v3.59.0) (2026-08-24)
+
+
+### Features
+
+* **checkin:** add method discovery and readiness workspace ([#1350](https://github.com/qixing-jk/all-api-hub/issues/1350)) ([fe2d33c](https://github.com/qixing-jk/all-api-hub/commit/fe2d33cbd4ecd5f3f58d06b6d453e652932ddb8b))
+* **checkin:** support method-aware account configuration ([#1340](https://github.com/qixing-jk/all-api-hub/issues/1340)) ([bcd689f](https://github.com/qixing-jk/all-api-hub/commit/bcd689f9822e21c8df4aafe36caf9680175802ad))
+
+
+### Bug Fixes
+
+* **checkin:** harden execution certainty and retries ([#1352](https://github.com/qixing-jk/all-api-hub/issues/1352)) ([30ccce3](https://github.com/qixing-jk/all-api-hub/commit/30ccce34331e65b21e4bbed597baf9ca5a3dbb58))
+* **model-list:** correct ratio and optimal-group indicators ([#1348](https://github.com/qixing-jk/all-api-hub/issues/1348)) ([2d99ec4](https://github.com/qixing-jk/all-api-hub/commit/2d99ec4891d3b95256331517ff5e7fbe59da1208))
+* **popup:** stabilize selects across page zoom ([#1347](https://github.com/qixing-jk/all-api-hub/issues/1347)) ([8621fe5](https://github.com/qixing-jk/all-api-hub/commit/8621fe50d6228ce40e99f5e99f7ec9cec6a5913e))
+* **settings:** save inputs on blur ([#1346](https://github.com/qixing-jk/all-api-hub/issues/1346)) ([81b9f15](https://github.com/qixing-jk/all-api-hub/commit/81b9f15f863e65941fc0a336281ded464754f11f))
+* **sub2api:** harden auth credential durability ([#1343](https://github.com/qixing-jk/all-api-hub/issues/1343)) ([634f28b](https://github.com/qixing-jk/all-api-hub/commit/634f28bfeff6d6ba20e61836c1961d7e26499a1a))
+
+
+### Performance Improvements
+
+* **i18n:** lazy-load locale resources ([#1351](https://github.com/qixing-jk/all-api-hub/issues/1351)) ([e4d30db](https://github.com/qixing-jk/all-api-hub/commit/e4d30db46c5adc9d6f919976ce00eb357965477c))
+
 ## [3.58.0](https://github.com/qixing-jk/all-api-hub/compare/v3.57.0...v3.58.0) (2026-08-21)
 
 
