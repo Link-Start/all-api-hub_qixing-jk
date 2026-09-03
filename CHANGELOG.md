@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.59.1](https://github.com/qixing-jk/all-api-hub/compare/v3.59.0...v3.59.1) (2026-09-03)
+
+
+### Performance Improvements
+
+* **test:** reduce CI unit test wall time ([#1370](https://github.com/qixing-jk/all-api-hub/issues/1370)) ([7ee200d](https://github.com/qixing-jk/all-api-hub/commit/7ee200dbc030633cf777eb697558ef6cfede6755))
+
 ## [3.59.0](https://github.com/qixing-jk/all-api-hub/compare/v3.58.0...v3.59.0) (2026-08-27)
 
 
