@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.60.0](https://github.com/qixing-jk/all-api-hub/compare/v3.59.0...v3.60.0) (2026-09-04)
+
+
+### Features
+
+* **account-onboarding:** improve recovery and manual guidance ([#1383](https://github.com/qixing-jk/all-api-hub/issues/1383)) ([5c40114](https://github.com/qixing-jk/all-api-hub/commit/5c40114e7f6316be126dc95d1c155dd6eabe6555))
+
+
+### Bug Fixes
+
+* **checkin:** route AnyRouter sign-in through protected context ([#1381](https://github.com/qixing-jk/all-api-hub/issues/1381)) ([0cdb4c8](https://github.com/qixing-jk/all-api-hub/commit/0cdb4c8064aeefd97e1dcdd3fe56e53fc1c495cf))
+* **octopus:** support v0.13 channel management ([#1382](https://github.com/qixing-jk/all-api-hub/issues/1382)) ([9d14868](https://github.com/qixing-jk/all-api-hub/commit/9d14868669594d0fccfa0caee1b0053fd0a94a87))
+* **sub2api:** recover browser-bound auth sessions ([#1387](https://github.com/qixing-jk/all-api-hub/issues/1387)) ([d534133](https://github.com/qixing-jk/all-api-hub/commit/d534133257e32f30de08a1f0f6fd247445b41384))
+
+
+### Performance Improvements
+
+* **test:** reduce CI unit test wall time ([#1370](https://github.com/qixing-jk/all-api-hub/issues/1370)) ([7ee200d](https://github.com/qixing-jk/all-api-hub/commit/7ee200dbc030633cf777eb697558ef6cfede6755))
+
 ## [3.59.0](https://github.com/qixing-jk/all-api-hub/compare/v3.58.0...v3.59.0) (2026-08-27)
 
 
