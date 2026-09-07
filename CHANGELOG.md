@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.61.0](https://github.com/qixing-jk/all-api-hub/compare/v3.60.0...v3.61.0) (2026-09-07)
+
+
+### Features
+
+* **accounts:** auto-provision keys for all available groups ([#1404](https://github.com/qixing-jk/all-api-hub/issues/1404)) ([1f697b7](https://github.com/qixing-jk/all-api-hub/commit/1f697b79f427d0cb70eda7f485d905b12db6fe9a))
+
 ## [3.60.0](https://github.com/qixing-jk/all-api-hub/compare/v3.59.0...v3.60.0) (2026-09-06)
 
 
