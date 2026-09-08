@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.61.0](https://github.com/qixing-jk/all-api-hub/compare/v3.60.0...v3.61.0) (2026-09-08)
+
+
+### Features
+
+* **accounts:** add APIyi account compatibility ([#1413](https://github.com/qixing-jk/all-api-hub/issues/1413)) ([5c457f8](https://github.com/qixing-jk/all-api-hub/commit/5c457f86d750b750fb9de598012230e57eb3b063))
+* **accounts:** auto-provision keys for all available groups ([#1404](https://github.com/qixing-jk/all-api-hub/issues/1404)) ([1f697b7](https://github.com/qixing-jk/all-api-hub/commit/1f697b79f427d0cb70eda7f485d905b12db6fe9a))
+* **shield:** add local protection bypass history ([#1407](https://github.com/qixing-jk/all-api-hub/issues/1407)) ([0285615](https://github.com/qixing-jk/all-api-hub/commit/02856151364f3bef31fbeacbd4dd513105a35efb))
+* **verification:** add selectable streaming test modes ([#1406](https://github.com/qixing-jk/all-api-hub/issues/1406)) ([499a6f6](https://github.com/qixing-jk/all-api-hub/commit/499a6f6817a30e538f15bb3b932082c990970ca3))
+
+
+### Bug Fixes
+
+* **accounts:** preserve New API manual token recovery and focus the input ([#1408](https://github.com/qixing-jk/all-api-hub/issues/1408)) ([44221e7](https://github.com/qixing-jk/all-api-hub/commit/44221e7c245242b2a0592f31edfa9e257be6d870))
+* **accounts:** verify browser identity before matching saved accounts ([#1412](https://github.com/qixing-jk/all-api-hub/issues/1412)) ([0353a30](https://github.com/qixing-jk/all-api-hub/commit/0353a30ba3e9b06946fa4557c5948140f10e283e))
+* **e2e:** follow New API manual token recovery ([#1410](https://github.com/qixing-jk/all-api-hub/issues/1410)) ([abae4a9](https://github.com/qixing-jk/all-api-hub/commit/abae4a914bc52b951f6f0b2dfb1dff35a2402f0a))
+
 ## [3.60.0](https://github.com/qixing-jk/all-api-hub/compare/v3.59.0...v3.60.0) (2026-09-06)
 
 
