@@ -1,5 +1,19 @@
 # Changelog
 
+## [3.62.0](https://github.com/qixing-jk/all-api-hub/compare/v3.61.0...v3.62.0) (2026-09-10)
+
+
+### Features
+
+* **model-pricing:** support tiered pricing across providers ([#1425](https://github.com/qixing-jk/all-api-hub/issues/1425)) ([59a7320](https://github.com/qixing-jk/all-api-hub/commit/59a7320325f565a2a3317860e6bf574a7eece7be))
+* **shield:** customize verification window dimensions ([#1422](https://github.com/qixing-jk/all-api-hub/issues/1422)) ([f12df39](https://github.com/qixing-jk/all-api-hub/commit/f12df392266279e7f9b6ee5be17ba8d10bb0e217))
+
+
+### Bug Fixes
+
+* **checkin:** confirm support before selecting or executing methods ([#1424](https://github.com/qixing-jk/all-api-hub/issues/1424)) ([e80884e](https://github.com/qixing-jk/all-api-hub/commit/e80884eb77c26a23964e0d52ec527473774e9524))
+* **dev:** exclude pnpm cache from file watching ([2e09922](https://github.com/qixing-jk/all-api-hub/commit/2e09922cecb2f2c9e8e4f5ffaad39847900abcb4))
+
 ## [3.61.0](https://github.com/qixing-jk/all-api-hub/compare/v3.60.0...v3.61.0) (2026-09-08)
 
 
