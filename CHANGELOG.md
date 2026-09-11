@@ -1,5 +1,29 @@
 # Changelog
 
+## [3.62.0](https://github.com/qixing-jk/all-api-hub/compare/v3.61.0...v3.62.0) (2026-09-11)
+
+
+### Features
+
+* **accounts:** group sorting controls and add settings shortcut ([#1433](https://github.com/qixing-jk/all-api-hub/issues/1433)) ([b68da88](https://github.com/qixing-jk/all-api-hub/commit/b68da88f1e25d3c29ce86074844d1ff5749255e9))
+* **accounts:** review suspected duplicates and reduce check-in interruptions ([#1431](https://github.com/qixing-jk/all-api-hub/issues/1431)) ([9394a5b](https://github.com/qixing-jk/all-api-hub/commit/9394a5ba87faa95498b3448a6c70336360995a1c))
+* **channels:** add New API advanced settings and improve dialog loading ([#1434](https://github.com/qixing-jk/all-api-hub/issues/1434)) ([a8045de](https://github.com/qixing-jk/all-api-hub/commit/a8045de73fa490a77014ec8e02f45647165f2842))
+* **checkin:** keep manual batch check-in available when automation is off ([#1377](https://github.com/qixing-jk/all-api-hub/issues/1377)) ([ee16f76](https://github.com/qixing-jk/all-api-hub/commit/ee16f7667b39a84e878a231c5e1dde6ed4202f4b))
+* **donehub:** add grouped advanced channel settings ([#1432](https://github.com/qixing-jk/all-api-hub/issues/1432)) ([d2dfb5e](https://github.com/qixing-jk/all-api-hub/commit/d2dfb5e93c8c0120e18f03d2e7c9521a453ba3b4))
+* **managed-sites:** sort by popularity and add official deployment docs ([#1430](https://github.com/qixing-jk/all-api-hub/issues/1430)) ([cd37ec4](https://github.com/qixing-jk/all-api-hub/commit/cd37ec474a0efe7e05c703a4fd720a31d4d620c4))
+* **managed-sites:** upgrade CLIProxyAPI export integration to provider management ([#1427](https://github.com/qixing-jk/all-api-hub/issues/1427)) ([d974506](https://github.com/qixing-jk/all-api-hub/commit/d974506ab024282d1a8f1ba632f23fe439ea6677))
+* **model-pricing:** support tiered pricing across providers ([#1425](https://github.com/qixing-jk/all-api-hub/issues/1425)) ([59a7320](https://github.com/qixing-jk/all-api-hub/commit/59a7320325f565a2a3317860e6bf574a7eece7be))
+* **preferences:** enable convenient check-in and account defaults ([#1429](https://github.com/qixing-jk/all-api-hub/issues/1429)) ([55d05b7](https://github.com/qixing-jk/all-api-hub/commit/55d05b7cb83a6812704a2cd81effabc19109fc95))
+* **shield:** customize verification window dimensions ([#1422](https://github.com/qixing-jk/all-api-hub/issues/1422)) ([f12df39](https://github.com/qixing-jk/all-api-hub/commit/f12df392266279e7f9b6ee5be17ba8d10bb0e217))
+
+
+### Bug Fixes
+
+* **checkin:** confirm support before selecting or executing methods ([#1424](https://github.com/qixing-jk/all-api-hub/issues/1424)) ([e80884e](https://github.com/qixing-jk/all-api-hub/commit/e80884eb77c26a23964e0d52ec527473774e9524))
+* complete gateway setup guidance and keep it optional ([#1435](https://github.com/qixing-jk/all-api-hub/issues/1435)) ([2ffe529](https://github.com/qixing-jk/all-api-hub/commit/2ffe529e1d92e616c5a6ad605ed406b61b5ef628))
+* **dev:** exclude pnpm cache from file watching ([2e09922](https://github.com/qixing-jk/all-api-hub/commit/2e09922cecb2f2c9e8e4f5ffaad39847900abcb4))
+* **key-management:** keep repaired keys importable before checks finish ([#1426](https://github.com/qixing-jk/all-api-hub/issues/1426)) ([8e707b8](https://github.com/qixing-jk/all-api-hub/commit/8e707b8a84a012cba8180c831425614c69963fcb))
+
 ## [3.61.0](https://github.com/qixing-jk/all-api-hub/compare/v3.60.0...v3.61.0) (2026-09-08)
 
 
