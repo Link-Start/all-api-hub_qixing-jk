@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.63.0](https://github.com/qixing-jk/all-api-hub/compare/v3.62.0...v3.63.0) (2026-09-13)
+
+
+### Features
+
+* **checkin:** support Genius Programmer daily check-in ([#1446](https://github.com/qixing-jk/all-api-hub/issues/1446)) ([aad6ec8](https://github.com/qixing-jk/all-api-hub/commit/aad6ec80306042a2d0853902a7ea6df759cff165))
+
 ## [3.62.0](https://github.com/qixing-jk/all-api-hub/compare/v3.61.0...v3.62.0) (2026-09-13)
 
 
