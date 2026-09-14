@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.63.0](https://github.com/qixing-jk/all-api-hub/compare/v3.62.0...v3.63.0) (2026-09-14)
+
+
+### Features
+
+* **checkin:** support Genius Programmer daily check-in ([#1446](https://github.com/qixing-jk/all-api-hub/issues/1446)) ([aad6ec8](https://github.com/qixing-jk/all-api-hub/commit/aad6ec80306042a2d0853902a7ea6df759cff165))
+
+
+### Bug Fixes
+
+* **aihubmix:** honor shared request limits and timeouts ([#1457](https://github.com/qixing-jk/all-api-hub/issues/1457)) ([d15a6e9](https://github.com/qixing-jk/all-api-hub/commit/d15a6e9224b8f5aa232d77d8a84859d9b8559f37))
+* **octopus:** preserve channel import compatibility across versions ([#1455](https://github.com/qixing-jk/all-api-hub/issues/1455)) ([6134648](https://github.com/qixing-jk/all-api-hub/commit/6134648595450a1c5205b76ac58415aa4876e97e))
+* **ui:** restore focus rings and Chromium compatibility checks ([#1456](https://github.com/qixing-jk/all-api-hub/issues/1456)) ([f286124](https://github.com/qixing-jk/all-api-hub/commit/f286124555a8e044d9137c91160627fac091045d))
+* **ui:** support button wrapping on older Chromium ([#1454](https://github.com/qixing-jk/all-api-hub/issues/1454)) ([d16fb5d](https://github.com/qixing-jk/all-api-hub/commit/d16fb5d86c8a694b09b7713c81cc7085c478160e))
+
 ## [3.62.0](https://github.com/qixing-jk/all-api-hub/compare/v3.61.0...v3.62.0) (2026-09-13)
 
 
