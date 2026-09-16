@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.63.0](https://github.com/qixing-jk/all-api-hub/compare/v3.62.0...v3.63.0) (2026-09-16)
+
+
+### Features
+
+* **appearance:** add global interface density controls ([#1467](https://github.com/qixing-jk/all-api-hub/issues/1467)) ([1986f57](https://github.com/qixing-jk/all-api-hub/commit/1986f578ff7c22f4d1edf62f195d649f7e3c2f39))
+* **appearance:** add independent text sizing ([#1474](https://github.com/qixing-jk/all-api-hub/issues/1474)) ([b33a403](https://github.com/qixing-jk/all-api-hub/commit/b33a403f7e1376c72ae0ec1e717aba1f413a7aca))
+* **appearance:** add theme-aware font selection ([#1484](https://github.com/qixing-jk/all-api-hub/issues/1484)) ([6f70803](https://github.com/qixing-jk/all-api-hub/commit/6f70803d0cd7c9d7743b80455708277636d4e35c))
+* **appearance:** complete density adaptation across feature pages ([#1469](https://github.com/qixing-jk/all-api-hub/issues/1469)) ([15e6d13](https://github.com/qixing-jk/all-api-hub/commit/15e6d134c97b5f7e90b160c60fabb058cc219747))
+* **appearance:** extend density across shared controls and extension shells ([#1468](https://github.com/qixing-jk/all-api-hub/issues/1468)) ([8140436](https://github.com/qixing-jk/all-api-hub/commit/814043662866d6b0c8602e0f85eaf49dda54da42))
+* **checkin:** rediscover automatic methods before daily execution ([#1461](https://github.com/qixing-jk/all-api-hub/issues/1461)) ([ec9463e](https://github.com/qixing-jk/all-api-hub/commit/ec9463e36965e7b4783972a25cad95650efcb3df))
+* **checkin:** support Genius Programmer daily check-in ([#1446](https://github.com/qixing-jk/all-api-hub/issues/1446)) ([aad6ec8](https://github.com/qixing-jk/all-api-hub/commit/aad6ec80306042a2d0853902a7ea6df759cff165))
+* **model-list:** filter models by account group access ([#1473](https://github.com/qixing-jk/all-api-hub/issues/1473)) ([ebcc4ea](https://github.com/qixing-jk/all-api-hub/commit/ebcc4eaf477de723a46380b1c6653f3c624704af))
+* **settings:** unify reset actions and simplify preference saving ([#1478](https://github.com/qixing-jk/all-api-hub/issues/1478)) ([ed1a789](https://github.com/qixing-jk/all-api-hub/commit/ed1a78945853878887e02684bef58ba777ba8029))
+* **storage:** enable unlimited local storage and longer history retention ([#1460](https://github.com/qixing-jk/all-api-hub/issues/1460)) ([4da727b](https://github.com/qixing-jk/all-api-hub/commit/4da727b9db7b431594ea980dfa79ad8e401a7e13))
+* **ui:** add appearance preferences and shared theme roles ([#1459](https://github.com/qixing-jk/all-api-hub/issues/1459)) ([91936be](https://github.com/qixing-jk/all-api-hub/commit/91936be917161a8efc9ce0414640fb56dc612c2d))
+* **ui:** migrate feature pages to semantic theme colors ([#1458](https://github.com/qixing-jk/all-api-hub/issues/1458)) ([2c52a83](https://github.com/qixing-jk/all-api-hub/commit/2c52a834d265f11075a6b54f85bc48a4869baa47))
+
+
+### Bug Fixes
+
+* **accounts:** exclude internal temporary pages from browsing context ([#1481](https://github.com/qixing-jk/all-api-hub/issues/1481)) ([9ef036e](https://github.com/qixing-jk/all-api-hub/commit/9ef036e611a97dc56e2c02ee5fe9475a74232847))
+* **aihubmix:** honor shared request limits and timeouts ([#1457](https://github.com/qixing-jk/all-api-hub/issues/1457)) ([d15a6e9](https://github.com/qixing-jk/all-api-hub/commit/d15a6e9224b8f5aa232d77d8a84859d9b8559f37))
+* **checkin:** correct temporary-page execution and repeated account lookup errors ([#1479](https://github.com/qixing-jk/all-api-hub/issues/1479)) ([6512db8](https://github.com/qixing-jk/all-api-hub/commit/6512db8514f27288dac0189c8ee1c9a7559f0045))
+* **e2e:** cover real-site imports without upstream model prerequisites ([#1477](https://github.com/qixing-jk/all-api-hub/issues/1477)) ([9fb412c](https://github.com/qixing-jk/all-api-hub/commit/9fb412cdedd9ccfaec680b819ebd00a46446f881))
+* **octopus:** preserve channel import compatibility across versions ([#1455](https://github.com/qixing-jk/all-api-hub/issues/1455)) ([6134648](https://github.com/qixing-jk/all-api-hub/commit/6134648595450a1c5205b76ac58415aa4876e97e))
+* **ui:** clarify status feedback across themes ([#1483](https://github.com/qixing-jk/all-api-hub/issues/1483)) ([3e98f54](https://github.com/qixing-jk/all-api-hub/commit/3e98f5499edf0787ca7cc58b89a4c610ff50b265))
+* **ui:** restore focus rings and Chromium compatibility checks ([#1456](https://github.com/qixing-jk/all-api-hub/issues/1456)) ([f286124](https://github.com/qixing-jk/all-api-hub/commit/f286124555a8e044d9137c91160627fac091045d))
+* **ui:** standardize responsive action layouts ([#1482](https://github.com/qixing-jk/all-api-hub/issues/1482)) ([b76cd53](https://github.com/qixing-jk/all-api-hub/commit/b76cd5309f57c03dec1cbf082ac059e3ed2c52da))
+* **ui:** support button wrapping on older Chromium ([#1454](https://github.com/qixing-jk/all-api-hub/issues/1454)) ([d16fb5d](https://github.com/qixing-jk/all-api-hub/commit/d16fb5d86c8a694b09b7713c81cc7085c478160e))
+
 ## [3.62.0](https://github.com/qixing-jk/all-api-hub/compare/v3.61.0...v3.62.0) (2026-09-13)
 
 
