@@ -1,5 +1,18 @@
 # Changelog
 
+## [4.1.0](https://github.com/qixing-jk/all-api-hub/compare/v4.0.0...v4.1.0) (2026-09-20)
+
+
+### Features
+
+* **dev:** bake an instance identity into local builds ([#1508](https://github.com/qixing-jk/all-api-hub/issues/1508)) ([c33dabc](https://github.com/qixing-jk/all-api-hub/commit/c33dabc5bd31c175e90e04a7b63d246e40190553))
+
+
+### Bug Fixes
+
+* **test:** correct shard weights for each shard's measured load ([#1507](https://github.com/qixing-jk/all-api-hub/issues/1507)) ([a522b80](https://github.com/qixing-jk/all-api-hub/commit/a522b80c5c2825160da3ff6ab04acf13c4b72a3d))
+* **time:** unify day-key semantics on the local day boundary ([#1510](https://github.com/qixing-jk/all-api-hub/issues/1510)) ([cbf4e16](https://github.com/qixing-jk/all-api-hub/commit/cbf4e1628da7d9c5e4c82deae49c2abefb88fe45))
+
 ## [4.0.0](https://github.com/qixing-jk/all-api-hub/compare/v3.62.0...v4.0.0) (2026-09-20)
 
 
