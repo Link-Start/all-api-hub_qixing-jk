@@ -1,5 +1,23 @@
 # Changelog
 
+## [4.2.0](https://github.com/qixing-jk/all-api-hub/compare/v4.1.0...v4.2.0) (2026-09-27)
+
+
+### Features
+
+* **checkin:** support 小白Code daily check-in ([#1548](https://github.com/qixing-jk/all-api-hub/issues/1548)) ([ba5a78b](https://github.com/qixing-jk/all-api-hub/commit/ba5a78b3855b3433284fad682de4bab7bcb8148c))
+* **credentials:** improve library guidance and desktop browsing ([#1547](https://github.com/qixing-jk/all-api-hub/issues/1547)) ([07a5aec](https://github.com/qixing-jk/all-api-hub/commit/07a5aec7fd04b03fda25aef81b807e74f3134966))
+* **ui:** add restrained motion to options page navigation ([#1546](https://github.com/qixing-jk/all-api-hub/issues/1546)) ([f3a50f3](https://github.com/qixing-jk/all-api-hub/commit/f3a50f37af67734a505b9f6c20347bfb83eba055))
+* **uninstall-survey:** add post-uninstall feedback survey and dev controls ([#1542](https://github.com/qixing-jk/all-api-hub/issues/1542)) ([9e521d3](https://github.com/qixing-jk/all-api-hub/commit/9e521d35b445441302c474a785d66d53799c6810))
+
+
+### Bug Fixes
+
+* **accounts:** restore income from zero-quota logs ([#1549](https://github.com/qixing-jk/all-api-hub/issues/1549)) ([c589f67](https://github.com/qixing-jk/all-api-hub/commit/c589f67c201122d7ab02b56b6e50ddf114f0c1d8))
+* **background:** reclaim temporary pages left behind after an interrupted close ([#1551](https://github.com/qixing-jk/all-api-hub/issues/1551)) ([8d2c812](https://github.com/qixing-jk/all-api-hub/commit/8d2c8120dafe13e2c07982e94cbb3c48ec814717))
+* **checkin:** align retry reasons and login wait budgets ([#1543](https://github.com/qixing-jk/all-api-hub/issues/1543)) ([b3f0a39](https://github.com/qixing-jk/all-api-hub/commit/b3f0a39f98de9654f1a2c363ba52ac2f406f1d9c))
+* **ui:** align options and popup surfaces with the theme roles ([#1550](https://github.com/qixing-jk/all-api-hub/issues/1550)) ([df94d59](https://github.com/qixing-jk/all-api-hub/commit/df94d59c664787af6b05f3d149184edfa4d3f05c))
+
 ## [4.1.0](https://github.com/qixing-jk/all-api-hub/compare/v4.0.0...v4.1.0) (2026-09-25)
 
 
