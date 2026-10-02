@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.3.0](https://github.com/qixing-jk/all-api-hub/compare/v4.2.0...v4.3.0) (2026-10-02)
+
+
+### Features
+
+* **kimi:** add Kimi Open Platform accounts with model catalogs and CNY/USD pricing ([#1578](https://github.com/qixing-jk/all-api-hub/issues/1578)) ([2291640](https://github.com/qixing-jk/all-api-hub/commit/22916401a1b45cd1eb78d1083650c9734e33d72b))
+* **new-api:** adapt account detection to rc.41 scoped access tokens ([#1579](https://github.com/qixing-jk/all-api-hub/issues/1579)) ([0954678](https://github.com/qixing-jk/all-api-hub/commit/09546784f37df6398ffd967464f873def45d9400))
+* **omniroute:** add self-hosted gateway channel management ([#1577](https://github.com/qixing-jk/all-api-hub/issues/1577)) ([50261d5](https://github.com/qixing-jk/all-api-hub/commit/50261d57756c3e4a846642edf35e2a04dc2fe2f8))
+
 ## [4.2.0](https://github.com/qixing-jk/all-api-hub/compare/v4.1.0...v4.2.0) (2026-09-30)
 
 
