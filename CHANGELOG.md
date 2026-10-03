@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.3.0](https://github.com/qixing-jk/all-api-hub/compare/v4.2.0...v4.3.0) (2026-10-03)
+
+
+### Features
+
+* **checkin:** optimize auto-detect discovery with early probe and silence false warnings on unsupported sites ([#1587](https://github.com/qixing-jk/all-api-hub/issues/1587)) ([8f2baf2](https://github.com/qixing-jk/all-api-hub/commit/8f2baf26a63d059a58e8b76d95d8e184fd0732a4))
+* **credential-library:** monitor remaining allowance across credentials ([#1591](https://github.com/qixing-jk/all-api-hub/issues/1591)) ([29d8942](https://github.com/qixing-jk/all-api-hub/commit/29d8942049177e015738a652a123012821622409))
+* **diagnostics:** explain account detection failures across browser contexts ([#1592](https://github.com/qixing-jk/all-api-hub/issues/1592)) ([dedb5bd](https://github.com/qixing-jk/all-api-hub/commit/dedb5bd7ef2ab0725145b46edd830c9895601fc1))
+* **key-management:** surface progress and success for native key mutations ([#1590](https://github.com/qixing-jk/all-api-hub/issues/1590)) ([fe36df3](https://github.com/qixing-jk/all-api-hub/commit/fe36df353bfafc567ab22cdfbb7389ea31a6f589))
+* **kimi:** add Kimi Open Platform accounts with model catalogs and CNY/USD pricing ([#1578](https://github.com/qixing-jk/all-api-hub/issues/1578)) ([2291640](https://github.com/qixing-jk/all-api-hub/commit/22916401a1b45cd1eb78d1083650c9734e33d72b))
+* **new-api:** adapt account detection to rc.41 scoped access tokens ([#1579](https://github.com/qixing-jk/all-api-hub/issues/1579)) ([0954678](https://github.com/qixing-jk/all-api-hub/commit/09546784f37df6398ffd967464f873def45d9400))
+* **omniroute:** add self-hosted gateway channel management ([#1577](https://github.com/qixing-jk/all-api-hub/issues/1577)) ([50261d5](https://github.com/qixing-jk/all-api-hub/commit/50261d57756c3e4a846642edf35e2a04dc2fe2f8))
+* **tooling:** reuse shared local env across worktrees ([#1583](https://github.com/qixing-jk/all-api-hub/issues/1583)) ([8b78340](https://github.com/qixing-jk/all-api-hub/commit/8b7834027baffdaf67ec2da7404c81dbc13ab497))
+
+
+### Bug Fixes
+
+* **exports:** give each consumer the protocol address shape it owns ([#1584](https://github.com/qixing-jk/all-api-hub/issues/1584)) ([f8d9475](https://github.com/qixing-jk/all-api-hub/commit/f8d9475e232081bcbb2ce86961b6f8d9dcfe164b))
+
 ## [4.2.0](https://github.com/qixing-jk/all-api-hub/compare/v4.1.0...v4.2.0) (2026-09-30)
 
 
