@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.0](https://github.com/qixing-jk/all-api-hub/compare/v4.3.0...v4.4.0) (2026-10-06)
+
+
+### Features
+
+* **keys:** support interactive default and group provisioning ([#1609](https://github.com/qixing-jk/all-api-hub/issues/1609)) ([b7496fd](https://github.com/qixing-jk/all-api-hub/commit/b7496fde0b185dd81ba06db1ef55f5c785d11f71))
+* **laozhang:** add console account, key and announcement support ([#1615](https://github.com/qixing-jk/all-api-hub/issues/1615)) ([ff94a78](https://github.com/qixing-jk/all-api-hub/commit/ff94a788f61a5c17f4bb928a13b0f78fefdaa667))
+
 ## [4.3.0](https://github.com/qixing-jk/all-api-hub/compare/v4.2.0...v4.3.0) (2026-10-04)
 
 
